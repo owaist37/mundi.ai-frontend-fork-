@@ -1,0 +1,3 @@
+[submodule "driftdb"]
+	path = driftdb
+	url = https://github.com/brendanashworth/driftdb.git

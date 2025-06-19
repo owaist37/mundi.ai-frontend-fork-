@@ -1,0 +1,55 @@
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+import path from 'path'
+import tailwindcss from '@tailwindcss/vite'
+
+// https://vite.dev/config/
+export default defineConfig({
+  plugins: [react(), tailwindcss()],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  // Base path to ensure assets are loaded correctly
+  base: '/',
+  // Configure Vite's dev server for proxying API requests to the backend during development
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8000',
+        ws: true,
+        changeOrigin: true,
+      },
+      '/supertokens': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/drift': {
+        target: 'http://localhost:8090',
+        ws: true,
+        rewrite: (path) => path.replace(/^\/drift/, ''),
+        rewriteWsOrigin: true,
+      },
+      '/room': {
+        target: 'http://localhost:8090',
+        ws: true,
+        rewriteWsOrigin: true,
+      }
+    }
+  },
+  build: {
+    // Ensure sourcemaps are generated
+    sourcemap: true,
+    // Reduce memory usage during build
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          vendor: ['react', 'react-dom'],
+          ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu']
+        }
+      }
+    }
+  }
+})
