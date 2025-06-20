@@ -3,15 +3,13 @@ title: Connecting to PostGIS
 description: Learn how to connect to a PostGIS database in Mundi for spatial data operations.
 ---
 
-# Connecting to PostGIS
-
 PostGIS is a powerful spatial database extension for PostgreSQL that enables you to store, query, and manipulate geographic data. This guide will walk you through connecting to a PostGIS database in Mundi.
 
 ## Prerequisites
 
 - A running PostGIS database
 - Database connection credentials (host, port, database name, username, password)
-- Network access to the PostGIS server
+- The PostGIS server must be accessible from the public internet (unless self-hosting)
 
 ## Connection Steps
 

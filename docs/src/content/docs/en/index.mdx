@@ -1,17 +1,26 @@
 ---
-title: Mundi GIS Documentation
-description: Learn how to use Mundi, an open-source web GIS with AI-powered mapping capabilities.
+title: Mundi Documentation
+description: Mundi is an open source web GIS built around AI (AGPLv3).
 ---
+
+![Mundi open-source web GIS](../../../assets/social.png)
+
+[Mundi](https://github.com/BuntingLabs/mundi.ai) is an open source, AI-native GIS. Mundi is available on our hosted cloud service at [app.mundi.ai](https://app.mundi.ai)
+and is self-hostable under the AGPLv3 license. Give us a [star on GitHub](https://github.com/BuntingLabs/mundi.ai),
+[join our Discord to talk to us](https://discord.gg/V63VbgH8dT), or
+[create a pull request](https://github.com/BuntingLabs/mundi.ai/pulls) to contribute back!
 
 import { Card, CardGrid } from '@astrojs/starlight/components';
 
-## Get Started with Mundi
+## Starting on Mundi cloud
 
-<CardGrid stagger>
-	<Card title="Making your first map" icon="pencil">
-		Learn how to create your first map in Mundi with sample data and basic visualization.
-	</Card>
-	<Card title="Connecting to PostGIS" icon="add-document">
-		Connect to a PostGIS database in Mundi for spatial data operations.
-	</Card>
-</CardGrid>
+You can sign up for free at [app.mundi.ai](https://app.mundi.ai) to try out Mundi.
+
+We have a set of [guides](./guides) that walk through sample use cases of Mundi. I recommend ["Making your first map"](./getting-started/making-your-first-map)
+as a starter tutorial.
+
+## Self-hosting Mundi
+
+Mundi is open source (AGPLv3) and can run entirely on your local machine with local LLMs. I'm still working on instructions
+and tutorials for how to self-host, but it will involve using ollama for LLM inference, probably one of Mistral's models,
+and will require Docker compose.

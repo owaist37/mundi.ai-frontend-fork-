@@ -17,6 +17,10 @@ export default defineConfig({
 			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/BuntingLabs/mundi.ai' }],
 			sidebar: [
 				{
+					label: 'Introduction',
+					slug: 'index',
+				},
+				{
 					label: 'Getting started',
 					items: [
 						{ label: 'Making your first map', slug: 'getting-started/making-your-first-map' },
