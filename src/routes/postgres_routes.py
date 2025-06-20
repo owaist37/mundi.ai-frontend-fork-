@@ -36,6 +36,7 @@ from ..dependencies.session import (
     verify_session_optional,
     UserContext,
 )
+from ..utils import get_openai_client
 from typing import List, Optional
 import logging
 import difflib
@@ -63,7 +64,6 @@ from src.utils import (
 )
 import fiona
 import duckdb
-from openai import AsyncOpenAI
 from osgeo import gdal
 import io
 import subprocess
@@ -2427,7 +2427,7 @@ async def query_layer(
         )
 
     # Generate SQL from natural language query using async client
-    client = AsyncOpenAI()
+    client = get_openai_client()
 
     sql_messages = [
         {
@@ -3020,7 +3020,7 @@ async def summarize_map_diff(
     diff_content = "\n".join(diff)
 
     # Use OpenAI to summarize the diff
-    client = AsyncOpenAI()
+    client = get_openai_client()
     chat_completions_args = await chat_args.get_args(
         session.get_user_id(), "summarize_map_diff"
     )

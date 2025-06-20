@@ -13,15 +13,14 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import os
 import psycopg2
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Tuple
 from psycopg2.extras import RealDictCursor
-from openai import AsyncOpenAI
 import secrets
 from src.structures import get_db_connection
+from src.utils import get_openai_client
 
 
 def generate_id(length=12, prefix=""):
@@ -109,7 +108,7 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
             conn.close()
 
             # OpenAI API call
-            client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+            client = get_openai_client()
 
             # Generate friendly name
             name_prompt = f"""Based on the following database tables, generate a short, friendly display name (2-4 words) that describes what this database contains or its purpose.

@@ -21,6 +21,7 @@ import zipfile
 import shutil
 import aioboto3
 import asyncio
+from openai import AsyncOpenAI
 
 
 def get_s3_client():
@@ -117,3 +118,14 @@ def process_zip_with_shapefile(zip_file_path):
     except Exception as e:
         shutil.rmtree(temp_dir, ignore_errors=True)
         raise e
+
+
+def get_openai_client() -> AsyncOpenAI:
+    """
+    Create an AsyncOpenAI client with optional base URL override.
+
+    Uses OPENAI_BASE_URL environment variable if set, otherwise defaults to
+    the standard OpenAI API endpoint (https://api.openai.com/v1).
+    """
+    base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
+    return AsyncOpenAI(base_url=base_url)

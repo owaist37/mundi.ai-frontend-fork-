@@ -23,10 +23,10 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
 from fastapi import BackgroundTasks, WebSocket, WebSocketDisconnect
+
 import pandas as pd
 import asyncio
 import uuid
-from openai import AsyncOpenAI
 import traceback
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
@@ -65,6 +65,7 @@ from src.dependencies.session import (
     UserContext,
     verify_websocket,
 )
+from src.utils import get_openai_client
 from src.openstreetmap import download_from_openstreetmap, has_openstreetmap_api_key
 
 logger = logging.getLogger(__name__)
@@ -248,7 +249,7 @@ async def process_chat_interaction_task(
                     f"{layer_name} (type: {layer.get('type', 'unknown')}, created: {layer['created_on']})"
                 )
 
-            client = AsyncOpenAI()
+            client = get_openai_client()
 
             tools_payload = [
                 {

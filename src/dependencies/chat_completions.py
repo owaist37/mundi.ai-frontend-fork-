@@ -14,6 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from abc import ABC, abstractmethod
+import os
 
 
 class ChatArgsProvider(ABC):
@@ -27,7 +28,8 @@ class DefaultChatArgsProvider(ChatArgsProvider):
         # feel free to customize below depending on which ollama model you're using
         # or whichever provider you want to use. you can also change depending on
         # user or route.
-        return {"model": "gpt-4.1-nano"}
+        model = os.environ.get("OPENAI_MODEL", "gpt-4.1-nano")
+        return {"model": model}
 
 
 def get_chat_args_provider() -> ChatArgsProvider:
