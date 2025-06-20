@@ -83,8 +83,16 @@ async def get_map_room(
     room_id = redis.get(redis_key)
 
     if room_id:
-        logger.info(f"Found existing room {room_id} for map {map_id}")
-        return RoomResponse(room_id=room_id)
+        # Validate the room exists before returning it
+        async with httpx.AsyncClient() as client:
+            try:
+                response = await client.get(f"{DRIFTDB_SERVER_URL}/room/{room_id}")
+                if response.status_code == 200:
+                    return RoomResponse(room_id=room_id)
+                else:
+                    redis.delete(redis_key)
+            except Exception:
+                redis.delete(redis_key)
 
     async with httpx.AsyncClient() as client:
         response = await client.post(f"{DRIFTDB_SERVER_URL}/new")
