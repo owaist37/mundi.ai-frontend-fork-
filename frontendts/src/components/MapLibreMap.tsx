@@ -1370,15 +1370,6 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             let messageClass = '';
             let displayName = '';
             let contentDisplay = '';
-            let timeDisplay = '';
-
-            // Calculate time difference if created_at exists and there's a previous message
-            if (msg.created_at && index > 0 && messages[index - 1].created_at) {
-              const prevTime = new Date(messages[index - 1].created_at).getTime();
-              const currTime = new Date(msg.created_at).getTime();
-              const diffSeconds = (currTime - prevTime) / 1000;
-              timeDisplay = diffSeconds > 300 ? " (long)" : ` (${diffSeconds.toFixed(1)}s)`;
-            }
 
             const messageJson = msg.message_json;
 
@@ -1437,7 +1428,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
             return (
               <div key={`msg-${msg.id || index}-${index}`} className={`mb-3 p-2 rounded text-xs ${messageClass}`}>
-                <span className="font-bold">{displayName}{timeDisplay}: </span>
+                <span className="font-bold">{displayName}: </span>
                 {contentDisplay}
 
                 {/* Render images if present */}
