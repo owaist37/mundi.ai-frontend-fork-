@@ -30,15 +30,17 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Connecting to PostGIS', slug: 'guides/connecting-to-postgis' },
+						{ label: 'Self-hosting Mundi', slug: 'guides/self-hosting-mundi' },
 					],
 				},
 			],
 			// Set English as the default language for this site.
-			defaultLocale: 'en',
+			defaultLocale: 'root',
 			locales: {
-				// English docs in `src/content/docs/en/`
-				en: {
+				// English docs in `src/content/docs/` (root)
+				root: {
 					label: 'English',
+					lang: 'en',
 				},
 			},
 
