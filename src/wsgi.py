@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi_mcp import FastApiMCP
+from fastapi_proxy_lib.fastapi.app import reverse_http_app, reverse_ws_app
 
 from src.routes import (
     postgres_routes,
@@ -82,6 +83,19 @@ app.include_router(
     prefix="/api/projects",
     tags=["Projects"],
 )
+
+
+# Create a combined proxy router for DriftDB that handles both HTTP and WebSocket
+# Use a WebSocket-capable proxy for the /room routes
+room_ws_app = reverse_ws_app(base_url="http://driftdb:8080/room/")
+# Mount it as a sub-application
+app.mount("/room/", room_ws_app)
+
+# Use HTTP proxy for other DriftDB paths
+drift_app = reverse_http_app(base_url="http://driftdb:8080/")
+# Mount it as a sub-application
+app.mount("/drift/", drift_app)
+
 
 mcp = FastApiMCP(
     app,
