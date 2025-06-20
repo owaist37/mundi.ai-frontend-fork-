@@ -15,7 +15,8 @@
 
 import pytest
 import os
-from httpx import AsyncClient, ASGITransport
+from httpx_ws.transport import ASGIWebSocketTransport
+from httpx import AsyncClient
 from src.wsgi import app
 import src.structures
 from pathlib import Path
@@ -42,7 +43,7 @@ async def client():
             pass  # Ignore errors during cleanup
     src.structures._async_connection_pool = None
 
-    transport = ASGITransport(app=app)
+    transport = ASGIWebSocketTransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
 

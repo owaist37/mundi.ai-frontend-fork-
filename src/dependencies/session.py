@@ -65,19 +65,13 @@ async def verify_session_optional(request=None) -> Optional[UserContext]:
     return await verify_session(session_required=False)()
 
 
-def verify_websocket():
-    async def _verify_websocket(websocket: WebSocket) -> UserContext:
-        auth_mode = os.environ.get("MUNDI_AUTH_MODE")
+async def verify_websocket(websocket: WebSocket) -> UserContext:
+    auth_mode = os.environ.get("MUNDI_AUTH_MODE")
 
-        if auth_mode == "edit":
-            return EditOrReadOnlyUserContext()
-        elif auth_mode == "view_only":
-            token = websocket.query_params.get("token")
-            if not token:
-                raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
-            # Token validation would go here in a real implementation
-            return EditOrReadOnlyUserContext()
-        else:
-            raise WebSocketException(code=status.WS_1011_INTERNAL_ERROR)
-
-    return _verify_websocket
+    if auth_mode == "edit":
+        return EditOrReadOnlyUserContext()
+    elif auth_mode == "view_only":
+        # deny access in view mode
+        raise WebSocketException(code=status.WS_1008_POLICY_VIOLATION)
+    else:
+        raise WebSocketException(code=status.WS_1011_INTERNAL_ERROR)

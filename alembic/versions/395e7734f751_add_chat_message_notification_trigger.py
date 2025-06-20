@@ -5,6 +5,7 @@ Revises: 932975d39fb8
 Create Date: 2025-06-20 05:03:40.532965
 
 """
+
 from typing import Sequence, Union
 
 from alembic import op
@@ -12,8 +13,8 @@ import sqlalchemy as sa
 
 
 # revision identifiers, used by Alembic.
-revision: str = '395e7734f751'
-down_revision: Union[str, None] = '932975d39fb8'
+revision: str = "395e7734f751"
+down_revision: Union[str, None] = "932975d39fb8"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
@@ -31,7 +32,7 @@ def upgrade() -> None:
         END;
         $$ LANGUAGE plpgsql;
     """)
-    
+
     # Create the trigger
     op.execute("""
         CREATE TRIGGER chat_message_notify
@@ -42,7 +43,9 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     # Drop the trigger
-    op.execute("DROP TRIGGER IF EXISTS chat_message_notify ON chat_completion_messages;")
-    
+    op.execute(
+        "DROP TRIGGER IF EXISTS chat_message_notify ON chat_completion_messages;"
+    )
+
     # Drop the function
-    op.execute("DROP FUNCTION IF EXISTS notify_chat_message();")    
+    op.execute("DROP FUNCTION IF EXISTS notify_chat_message();")
