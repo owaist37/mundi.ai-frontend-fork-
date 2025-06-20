@@ -1420,12 +1420,14 @@ async def cleanup_recently_disconnected_users():
 
 @router.websocket("/ws/{map_id}/messages/updates")
 async def ws_map_chat(
-    ws: WebSocket, map_id: str, user_context: UserContext = Depends(verify_websocket())
+    ws: WebSocket, map_id: str, user_context: UserContext = Depends(verify_websocket)
 ):
+    # In edit mode, we don't require tokens for WebSocket connections
+    auth_mode = os.environ.get("MUNDI_AUTH_MODE")
     token = ws.query_params.get("token")
 
-    if not token:
-        await ws.close(code=4401)
+    if not token and auth_mode != "edit":
+        await ws.close(code=4401, reason="No token")
         return
 
     user_id = user_context.get_user_id()
@@ -1463,10 +1465,25 @@ async def ws_map_chat(
 
         # Remove user from recently disconnected since they've reconnected to this map
         del recently_disconnected_users[user_map_key]
-
     try:
         while True:
-            payload = await queue.get()
+            queue_task = asyncio.create_task(queue.get())
+            recv_task = asyncio.create_task(ws.receive())
+
+            done, pending = await asyncio.wait(
+                {queue_task, recv_task}, return_when=asyncio.FIRST_COMPLETED
+            )
+
+            # client closed
+            if recv_task in done:
+                for task in pending:
+                    task.cancel()
+                break
+
+            # got a payload
+            payload = queue_task.result()
+            recv_task.cancel()
+
             notification = json.loads(payload)
 
             # Check if this is an ephemeral message

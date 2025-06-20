@@ -15,11 +15,12 @@
 
 import pytest
 import uuid
-from httpx_ws import aconnect_ws, WebSocketDisconnect
+import os
+import time
 
 
 @pytest.fixture
-async def test_map_id(auth_client):
+def sync_test_map_id(sync_auth_client):
     map_title = f"Test WebSocket Map {uuid.uuid4()}"
 
     map_data = {
@@ -28,31 +29,133 @@ async def test_map_id(auth_client):
         "link_accessible": True,
     }
 
-    response = await auth_client.post("/api/maps/create", json=map_data)
+    response = sync_auth_client.post("/api/maps/create", json=map_data)
     assert response.status_code == 200
     map_id = response.json()["id"]
 
     return map_id
 
 
-@pytest.mark.anyio
-async def test_websocket_successful_connection(test_map_id, auth_client):
-    try:
-        async with aconnect_ws(
-            f"/api/maps/ws/{test_map_id}/messages/updates",
-            auth_client,
-        ) as websocket:
-            await websocket.close()
-    except Exception as e:
-        pytest.fail(f"WebSocket connection should have succeeded but failed with: {e}")
+def test_websocket_successful_connection(sync_test_map_id, sync_auth_client):
+    # no errors
+    with sync_auth_client.websocket_connect(
+        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+    ):
+        pass
 
 
-@pytest.mark.anyio
-async def test_websocket_no_token_in_view_mode(auth_client):
-    test_map_id = "test-map-id"
+def test_websocket_404(sync_auth_client):
+    test_map_id = "should-404-doesntexist"
 
-    with pytest.raises(WebSocketDisconnect):
-        async with aconnect_ws(
-            f"/api/maps/ws/{test_map_id}/messages/updates", auth_client
+    with pytest.raises(Exception):  # TestClient raises different exceptions
+        with sync_auth_client.websocket_connect(
+            f"/api/maps/ws/{test_map_id}/messages/updates"
         ):
             pytest.fail("WebSocket connection should have failed without token")
+
+
+@pytest.mark.skipif(
+    os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
+    reason="OPENAI_API_KEY is required for this test",
+)
+def test_websocket_receive_ephemeral_action(sync_test_map_id, sync_auth_client):
+    with sync_auth_client.websocket_connect(
+        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+    ) as websocket:
+        response = sync_auth_client.post(
+            f"/api/maps/{sync_test_map_id}/messages/send",
+            json={
+                "role": "user",
+                "content": "Hello",
+            },
+        )
+        assert response.status_code == 200
+
+        # Receive messages until we get the ephemeral action message
+        ephemeral_msg = None
+        max_attempts = 10
+        for _ in range(max_attempts):
+            recv_msg = websocket.receive_json()
+            if recv_msg.get("ephemeral") is True:
+                ephemeral_msg = recv_msg
+                break
+
+        assert ephemeral_msg is not None, "Did not receive ephemeral action message"
+        assert "map_id" in ephemeral_msg
+        assert ephemeral_msg["map_id"] == sync_test_map_id
+        assert "ephemeral" in ephemeral_msg
+        assert ephemeral_msg["ephemeral"] is True
+        assert "action_id" in ephemeral_msg
+        assert "action" in ephemeral_msg
+        assert "timestamp" in ephemeral_msg
+        assert "status" in ephemeral_msg
+
+
+@pytest.mark.skipif(
+    os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
+    reason="OPENAI_API_KEY is required for this test",
+)
+def test_websocket_missed_messages(sync_test_map_id, sync_auth_client):
+    with sync_auth_client.websocket_connect(
+        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+    ) as websocket:
+        response = sync_auth_client.post(
+            f"/api/maps/{sync_test_map_id}/messages/send",
+            json={
+                "role": "user",
+                "content": "Hello",
+            },
+        )
+        assert response.status_code == 200
+
+        # Receive messages until we get the ephemeral action message
+        ephemeral_msg = None
+        max_attempts = 10
+        for _ in range(max_attempts):
+            recv_msg = websocket.receive_json()
+            if recv_msg.get("ephemeral") is True:
+                ephemeral_msg = recv_msg
+                break
+
+        assert ephemeral_msg is not None, "Did not receive ephemeral action message"
+        assert "map_id" in ephemeral_msg
+        assert ephemeral_msg["map_id"] == sync_test_map_id
+        assert "ephemeral" in ephemeral_msg
+        assert ephemeral_msg["ephemeral"] is True
+        assert "action_id" in ephemeral_msg
+        assert "action" in ephemeral_msg
+        assert "timestamp" in ephemeral_msg
+        assert "status" in ephemeral_msg
+
+    response2 = sync_auth_client.post(
+        f"/api/maps/{sync_test_map_id}/messages/send",
+        json={
+            "role": "user",
+            "content": "Hello again",
+        },
+    )
+    assert response2.status_code == 200
+
+    time.sleep(4)
+
+    with sync_auth_client.websocket_connect(
+        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+    ) as websocket2:
+        # Receive messages until we get the ephemeral action message
+        ephemeral_msg = None
+        max_attempts = 10
+        for _ in range(max_attempts):
+            recv_msg = websocket2.receive_json()
+            if recv_msg.get("ephemeral") is True:
+                ephemeral_msg = recv_msg
+                break
+
+        assert ephemeral_msg is not None, "Did not receive ephemeral action message"
+        assert "map_id" in ephemeral_msg
+        assert ephemeral_msg["map_id"] == sync_test_map_id
+        assert "ephemeral" in ephemeral_msg
+        assert ephemeral_msg["ephemeral"] is True
+        assert "action_id" in ephemeral_msg
+        assert "action" in ephemeral_msg
+        assert "timestamp" in ephemeral_msg
+        assert "status" in ephemeral_msg

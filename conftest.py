@@ -17,10 +17,13 @@ import pytest
 import os
 from httpx_ws.transport import ASGIWebSocketTransport
 from httpx import AsyncClient
-from src.wsgi import app
-import src.structures
 from pathlib import Path
 import random
+import asyncio
+from starlette.testclient import TestClient
+
+from src.wsgi import app
+import src.structures
 from src.database.migrate import run_migrations
 
 
@@ -100,6 +103,37 @@ async def test_map_with_vector_layers(auth_client):
         "idaho_weatherstations.geojson", "Idaho Weather Stations"
     )
     return {"map_id": map_id, **layer_ids}
+
+
+@pytest.fixture(scope="function")
+def sync_client():
+    # Run database migrations before tests
+    asyncio.run(run_migrations())
+
+    # Reset global async connection pool for each test to ensure fresh connections
+    if src.structures._async_connection_pool:
+        try:
+            asyncio.run(src.structures._async_connection_pool.close())
+        except Exception:
+            pass  # Ignore errors during cleanup
+    src.structures._async_connection_pool = None
+
+    with TestClient(app) as client:
+        yield client
+
+    # Clean up the connection pool after each test
+    if src.structures._async_connection_pool:
+        try:
+            asyncio.run(src.structures._async_connection_pool.close())
+        except Exception:
+            pass  # Ignore errors during cleanup
+        src.structures._async_connection_pool = None
+
+
+@pytest.fixture(scope="function")
+def sync_auth_client(sync_client):
+    assert os.environ.get("MUNDI_AUTH_MODE") == "edit"
+    yield sync_client
 
 
 def pytest_configure(config):
