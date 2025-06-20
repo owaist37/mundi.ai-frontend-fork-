@@ -1,8 +1,14 @@
 # Mundi
 
-![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/BuntingLabs/mundi/cicd)
+![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/BuntingLabs/mundi.ai/cicd.yml)
+![GitHub Actions Lint Status](https://img.shields.io/github/actions/workflow/status/BuntingLabs/mundi.ai/ruff.yml?label=Lint)
 [![Discord](https://dcbadge.limes.pink/api/server/V63VbgH8dT?style=plastic)](https://discord.gg/V63VbgH8dT)
 
+![Mundi](./docs/src/assets/social.png)
+
+## Documentation
+
+There's guides and self-host instructions at [docs.mundi.ai](https://docs.mundi.ai).
 
 ## Comparing open source Mundi and cloud/enterprise Mundi
 

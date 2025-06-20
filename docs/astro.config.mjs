@@ -14,7 +14,7 @@ export default defineConfig({
 				replacesTitle: true,
 			},
 			favicon: '/favicon-light.svg',
-			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/BuntingLabs/mundi' }],
+			social: [{ icon: 'github', label: 'GitHub', href: 'https://github.com/BuntingLabs/mundi.ai' }],
 			sidebar: [
 				{
 					label: 'Getting started',
