@@ -26,13 +26,12 @@ export default defineConfig({
         changeOrigin: true,
       },
       '/drift': {
-        target: 'http://localhost:8090',
+        target: 'http://localhost:8000',
         ws: true,
-        rewrite: (path) => path.replace(/^\/drift/, ''),
         rewriteWsOrigin: true,
       },
       '/room': {
-        target: 'http://localhost:8090',
+        target: 'http://localhost:8000',
         ws: true,
         rewriteWsOrigin: true,
       }
