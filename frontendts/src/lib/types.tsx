@@ -78,6 +78,10 @@ export interface PresenceData {
   lastSeen: number;
 }
 
+export interface EphemeralUpdates {
+  style_json: boolean;
+}
+
 export interface EphemeralAction {
   map_id: string;
   ephemeral: boolean;
@@ -87,4 +91,5 @@ export interface EphemeralAction {
   timestamp: string;
   completed_at: string | null;
   status: "active" | "completed";
+  updates: EphemeralUpdates;
 }

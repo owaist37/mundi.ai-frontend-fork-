@@ -74,6 +74,13 @@ interface ChatCompletionMessageRow {
 
 // Import styles in the parent component
 
+interface ErrorEntry {
+  id: string;
+  message: string;
+  timestamp: Date;
+  shouldOverrideMessages: boolean;
+}
+
 interface MapLibreMapProps {
   mapId: string;
   width?: string;
@@ -103,6 +110,7 @@ interface LayerListProps {
   setSelectedLayer: (layer: MapLayer | null) => void;
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
+  layerSymbols: { [layerId: string]: JSX.Element };
 }
 
 const LayerList: React.FC<LayerListProps> = ({
@@ -119,44 +127,14 @@ const LayerList: React.FC<LayerListProps> = ({
   setSelectedLayer,
   updateMapData,
   updateProjectData,
+  layerSymbols,
 }) => {
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
-  const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
 
   // Component to render legend symbol for a layer
   const LayerLegendSymbol = ({ layerDetails }: { layerDetails: MapLayer }) => {
-    const layerId = layerDetails.id;
-    useEffect(() => {
-      if (!layerSymbols[layerId] && mapRef.current && mapRef.current.isStyleLoaded()) {
-        const map = mapRef.current;
-        const style = map.getStyle();
-        const mapLayer = style.layers.find(
-          layer => "source" in layer && layer.source === layerId
-        );
-        if (mapLayer) {
-          // Call legendSymbol as a function and render the result to JSX
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
-          const tree: RenderElement | null = legendSymbol({ sprite: style.sprite, zoom: map.getZoom(), layer: mapLayer as any });
-
-          function renderTree(tree: RenderElement | null): JSX.Element | null {
-            if (!tree) return null;
-            return React.createElement(
-              tree.element,
-              tree.attributes,
-              tree.children?.map(renderTree)
-            );
-          }
-          const symbolElement = renderTree(tree);
-          setLayerSymbols(prev => ({
-            ...prev,
-            [layerId]: symbolElement as JSX.Element
-          }));
-        }
-      }
-    }, [layerId, layerDetails.geometry_type, layerDetails.type]);
-
-    // Return cached symbol if available, otherwise text fallback
-    return layerSymbols[layerId];
+    // Return cached symbol if available, otherwise null
+    return layerSymbols[layerDetails.id] || null;
   };
   const [showDatabaseDetails, setShowDatabaseDetails] = useState(false);
   const [selectedDatabase, setSelectedDatabase] = useState<{
@@ -663,8 +641,32 @@ const LayerList: React.FC<LayerListProps> = ({
 export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData }: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
+  const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
+
+
+
+  // Helper function to add a new error
+  const addError = (message: string, shouldOverrideMessages: boolean = false) => {
+    const newError: ErrorEntry = {
+      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+      message,
+      timestamp: new Date(),
+      shouldOverrideMessages,
+    };
+    setErrors(prev => [...prev, newError]);
+
+    // Auto-dismiss after 5 seconds
+    setTimeout(() => {
+      setErrors(prev => prev.filter(error => error.id !== newError.id));
+    }, 5000);
+  };
+
+  // Helper function to dismiss a specific error
+  const dismissError = (errorId: string) => {
+    setErrors(prev => prev.filter(error => error.id !== errorId));
+  };
   const [loading, setLoading] = useState(true);
   const [pointerPosition, setPointerPosition] = useState<PointerPosition | null>(null);
   const otherClientPositions = usePresence<PointerPosition | null>("cursors", pointerPosition);
@@ -701,7 +703,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const [messages, setMessages] = useState<ChatCompletionMessageRow[]>([]);
   const [showMessages, setShowMessages] = useState(true);
   // Track the number of tool responses received from messages
-  const toolResponseCount = messages.filter(msg => msg.message_json?.role === 'tool').length;
+  const [toolResponseCount, setToolResponseCount] = useState(0);
 
   useEffect(() => {
     if (updateMapData) {
@@ -963,7 +965,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
       newMap.on('error', (e) => {
         console.error('MapLibre GL error:', e);
-        setError('Error loading map: ' + (e.error?.message || 'Unknown error'));
+        addError('Error loading map: ' + (e.error?.message || 'Unknown error'), true);
         setLoading(false);
       });
 
@@ -974,7 +976,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       };
     } catch (err) {
       console.error('Error initializing map:', err);
-      setError('Failed to initialize map: ' + (err instanceof Error ? err.message : String(err)));
+      addError('Failed to initialize map: ' + (err instanceof Error ? err.message : String(err)), true);
       setLoading(false);
     }
   }, []); // Only run once on mount
@@ -1006,6 +1008,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         // Update the style using setStyle
         map.setStyle(newStyle);
 
+        // Bust the layer symbol cache by clearing it
+        setLayerSymbols({});
+
         // If we haven't zoomed yet, zoom to the style's center and zoom level
         // setStyle on purpose does not reset the zoom/center, but it's nice to load a map
         // and be correctly positioned on the data
@@ -1025,7 +1030,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
       } catch (err) {
         console.error('Error updating style:', err);
-        setError('Failed to update map style: ' + (err instanceof Error ? err.message : String(err)));
+        addError('Failed to update map style: ' + (err instanceof Error ? err.message : String(err)), true);
         isUpdating = false; // Reset flag on error
       }
     };
@@ -1045,6 +1050,52 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     }
   }, [pointsGeoJSON]);
 
+  // Generate layer symbols when map data changes
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && map.isStyleLoaded() && mapData?.layers) {
+      const style = map.getStyle();
+
+      mapData.layers.forEach((layer) => {
+        const layerId = layer.id;
+
+        // Skip if we already have a symbol for this layer
+        if (layerSymbols[layerId]) return;
+
+        const mapLayer = style.layers.find(
+          (styleLayer) => "source" in styleLayer && (styleLayer as any).source === layerId
+        );
+
+        if (mapLayer) {
+          // Call legendSymbol as a function and render the result to JSX
+
+          const tree: RenderElement | null = legendSymbol({
+            sprite: style.sprite,
+            zoom: map.getZoom(),
+            layer: mapLayer as any
+          });
+
+          function renderTree(tree: RenderElement | null): JSX.Element | null {
+            if (!tree) return null;
+            return React.createElement(
+              tree.element,
+              tree.attributes,
+              tree.children?.map(renderTree)
+            );
+          }
+
+          const symbolElement = renderTree(tree);
+          if (symbolElement) {
+            setLayerSymbols(prev => ({
+              ...prev,
+              [layerId]: symbolElement as JSX.Element
+            }));
+          }
+        }
+      });
+    }
+  }, [mapData, layerSymbols]);
+
   const status = useConnectionStatus();
   const [inputValue, setInputValue] = useState('');
 
@@ -1058,6 +1109,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         const fetchedMessages: ChatCompletionMessageRow[] = data.messages.sort(
           (a: ChatCompletionMessageRow, b: ChatCompletionMessageRow) => (a.id) - (b.id)
         );
+
         setMessages(fetchedMessages);
       } else {
         console.error('Error fetching messages:', response.statusText);
@@ -1087,7 +1139,10 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       timestamp: new Date().toISOString(),
       completed_at: null,
       layer_id: null,
-      status: "active"
+      status: "active",
+      updates: {
+        style_json: false,
+      },
     };
     setActiveActions(prev => [...prev, sendingAction]);
 
@@ -1107,7 +1162,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
       // const data: ChatProcessingResponse = await response.json();
     } catch (error) {
-      setError(error instanceof Error ? error.message : 'Network error');
+      addError(error instanceof Error ? error.message : 'Network error', true);
     } finally {
       // Remove the ephemeral action when done
       setActiveActions(prev =>
@@ -1144,7 +1199,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     },
     onError: (event) => {
       console.error('WebSocket error for map:', mapId, event);
-      setError('Chat connection error.');
+      addError('Chat connection error.', false);
     },
     shouldReconnect: () => true, // will attempt to reconnect on all close events
     reconnectAttempts: 10,
@@ -1169,14 +1224,21 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             setActiveActions(prev =>
               prev.filter(a => a.action_id !== action.action_id)
             );
+
+            if (action.updates.style_json) {
+              setToolResponseCount(prev => prev + 1);
+            }
           }
         } else {
           // Regular message
-          setMessages(prevMessages => [...prevMessages, update as ChatCompletionMessageRow]);
+          setMessages(prevMessages => {
+            const newMessages = [...prevMessages, update as ChatCompletionMessageRow];
+            return newMessages;
+          });
         }
       } catch (e) {
         console.error("Error processing WebSocket message:", e);
-        setError("Failed to process update from server.");
+        addError("Failed to process update from server.", false);
       }
     }
   }, [lastMessage]);
@@ -1197,11 +1259,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   }, [mapId]);
 
   useEffect(() => {
-    if (error) {
-      toast.error(error);
-      console.error(error);
+    if (errors.length > 0) {
+      const latestError = errors[errors.length - 1];
+      toast.error(latestError.message);
+      console.error(latestError.message);
     }
-  }, [error]);
+  }, [errors]);
 
   // Function to fork the current map
   const saveAndForkMap = async () => {
@@ -1220,11 +1283,11 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         // Navigate to the new forked map
         navigate(`/project/${data.project_id}/${data.map_id}`);
       } else {
-        setError('Failed to fork map');
+        addError('Failed to fork map', false);
         console.error('Error forking map:', response.statusText);
       }
     } catch (error) {
-      setError('Failed to fork map');
+      addError('Failed to fork map', false);
       console.error('Error forking map:', error);
     } finally {
       setIsSaving(false);
@@ -1237,25 +1300,29 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       // Debug: Opening attributes for layer
     }
   }, [showAttributeTable, selectedLayer]);
-  // Find the last assistant message index
-  let lastAssistantMsgIndex = -1;
-  for (let i = messages.length - 1; i >= 0; i--) {
-    if (messages[i].message_json.role === 'assistant' &&
-      typeof messages[i].message_json.content === 'string') {
-      lastAssistantMsgIndex = i;
-      break;
-    }
-  }
+  // Find the last message in the conversation history
+  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
 
-  const lastUserMsg: string | null = messages.length > 0 &&
-    messages[messages.length - 1].message_json.role === 'user' &&
-    typeof messages[messages.length - 1].message_json.content === 'string' &&
-    (messages.length - 1) > lastAssistantMsgIndex
-    ? messages[messages.length - 1].message_json.content as string
-    : null;
-  const lastAssistantMsg: string | null = lastAssistantMsgIndex >= 0
-    ? messages[lastAssistantMsgIndex].message_json.content as string
-    : null;
+  // Determine the last assistant message to display. Only show if it's the very
+  // last message in the conversation and has text content.
+  const lastAssistantMsg: string | null =
+    lastMsg &&
+      lastMsg.message_json.role === "assistant" &&
+      typeof lastMsg.message_json.content === "string"
+      ? (lastMsg.message_json.content as string)
+      : null;
+
+  // Determine the last user message for the input placeholder.
+  const lastUserMsg: string | null =
+    lastMsg &&
+      lastMsg.message_json.role === "user" &&
+      typeof lastMsg.message_json.content === "string"
+      ? (lastMsg.message_json.content as string)
+      : null;
+
+  // especially chat disconnected errors happen all the time and shouldn't
+  // override the text box
+  const criticalErrors = errors.filter(e => e.shouldOverrideMessages);
 
   return (
     <>
@@ -1288,6 +1355,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             setSelectedLayer={setSelectedLayer}
             updateMapData={updateMapData}
             updateProjectData={updateProjectData}
+            layerSymbols={layerSymbols}
           />
         )}
         {/* Changelog */}
@@ -1319,12 +1387,27 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           </CommandList>
         </Command>
         {/* Message display component - always show parent div, animate height */}
-        {(error || activeActions.length > 0 || lastAssistantMsg) && (
-          <div className={`z-30 absolute bottom-12 mb-[34px] opacity-90 left-3/5 transform -translate-x-1/2 w-4/5 max-w-lg overflow-auto bg-white dark:bg-gray-800 rounded-t-md shadow-md p-2 text-sm transition-all duration-300 max-h-40 h-auto ${error ? 'border-red-800' : ''}`}>
-            {error ? (
-              <div className="flex items-center justify-between">
-                <span className="text-red-400">{error}</span>
-                <XCircleFill onClick={() => setError('')} className="text-red-400 cursor-pointer w-6 h-6" title="Clear error" />
+        {(criticalErrors.length > 0 || activeActions.length > 0 || lastAssistantMsg) && (
+          <div className={`z-30 absolute bottom-12 mb-[34px] opacity-90 left-3/5 transform -translate-x-1/2 w-4/5 max-w-lg overflow-auto bg-white dark:bg-gray-800 rounded-t-md shadow-md p-2 text-sm transition-all duration-300 max-h-40 h-auto ${errors.length > 0 ? 'border-red-800' : ''}`}>
+            {criticalErrors.length > 0 ? (
+              <div className="space-y-1">
+                {criticalErrors.map((error) => (
+                  <div key={error.id} className="flex items-center justify-between">
+                    <div className="flex flex-col flex-1 mr-2">
+                      <span className="text-red-400">{error.message}</span>
+                      <span className="text-xs text-slate-500 dark:text-gray-400">
+                        {error.timestamp.toLocaleTimeString()}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => dismissError(error.id)}
+                      className="text-white cursor-pointer hover:underline shrink-0"
+                      title="Dismiss error"
+                    >
+                      Close
+                    </button>
+                  </div>
+                ))}
               </div>
             ) : activeActions.length > 0 ? (
               <div className="flex items-center justify-between">

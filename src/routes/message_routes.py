@@ -989,16 +989,21 @@ async def process_chat_interaction_task(
                         }
                     else:
                         # Add or update the map_layer_styles entry
-                        cursor.execute(
-                            """
-                            INSERT INTO map_layer_styles (map_id, layer_id, style_id)
-                            VALUES (%s, %s, %s)
-                            ON CONFLICT (map_id, layer_id)
-                            DO UPDATE SET style_id = %s
-                            """,
-                            (map_id, layer_id, style_id, style_id),
-                        )
-                        conn.commit()
+                        async with kue_ephemeral_action(
+                            map_id,
+                            "Choosing a new style",
+                            update_style_json=True,
+                        ):
+                            cursor.execute(
+                                """
+                                INSERT INTO map_layer_styles (map_id, layer_id, style_id)
+                                VALUES (%s, %s, %s)
+                                ON CONFLICT (map_id, layer_id)
+                                DO UPDATE SET style_id = %s
+                                """,
+                                (map_id, layer_id, style_id, style_id),
+                            )
+                            conn.commit()
 
                         tool_result = {
                             "status": "success",
@@ -1604,7 +1609,10 @@ async def _broadcast_payload(payload: str):
 
 @asynccontextmanager
 async def kue_ephemeral_action(
-    map_id: str, action_description: str, layer_id: str | None = None
+    map_id: str,
+    action_description: str,
+    layer_id: str | None = None,
+    update_style_json: bool = False,
 ):
     """
     Async context manager for ephemeral actions.
@@ -1621,6 +1629,9 @@ async def kue_ephemeral_action(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
         "status": "active",
+        "updates": {
+            "style_json": update_style_json,
+        },
     }
 
     try:
