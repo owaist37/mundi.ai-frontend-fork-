@@ -303,8 +303,8 @@ async def save_and_fork_map(
         cursor.execute(
             """
             INSERT INTO user_mundiai_maps
-            (id, project_id, owner_uuid, title, description, layers)
-            VALUES (%s, %s, %s, %s, %s, %s)
+            (id, project_id, owner_uuid, title, description, layers, display_as_diff)
+            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
             RETURNING id, title, description, created_on, last_edited
             """,
             (
