@@ -31,6 +31,16 @@ jobs:
       with:
         credentials_json: ${{ secrets.GCP_SA_KEY }}
 
+    # ─ build DriftDB image with Depot (local load only) ─
+    - name: Build DriftDB image
+      uses: depot/build-push-action@v1
+      with:
+        project: 9lr9tw2kzl
+        context: ./driftdb
+        file: ./driftdb/driftdb-server/Dockerfile
+        tags: driftdb-local
+        load: true
+
     - name: Build image
       uses: depot/build-push-action@v1
       with:
@@ -51,6 +61,7 @@ jobs:
     - name: Compose up & run tests
       env:
         APP_IMAGE: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
+        DRIFTDB_IMAGE: driftdb-local
       run: docker compose run app pytest -xvs
 
     - name: Push image

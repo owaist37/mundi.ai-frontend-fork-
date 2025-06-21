@@ -107,8 +107,7 @@ RUN --mount=type=cache,target=/root/.npm \
 
 # Copy Python virtual environment from builder
 COPY --from=python-builder /app/.venv /app/.venv
-# If you want to install new packages and save the new requirements.txt
-# COPY --from=ghcr.io/astral-sh/uv:0.4.9 /uv /bin/uv
+COPY --from=ghcr.io/astral-sh/uv:0.4.9 /uv /bin/uv
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application files
