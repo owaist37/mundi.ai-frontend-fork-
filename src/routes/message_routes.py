@@ -840,6 +840,29 @@ async def process_chat_interaction_task(
                     sql_query = tool_args.get("sql_query")
                     head_n_rows = tool_args.get("head_n_rows", 20)
 
+                    cursor.execute(
+                        """
+                        SELECT layer_id FROM map_layers
+                        WHERE layer_id = %s AND owner_uuid = %s
+                        """,
+                        (layer_id, user_id),
+                    )
+                    layer_exists = cursor.fetchone()
+
+                    if not layer_exists:
+                        tool_result = {
+                            "status": "error",
+                            "error": f"Layer ID '{layer_id}' not found or you do not have permission to access it.",
+                        }
+                        add_chat_completion_message(
+                            ChatCompletionToolMessageParam(
+                                role="tool",
+                                tool_call_id=tool_call.id,
+                                content=json.dumps(tool_result),
+                            )
+                        )
+                        continue
+
                     try:
                         # Execute the query using the async function
                         async with kue_ephemeral_action(
