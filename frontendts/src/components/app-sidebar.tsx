@@ -41,7 +41,7 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
             <img src={MDarkSvg} alt="M" className="w-full h-full hidden dark:block" />
           </a>
         ) : (
-          <a href="https://mundi.ai/" target="_blank" className="h-8">
+          <a href="https://docs.mundi.ai/" target="_blank" className="h-8">
             <img src={MundiLightSvg} alt="Mundi" className="h-full dark:hidden" />
             <img src={MundiDarkSvg} alt="Mundi" className="h-full hidden dark:block" />
           </a>

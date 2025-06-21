@@ -38,7 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { ChevronDown, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
+import { ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -56,7 +56,7 @@ import { useNavigate } from 'react-router-dom';
 
 import type { ChatCompletionMessageParam, ChatCompletionUserMessageParam, ChatCompletionMessageToolCall } from "openai/resources/chat/completions";
 import { Activity, Brain, Database, Send } from 'lucide-react';
-import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 
 // Define the type for chat completion messages from the database
@@ -107,6 +107,9 @@ interface LayerListProps {
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
+  zoomHistory: Array<{bounds: [number, number, number, number];}>;
+  zoomHistoryIndex: number;
+  setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
 }
 
 function renderTree(tree: RenderElement | null): JSX.Element | null {
@@ -133,6 +136,9 @@ const LayerList: React.FC<LayerListProps> = ({
   updateMapData,
   updateProjectData,
   layerSymbols,
+  zoomHistory,
+  zoomHistoryIndex,
+  setZoomHistoryIndex,
 }) => {
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
 
@@ -475,38 +481,109 @@ const LayerList: React.FC<LayerListProps> = ({
           </>
         )}
       </CardContent>
-      <CardFooter className="p-2 flex justify-between space-x-2">
-        <div className="flex items-center gap-2">
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button size="sm" variant="default" className="hover:cursor-pointer">
-                <Upload /> Add Data <ChevronDown className="ml-1 h-3 w-3" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent>
-              <DropdownMenuItem onClick={openDropzone} className="cursor-pointer">
-                <Upload className="mr-2 h-4 w-4" />
-                Upload file
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => setShowPostgisDialog(true)} className="cursor-pointer">
-                <Database className="mr-2 h-4 w-4" />
-                Load PostGIS
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-          {currentMapData.display_as_diff ?
-            <Button size="sm" variant="secondary" onClick={saveAndForkMap} className="hover:cursor-pointer" disabled={isSaving}>
-              {isSaving ? (
-                <>
-                  <Save className="animate-pulse" /> Saving
-                </>
-              ) : (
-                <>
-                  <Save /> Save
-                </>
-              )}
-            </Button>
-            : null}
+      <CardFooter className="flex justify-between items-center px-2">
+        <div className="flex items-center gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  size="sm" 
+                  variant="ghost" 
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  disabled={zoomHistoryIndex <= 0}
+                  onClick={() => {
+                    if (zoomHistoryIndex > 0 && mapRef.current) {
+                      const newIndex = zoomHistoryIndex - 1;
+                      const targetBounds = zoomHistory[newIndex].bounds;
+                      mapRef.current.fitBounds([
+                        [targetBounds[0], targetBounds[1]],
+                        [targetBounds[2], targetBounds[3]]
+                      ], { animate: true });
+                      setZoomHistoryIndex(newIndex);
+                    }
+                  }}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Previous location</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <span className="text-xs text-slate-500 dark:text-gray-400">Zoom</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button 
+                  size="sm" 
+                  variant="ghost" 
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  disabled={zoomHistoryIndex >= zoomHistory.length - 1}
+                  onClick={() => {
+                    if (zoomHistoryIndex < zoomHistory.length - 1 && mapRef.current) {
+                      const newIndex = zoomHistoryIndex + 1;
+                      const targetBounds = zoomHistory[newIndex].bounds;
+                      mapRef.current.fitBounds([
+                        [targetBounds[0], targetBounds[1]],
+                        [targetBounds[2], targetBounds[3]]
+                      ], { animate: true });
+                      setZoomHistoryIndex(newIndex);
+                    }
+                  }}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Next location</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+        <div className="flex items-center gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={openDropzone}>
+                  <Upload className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Upload file</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={() => setShowPostgisDialog(true)}>
+                  <Database className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Load PostGIS</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          {currentMapData.display_as_diff ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={saveAndForkMap} disabled={isSaving}>
+                    {isSaving ? (
+                      <Save className="h-4 w-4 animate-pulse" />
+                    ) : (
+                      <Save className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{isSaving ? 'Saving...' : 'Save'}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
         </div>
 
         {/* PostGIS Connection Dialog */}
@@ -661,7 +738,7 @@ const LayerList: React.FC<LayerListProps> = ({
           projectId={selectedDatabase?.projectId || ''}
         />
       </CardFooter>
-    </Card>
+    </Card >
   );
 };
 
@@ -672,6 +749,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
+  const [zoomHistory, setZoomHistory] = useState<Array<{bounds: [number, number, number, number];}>>([]);
+  const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
 
 
 
@@ -1231,6 +1310,45 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         if (update.ephemeral === true) {
           const action = update as EphemeralAction;
 
+          // Handle zoom actions
+          if (action.status === 'zoom_action' && action.action === 'zoom_to_bounds' && action.bounds && mapRef.current) {
+            // Save current bounds to history before zooming
+            const currentBounds = mapRef.current.getBounds();
+            const currentBoundsArray: [number, number, number, number] = [
+              currentBounds.getWest(),
+              currentBounds.getSouth(), 
+              currentBounds.getEast(),
+              currentBounds.getNorth()
+            ];
+
+            // Add current bounds to history
+            setZoomHistory(prev => {
+              const newHistory = [...prev.slice(0, zoomHistoryIndex + 1), { bounds: currentBoundsArray }];
+              return newHistory;
+            });
+
+            // Update index to point to the newly added current position
+            setZoomHistoryIndex(prev => prev + 1);
+
+            // Zoom to new bounds
+            const [west, south, east, north] = action.bounds;
+            mapRef.current.fitBounds([
+              [west, south],
+              [east, north]
+            ], { animate: true });
+
+            // Add the new bounds to history as well
+            setZoomHistory(prev => {
+              const newHistory = [...prev, { bounds: action.bounds as [number, number, number, number] }];
+              return newHistory;
+            });
+
+            // Update index to point to the new bounds
+            setZoomHistoryIndex(prev => prev + 1);
+
+            return; // Don't process as regular ephemeral action
+          }
+
           if (action.status === 'active') {
             // Add to active actions
             setActiveActions(prev => [...prev, action]);
@@ -1371,6 +1489,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             updateMapData={updateMapData}
             updateProjectData={updateProjectData}
             layerSymbols={layerSymbols}
+            zoomHistory={zoomHistory}
+            zoomHistoryIndex={zoomHistoryIndex}
+            setZoomHistoryIndex={setZoomHistoryIndex}
           />
         )}
         {/* Changelog */}

@@ -421,6 +421,32 @@ async def process_chat_interaction_task(
                         },
                     },
                 },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "zoom_to_bounds",
+                        "description": "Zoom the map to a specific bounding box in WGS84 coordinates. This will save the current zoom location to history and navigate to the new bounds.",
+                        "strict": True,
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "bounds": {
+                                    "type": "array",
+                                    "description": "Bounding box in WGS84 format [west, south, east, north] or [xmin, ymin, xmax, ymax]",
+                                    "items": {"type": "number"},
+                                    "minItems": 4,
+                                    "maxItems": 4,
+                                },
+                                "zoom_description": {
+                                    "type": "string",
+                                    "description": "Optional description of what this zoom operation shows (e.g. 'Downtown Seattle', 'Layer bounds')",
+                                },
+                            },
+                            "required": ["bounds"],
+                            "additionalProperties": False,
+                        },
+                    },
+                },
             ]
 
             # Conditionally add OpenStreetMap tool if API key is configured
@@ -1219,6 +1245,88 @@ async def process_chat_interaction_task(
                                     "error": f"PostgreSQL query error: {str(e)}",
                                     "query": limited_query,
                                 }
+
+                    add_chat_completion_message(
+                        ChatCompletionToolMessageParam(
+                            role="tool",
+                            tool_call_id=tool_call.id,
+                            content=json.dumps(tool_result),
+                        ),
+                    )
+                elif function_name == "zoom_to_bounds":
+                    bounds = tool_args.get("bounds")
+                    description = tool_args.get("zoom_description", "")
+
+                    if not bounds or len(bounds) != 4:
+                        tool_result = {
+                            "status": "error",
+                            "error": "Invalid bounds. Must be an array of 4 numbers [west, south, east, north]",
+                        }
+                    else:
+                        try:
+                            # Validate bounds format
+                            west, south, east, north = bounds
+                            if not all(
+                                isinstance(coord, (int, float)) for coord in bounds
+                            ):
+                                raise ValueError(
+                                    "All bounds coordinates must be numbers"
+                                )
+
+                            if west >= east or south >= north:
+                                raise ValueError(
+                                    "Invalid bounds: west must be < east and south must be < north"
+                                )
+
+                            if not (
+                                -180 <= west <= 180
+                                and -180 <= east <= 180
+                                and -90 <= south <= 90
+                                and -90 <= north <= 90
+                            ):
+                                raise ValueError("Bounds must be in valid WGS84 range")
+
+                            # Send ephemeral action to trigger zoom on frontend
+                            async with kue_ephemeral_action(
+                                map_id,
+                                f"Zooming to bounds{': ' + description if description else ''}",
+                                update_style_json=False,
+                            ):
+                                # Send zoom action via WebSocket
+                                zoom_action = {
+                                    "map_id": map_id,
+                                    "ephemeral": True,
+                                    "action_id": str(uuid.uuid4()),
+                                    "action": "zoom_to_bounds",
+                                    "bounds": bounds,
+                                    "description": description,
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "status": "zoom_action",
+                                }
+
+                                zoom_payload_str = json.dumps(zoom_action)
+
+                                # Broadcast zoom action to WebSocket subscribers
+                                async with subscribers_lock:
+                                    queues = list(subscribers_by_map.get(map_id, []))
+                                for q in queues:
+                                    q.put_nowait(zoom_payload_str)
+
+                            tool_result = {
+                                "status": "success",
+                                "message": f"Zoomed to bounds {bounds}{': ' + description if description else ''}",
+                                "bounds": bounds,
+                            }
+                        except ValueError as e:
+                            tool_result = {
+                                "status": "error",
+                                "error": str(e),
+                            }
+                        except Exception as e:
+                            tool_result = {
+                                "status": "error",
+                                "error": f"Error zooming to bounds: {str(e)}",
+                            }
 
                     add_chat_completion_message(
                         ChatCompletionToolMessageParam(
