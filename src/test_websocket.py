@@ -36,11 +36,11 @@ def sync_test_map_id(sync_auth_client):
     return map_id
 
 
-def test_websocket_successful_connection(sync_test_map_id, sync_auth_client):
+def test_websocket_successful_connection(
+    sync_test_map_id, sync_auth_client, websocket_url_for_map
+):
     # no errors
-    with sync_auth_client.websocket_connect(
-        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
-    ):
+    with sync_auth_client.websocket_connect(websocket_url_for_map(sync_test_map_id)):
         pass
 
 
@@ -58,9 +58,11 @@ def test_websocket_404(sync_auth_client):
     os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
     reason="OPENAI_API_KEY is required for this test",
 )
-def test_websocket_receive_ephemeral_action(sync_test_map_id, sync_auth_client):
+def test_websocket_receive_ephemeral_action(
+    sync_test_map_id, sync_auth_client, websocket_url_for_map
+):
     with sync_auth_client.websocket_connect(
-        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+        websocket_url_for_map(sync_test_map_id)
     ) as websocket:
         response = sync_auth_client.post(
             f"/api/maps/{sync_test_map_id}/messages/send",
@@ -95,9 +97,11 @@ def test_websocket_receive_ephemeral_action(sync_test_map_id, sync_auth_client):
     os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
     reason="OPENAI_API_KEY is required for this test",
 )
-def test_websocket_missed_messages(sync_test_map_id, sync_auth_client):
+def test_websocket_missed_messages(
+    sync_test_map_id, sync_auth_client, websocket_url_for_map
+):
     with sync_auth_client.websocket_connect(
-        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+        websocket_url_for_map(sync_test_map_id)
     ) as websocket:
         response = sync_auth_client.post(
             f"/api/maps/{sync_test_map_id}/messages/send",
@@ -139,7 +143,7 @@ def test_websocket_missed_messages(sync_test_map_id, sync_auth_client):
     time.sleep(4)
 
     with sync_auth_client.websocket_connect(
-        f"/api/maps/ws/{sync_test_map_id}/messages/updates"
+        websocket_url_for_map(sync_test_map_id)
     ) as websocket2:
         # Receive messages until we get the ephemeral action message
         ephemeral_msg = None
