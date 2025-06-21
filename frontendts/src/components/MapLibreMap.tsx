@@ -42,7 +42,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Upload, CheckCircleFill, XCircleFill, Download, Save } from 'react-bootstrap-icons';
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, MessagesSquare } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -60,6 +60,7 @@ import { useNavigate } from 'react-router-dom';
 
 import type { ChatCompletionMessageParam, ChatCompletionUserMessageParam, ChatCompletionMessageToolCall } from "openai/resources/chat/completions";
 import { Activity, Brain, Database, Send } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 
 // Define the type for chat completion messages from the database
@@ -310,7 +311,7 @@ const LayerList: React.FC<LayerListProps> = ({
   }, [currentMapData]);
 
   return (
-    <Card className="absolute top-4 left-4 max-h-[60vh] overflow-auto py-2 rounded-sm border-0 gap-2">
+    <Card className="absolute top-4 left-4 max-h-[60vh] overflow-auto py-2 rounded-sm border-0 gap-2 max-w-72 w-full">
       <CardHeader className="px-2">
         <CardTitle className="text-base flex justify-between items-center gap-2">
           <div className="flex items-center gap-2">
@@ -700,10 +701,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const [messages, setMessages] = useState<ChatCompletionMessageRow[]>([]);
   const [showMessages, setShowMessages] = useState(true);
   // Track the number of tool responses received from messages
-  const toolResponseCount = useMemo(() =>
-    messages.filter(msg => msg.message_json?.role === 'tool').length,
-    [messages]
-  );
+  const toolResponseCount = messages.filter(msg => msg.message_json?.role === 'tool').length;
 
   useEffect(() => {
     if (updateMapData) {
@@ -1239,11 +1237,24 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       // Debug: Opening attributes for layer
     }
   }, [showAttributeTable, selectedLayer]);
+  // Find the last assistant message index
+  let lastAssistantMsgIndex = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    if (messages[i].message_json.role === 'assistant' &&
+      typeof messages[i].message_json.content === 'string') {
+      lastAssistantMsgIndex = i;
+      break;
+    }
+  }
 
-  const lastAssistantMsg: string | null = messages.length > 0 &&
-    messages[messages.length - 1].message_json.role === 'assistant' &&
-    typeof messages[messages.length - 1].message_json.content === 'string'
+  const lastUserMsg: string | null = messages.length > 0 &&
+    messages[messages.length - 1].message_json.role === 'user' &&
+    typeof messages[messages.length - 1].message_json.content === 'string' &&
+    (messages.length - 1) > lastAssistantMsgIndex
     ? messages[messages.length - 1].message_json.content as string
+    : null;
+  const lastAssistantMsg: string | null = lastAssistantMsgIndex >= 0
+    ? messages[lastAssistantMsgIndex].message_json.content as string
     : null;
 
   return (
@@ -1336,14 +1347,31 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             ) : null}
           </div>
         )}
-
-        <Input
-          className="z-30 absolute bottom-12 left-3/5 transform -translate-x-1/2 w-4/5 max-w-xl bg-white dark:bg-gray-800 rounded-md shadow-md"
-          placeholder="Type in for Kue to do something..."
-          value={inputValue}
-          onChange={(e) => setInputValue(e.target.value)}
-          onKeyDown={handleKeyDown}
-        />
+        <div className={`z-30 absolute bottom-12 left-3/5 transform -translate-x-1/2 w-4/5 max-w-xl bg-white dark:bg-gray-800 shadow-md focus-within:ring-2 focus-within:ring-white/30 flex items-center border border-input bg-input rounded-md ${!showMessages ? 'rounded-l-md' : 'rounded-md'}`}>
+          <Input
+            className={`flex-1 border-none shadow-none !bg-transparent focus:!ring-0 focus:!ring-offset-0 focus-visible:!ring-0 focus-visible:!ring-offset-0 focus-visible:!outline-none`}
+            placeholder={lastUserMsg || 'Type in for Kue to do something...'}
+            value={inputValue}
+            onChange={(e) => setInputValue(e.target.value)}
+            onKeyDown={handleKeyDown}
+          />
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={showMessages ? () => setShowMessages(false) : () => setShowMessages(true)}
+                className={`p-2 hover:cursor-pointer ${showMessages
+                  ? 'text-gray-600 hover:text-gray-500'
+                  : 'text-gray-400 hover:text-gray-200'
+                  }`}
+              >
+                <MessagesSquare className="h-4 w-4" />
+              </button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{showMessages ? 'Hide chat' : 'Show chat'}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
 
         {loading && (
           <div className="flex items-center justify-center">
@@ -1357,10 +1385,10 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       {/* Chat sidebar */}
       {showMessages && <div className="z-30 max-h-screen h-full w-80 bg-white dark:bg-gray-800 shadow-md flex flex-col text-sm">
         <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-          <h3 className="font-semibold">Chat</h3>
+          <h3 className="font-semibold">Chat with Kue</h3>
           <button
             onClick={() => setShowMessages(false)}
-            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:cursor-pointer"
           >
             Hide
           </button>
@@ -1368,14 +1396,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         <div className="flex-1 overflow-auto p-2">
           {messages.map((msg, index) => {
             let messageClass = '';
-            let displayName = '';
             let contentDisplay = '';
 
             const messageJson = msg.message_json;
 
             if (messageJson.role === 'user') {
-              messageClass = 'bg-blue-100 dark:bg-blue-900';
-              displayName = 'You';
+              messageClass = 'bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600';
 
               // Handle content that could be string or array with image
               if (typeof messageJson.content === 'string') {
@@ -1392,8 +1418,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
                 contentDisplay = '';
               }
             } else if (messageJson.role === 'assistant') {
-              messageClass = 'bg-gray-100 dark:bg-gray-700';
-              displayName = 'Assistant';
+              messageClass = '';
 
               // Merge assistant text content with any tool_calls
               const parts: string[] = [];
@@ -1410,11 +1435,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
               contentDisplay = parts.join('\n');
             } else if (messageJson.role === 'tool') {
               messageClass = 'bg-purple-100 dark:bg-purple-900';
-              displayName = 'Tool Response';
               contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
             } else if (messageJson.role === 'system') {
               messageClass = 'bg-yellow-100 dark:bg-yellow-900 italic whitespace-pre-wrap';
-              displayName = 'System';
               contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
             }
 
@@ -1427,8 +1450,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             }
 
             return (
-              <div key={`msg-${msg.id || index}-${index}`} className={`mb-3 p-2 rounded text-xs ${messageClass}`}>
-                <span className="font-bold">{displayName}: </span>
+              <div key={`msg-${msg.id || index}-${index}`} className={`mb-3 ${messageClass ? `p-2 rounded ${messageClass}` : ''} text-sm`}>
                 {contentDisplay}
 
                 {/* Render images if present */}
