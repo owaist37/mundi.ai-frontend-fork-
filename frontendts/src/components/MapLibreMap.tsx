@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Map, NavigationControl, ScaleControl, MapOptions } from 'maplibre-gl';
 import Session from "supertokens-auth-react/recipe/session";
 import { useConnectionStatus, usePresence } from 'driftdb-react';
-import useWebSocket from 'react-use-websocket';
+import useWebSocket, { ReadyState } from 'react-use-websocket';
 import React from 'react';
 
 import legendSymbol, { RenderElement } from "legend-symbol-ts";
@@ -41,8 +41,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Upload, CheckCircleFill, XCircleFill, Download, Save } from 'react-bootstrap-icons';
-import { ChevronDown, MessagesSquare } from 'lucide-react';
+import { Upload, Download, Save } from 'react-bootstrap-icons';
+import { ChevronDown, MessagesSquare, SignalHigh, SignalLow } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -297,9 +297,23 @@ const LayerList: React.FC<LayerListProps> = ({
 
             Map Layers
           </div>
-          {readyState === 1 && driftDbConnected ?
-            <span className="text-green-500 inline-block"><CheckCircleFill /></span> :
-            <span className="text-red-500 inline-block"><XCircleFill /></span>}
+          <Tooltip>
+            <TooltipTrigger>
+              {readyState === ReadyState.OPEN && driftDbConnected ?
+                <span className="text-green-500 inline-block"><SignalHigh /></span> :
+                <span className="text-red-500 inline-block"><SignalLow /></span>}
+            </TooltipTrigger>
+            <TooltipContent>
+              <div className="text-sm flex space-x-2">
+                <div className={readyState === ReadyState.OPEN ? 'text-green-300' : 'text-red-300'}>
+                  chat: {readyState === ReadyState.OPEN ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                </div>
+                <div className={driftDbConnected ? 'text-green-300' : 'text-red-300'}>
+                  cursors: {driftDbConnected ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                </div>
+              </div>
+            </TooltipContent>
+          </Tooltip>
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0">
