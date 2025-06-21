@@ -121,6 +121,26 @@ async def get_map_messages(
     map_id: str,
     session: UserContext = Depends(verify_session_required),
 ):
+    all_messages = await get_all_map_messages(map_id, session)
+
+    # Filter for messages with role "user" or "assistant" and no tool_calls
+    filtered_messages = [
+        msg
+        for msg in all_messages["messages"]
+        if msg.get("message_json", {}).get("role") in ["user", "assistant"]
+        and not msg.get("message_json", {}).get("tool_calls")
+    ]
+
+    return {
+        "map_id": map_id,
+        "messages": filtered_messages,
+    }
+
+
+async def get_all_map_messages(
+    map_id: str,
+    session: UserContext,
+):
     with get_db_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
@@ -219,7 +239,7 @@ async def process_chat_interaction_task(
                 break
 
             # Refresh messages to include any new system messages we just added
-            updated_messages_response = await get_map_messages(request, map_id, session)
+            updated_messages_response = await get_all_map_messages(map_id, session)
             openai_messages = [
                 msg["message_json"] for msg in updated_messages_response["messages"]
             ]
@@ -1256,7 +1276,7 @@ async def send_map_message_async(
         redis.set(lock_key, "locked", ex=60)  # 60 second expiry
 
         # Use map state provider to generate system messages
-        messages_response = await get_map_messages(request, map_id, session)
+        messages_response = await get_all_map_messages(map_id, session)
         current_messages = [
             msg["message_json"] for msg in messages_response["messages"]
         ]
@@ -1433,20 +1453,19 @@ async def ws_map_chat(
 
     user_id = user_context.get_user_id()
 
-    # Check if user owns the map
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+    # Check if user owns the map (skip in edit mode since all maps are accessible)
+    async with get_async_db_connection() as conn:
+        map_result = await conn.fetchrow(
             """
             SELECT owner_uuid FROM user_mundiai_maps
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-        map_result = cursor.fetchone()
 
-        if not map_result or map_result["owner_uuid"] != user_id:
-            await ws.close(code=4403)
+        # Only enforce ownership when running in view_only or production mode
+        if not map_result or str(map_result["owner_uuid"]) != user_id:
+            await ws.close(code=4403, reason="Unauthorized")
             return
 
     await ws.accept()
@@ -1492,29 +1511,37 @@ async def ws_map_chat(
                 # Send ephemeral message directly without DB lookup
                 await ws.send_json(notification)
                 continue
-
             # Get the full message from the database using the id from notification
-            with get_db_connection() as conn:
-                cursor = conn.cursor(cursor_factory=RealDictCursor)
-                cursor.execute(
+            async with get_async_db_connection() as conn:
+                message = await conn.fetchrow(
                     """
                     SELECT * FROM chat_completion_messages
-                    WHERE id = %s AND map_id = %s
+                    WHERE id = $1 AND map_id = $2
                     """,
-                    (notification["id"], notification["map_id"]),
+                    notification["id"],
+                    notification["map_id"],
                 )
-                message = cursor.fetchone()
 
                 if message:
-                    # Convert datetime objects to ISO format strings for JSON serialization
+                    # Convert datetime and UUID objects to JSON serializable format
                     message_dict = dict(message)
                     for key, value in message_dict.items():
                         if isinstance(value, datetime):
                             message_dict[key] = value.isoformat()
+                        elif (
+                            hasattr(value, "__class__")
+                            and value.__class__.__name__ == "UUID"
+                        ):
+                            message_dict[key] = str(value)
+                        elif key == "message_json":
+                            message_dict[key] = json.loads(value)
 
-                    # WebSocket message is ready to send
-
-                    await ws.send_json(message_dict)
+                    # Only send if message_json role is user or assistant and no tool_calls
+                    message_json = message_dict.get("message_json", {})
+                    role = message_json.get("role")
+                    tool_calls = message_json.get("tool_calls")
+                    if role in ("user", "assistant") and not tool_calls:
+                        await ws.send_json(message_dict)
     except WebSocketDisconnect:
         pass
     except asyncio.CancelledError:
