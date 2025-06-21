@@ -476,23 +476,38 @@ const LayerList: React.FC<LayerListProps> = ({
         )}
       </CardContent>
       <CardFooter className="p-2 flex justify-between space-x-2">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button size="sm" variant="default" className="hover:cursor-pointer">
-              <Upload /> Add Data <ChevronDown className="ml-1 h-3 w-3" />
+        <div className="flex items-center gap-2">
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button size="sm" variant="default" className="hover:cursor-pointer">
+                <Upload /> Add Data <ChevronDown className="ml-1 h-3 w-3" />
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent>
+              <DropdownMenuItem onClick={openDropzone} className="cursor-pointer">
+                <Upload className="mr-2 h-4 w-4" />
+                Upload file
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => setShowPostgisDialog(true)} className="cursor-pointer">
+                <Database className="mr-2 h-4 w-4" />
+                Load PostGIS
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+          {currentMapData.display_as_diff ?
+            <Button size="sm" variant="secondary" onClick={saveAndForkMap} className="hover:cursor-pointer" disabled={isSaving}>
+              {isSaving ? (
+                <>
+                  <Save className="animate-pulse" /> Saving
+                </>
+              ) : (
+                <>
+                  <Save /> Save
+                </>
+              )}
             </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent>
-            <DropdownMenuItem onClick={openDropzone} className="cursor-pointer">
-              <Upload className="mr-2 h-4 w-4" />
-              Upload file
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowPostgisDialog(true)} className="cursor-pointer">
-              <Database className="mr-2 h-4 w-4" />
-              Load PostGIS
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
+            : null}
+        </div>
 
         {/* PostGIS Connection Dialog */}
         <Dialog open={showPostgisDialog} onOpenChange={setShowPostgisDialog}>
@@ -645,21 +660,6 @@ const LayerList: React.FC<LayerListProps> = ({
           connectionId={selectedDatabase?.connection.connection_id || ''}
           projectId={selectedDatabase?.projectId || ''}
         />
-
-        {currentMapData.display_as_diff ?
-          <Button size="sm" variant="secondary" onClick={saveAndForkMap} className="hover:cursor-pointer" disabled={isSaving}>
-            {isSaving ? (
-              <>
-                <Save className="animate-pulse" /> Saving
-              </>
-            ) : (
-              <>
-                <Save /> Save
-              </>
-            )}
-          </Button>
-          : null}
-        {/* <Button size="sm" variant="secondary" className="hover:cursor-pointer"><FileEarmarkZipFill /> Export</Button> */}
       </CardFooter>
     </Card>
   );

@@ -195,8 +195,8 @@ async def create_map(
         cursor.execute(
             """
             INSERT INTO user_mundiai_maps
-            (id, project_id, owner_uuid, title, description)
-            VALUES (%s, %s, %s, %s, %s)
+            (id, project_id, owner_uuid, title, description, display_as_diff)
+            VALUES (%s, %s, %s, %s, %s, TRUE)
             RETURNING id, title, description, created_on, last_edited
             """,
             (
