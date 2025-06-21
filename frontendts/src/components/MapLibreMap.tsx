@@ -356,7 +356,7 @@ const LayerList: React.FC<LayerListProps> = ({
                     <li className={`${liClassName} flex items-center justify-between px-2 py-1 gap-2 cursor-pointer group`}>
                       <div className="flex items-center gap-2">
                         <span className="font-medium truncate" title={layerDetails.name}>
-                          {layerDetails.name}
+                          {layerDetails.name.length > 26 ? layerDetails.name.slice(0, 26) + '...' : layerDetails.name}
                         </span>
                         <span className="text-xs text-slate-500 dark:text-gray-400">
                           {layerDetails.feature_count ?? 'N/A'}
