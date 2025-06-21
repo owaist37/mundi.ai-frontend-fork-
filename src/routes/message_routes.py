@@ -1371,16 +1371,6 @@ async def send_map_message_async(
     with get_db_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # If the OpenAI API key is not set, error immediately
-        if (
-            not os.environ.get("OPENAI_API_KEY")
-            or os.environ.get("OPENAI_API_KEY") == ""
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Server running without OPENAI_API_KEY environment variable",
-            )
-
         # Authenticate and check map
         cursor.execute(
             "SELECT owner_uuid FROM user_mundiai_maps WHERE id = %s AND soft_deleted_at IS NULL",
