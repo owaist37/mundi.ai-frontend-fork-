@@ -974,12 +974,6 @@ async def get_map_style_internal(
                 min_val = metadata["raster_value_stats_b1"]["min"]
                 max_val = metadata["raster_value_stats_b1"]["max"]
                 cog_url += f"#color:BrewerSpectral9,{min_val},{max_val},c"
-            else:
-                print(
-                    f"WARN: No raster_value_stats_b1 found for layer {layer_id}",
-                    metadata,
-                    layer,
-                )
 
             style_json["sources"][source_id] = {
                 "type": "raster",
@@ -1131,14 +1125,14 @@ async def upload_layer(
     with get_db_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
-        # First check if the map exists and get its project_id
+        # First check if the map exists and user owns it, then get its project_id
         cursor.execute(
             """
             SELECT m.id, m.project_id
             FROM user_mundiai_maps m
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = %s AND m.owner_uuid = %s AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            (map_id, session.get_user_id()),
         )
 
         map_result = cursor.fetchone()
