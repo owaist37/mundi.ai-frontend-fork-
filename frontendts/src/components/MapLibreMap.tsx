@@ -15,19 +15,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import {
-  ContextMenu,
-  ContextMenuContent,
-  ContextMenuItem,
-  ContextMenuSub,
-  ContextMenuSubContent,
-  ContextMenuSubTrigger,
-  ContextMenuTrigger,
-} from "@/components/ui/context-menu";
+
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
+  DropdownMenuPortal,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
@@ -42,7 +38,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { ChevronDown, MessagesSquare, SignalHigh, SignalLow } from 'lucide-react';
+import { ChevronDown, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -111,6 +107,15 @@ interface LayerListProps {
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
+}
+
+function renderTree(tree: RenderElement | null): JSX.Element | null {
+  if (!tree) return null;
+  return React.createElement(
+    tree.element,
+    tree.attributes,
+    tree.children?.map(renderTree)
+  );
 }
 
 const LayerList: React.FC<LayerListProps> = ({
@@ -346,9 +351,9 @@ const LayerList: React.FC<LayerListProps> = ({
               }
 
               return (
-                <ContextMenu key={layerDetails.id}>
-                  <ContextMenuTrigger>
-                    <li className={`${liClassName} flex items-center justify-between px-2 py-1 gap-2`}>
+                <DropdownMenu key={layerDetails.id}>
+                  <DropdownMenuTrigger asChild>
+                    <li className={`${liClassName} flex items-center justify-between px-2 py-1 gap-2 cursor-pointer group`}>
                       <div className="flex items-center gap-2">
                         <span className="font-medium truncate" title={layerDetails.name}>
                           {layerDetails.name}
@@ -358,12 +363,17 @@ const LayerList: React.FC<LayerListProps> = ({
                         </span>
                       </div>
                       <div className="w-4 h-4 flex-shrink-0">
-                        <LayerLegendSymbol layerDetails={layerDetails} />
+                        <div className="group-hover:hidden">
+                          <LayerLegendSymbol layerDetails={layerDetails} />
+                        </div>
+                        <div className="hidden group-hover:block">
+                          <MoreHorizontal className="w-4 h-4" />
+                        </div>
                       </div>
                     </li>
-                  </ContextMenuTrigger>
-                  <ContextMenuContent>
-                    <ContextMenuItem
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent>
+                    <DropdownMenuItem
                       disabled={status === 'removed'}
                       onClick={() => {
                         if (status === 'removed') return;
@@ -379,8 +389,8 @@ const LayerList: React.FC<LayerListProps> = ({
                       }}
                     >
                       Zoom to layer
-                    </ContextMenuItem>
-                    <ContextMenuItem
+                    </DropdownMenuItem>
+                    <DropdownMenuItem
                       onClick={() => {
                         if (status === 'removed') return;
 
@@ -390,15 +400,19 @@ const LayerList: React.FC<LayerListProps> = ({
                       }}
                     >
                       View attributes
-                    </ContextMenuItem>
-                    <ContextMenuSub>
-                      <ContextMenuSubTrigger disabled={status === 'removed'}>Export layer as</ContextMenuSubTrigger>
-                      <ContextMenuSubContent>
-                        <ContextMenuItem>Shapefile</ContextMenuItem>
-                        <ContextMenuItem>GeoPackage</ContextMenuItem>
-                      </ContextMenuSubContent>
-                    </ContextMenuSub>
-                    <ContextMenuItem
+                    </DropdownMenuItem>
+                    <DropdownMenuSub>
+                      <DropdownMenuSubTrigger disabled={status === 'removed'}>
+                        Export layer as
+                      </DropdownMenuSubTrigger>
+                      <DropdownMenuPortal>
+                        <DropdownMenuSubContent>
+                          <DropdownMenuItem>Shapefile</DropdownMenuItem>
+                          <DropdownMenuItem>GeoPackage</DropdownMenuItem>
+                        </DropdownMenuSubContent>
+                      </DropdownMenuPortal>
+                    </DropdownMenuSub>
+                    <DropdownMenuItem
                       onClick={() => {
                         if (status === 'removed') {
                           toast.info('Layer is already removed.'); // Or implement restore functionality
@@ -424,9 +438,9 @@ const LayerList: React.FC<LayerListProps> = ({
                       }}
                     >
                       {status === 'removed' ? 'Layer marked as removed' : 'Delete layer'}
-                    </ContextMenuItem>
-                  </ContextMenuContent>
-                </ContextMenu>
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               );
             })}
           </ul>
@@ -930,6 +944,37 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     };
   }, [otherClientPositions, kuePositions]);
 
+  const loadLegendSymbols = (map: Map) => {
+    const style = map.getStyle();
+
+    // Check if style and style.layers exist before proceeding
+    if (!style || !style.layers) return;
+
+    mapData?.layers.forEach((layer) => {
+      const layerId = layer.id;
+
+      const mapLayer = style.layers.find(
+        (styleLayer) => "source" in styleLayer && (styleLayer as any).source === layerId
+      );
+
+      if (mapLayer) {
+        const tree: RenderElement | null = legendSymbol({
+          sprite: style.sprite,
+          zoom: map.getZoom(),
+          layer: mapLayer as any
+        });
+
+        const symbolElement = renderTree(tree);
+        if (symbolElement) {
+          setLayerSymbols(prev => ({
+            ...prev,
+            [layerId]: symbolElement as JSX.Element
+          }));
+        }
+      }
+    });
+  }
+
   // Separate effect for map initialization (only runs once)
   useEffect(() => {
     if (!mapContainerRef.current || mapRef.current) return;
@@ -983,6 +1028,10 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         setLoading(false);
       });
 
+      newMap.on('style.load', () => {
+        loadLegendSymbols(newMap);
+      });
+
       // Clean up on unmount
       return () => {
         newMap.remove();
@@ -1021,9 +1070,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
         // Update the style using setStyle
         map.setStyle(newStyle);
-
-        // Bust the layer symbol cache by clearing it
-        setLayerSymbols({});
+        loadLegendSymbols(map);
 
         // If we haven't zoomed yet, zoom to the style's center and zoom level
         // setStyle on purpose does not reset the zoom/center, but it's nice to load a map
@@ -1063,52 +1110,6 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       }
     }
   }, [pointsGeoJSON]);
-
-  // Generate layer symbols when map data changes
-  useEffect(() => {
-    const map = mapRef.current;
-    if (map && map.isStyleLoaded() && mapData?.layers) {
-      const style = map.getStyle();
-
-      mapData.layers.forEach((layer) => {
-        const layerId = layer.id;
-
-        // Skip if we already have a symbol for this layer
-        if (layerSymbols[layerId]) return;
-
-        const mapLayer = style.layers.find(
-          (styleLayer) => "source" in styleLayer && (styleLayer as any).source === layerId
-        );
-
-        if (mapLayer) {
-          // Call legendSymbol as a function and render the result to JSX
-
-          const tree: RenderElement | null = legendSymbol({
-            sprite: style.sprite,
-            zoom: map.getZoom(),
-            layer: mapLayer as any
-          });
-
-          function renderTree(tree: RenderElement | null): JSX.Element | null {
-            if (!tree) return null;
-            return React.createElement(
-              tree.element,
-              tree.attributes,
-              tree.children?.map(renderTree)
-            );
-          }
-
-          const symbolElement = renderTree(tree);
-          if (symbolElement) {
-            setLayerSymbols(prev => ({
-              ...prev,
-              [layerId]: symbolElement as JSX.Element
-            }));
-          }
-        }
-      });
-    }
-  }, [mapData, layerSymbols]);
 
   const status = useConnectionStatus();
   const [inputValue, setInputValue] = useState('');
