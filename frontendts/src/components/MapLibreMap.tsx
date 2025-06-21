@@ -36,7 +36,6 @@ import {
 } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
 import { ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
 
@@ -304,27 +303,27 @@ const LayerList: React.FC<LayerListProps> = ({
       <CardHeader className="px-2">
         <CardTitle className="text-base flex justify-between items-center gap-2">
           <div className="flex items-center gap-2">
-            <SidebarTrigger />
+            <Tooltip>
+              <TooltipTrigger>
+                {readyState === ReadyState.OPEN && driftDbConnected ?
+                  <span className="text-green-300 inline-block"><SignalHigh /></span> :
+                  <span className="text-red-300 inline-block"><SignalLow /></span>}
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="text-sm flex space-x-2">
+                  <div className={readyState === ReadyState.OPEN ? 'text-green-300' : 'text-red-300'}>
+                    chat: {readyState === ReadyState.OPEN ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                  </div>
+                  <div className={driftDbConnected ? 'text-green-300' : 'text-red-300'}>
+                    cursors: {driftDbConnected ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
 
             Map Layers
           </div>
-          <Tooltip>
-            <TooltipTrigger>
-              {readyState === ReadyState.OPEN && driftDbConnected ?
-                <span className="text-green-500 inline-block"><SignalHigh /></span> :
-                <span className="text-red-500 inline-block"><SignalLow /></span>}
-            </TooltipTrigger>
-            <TooltipContent>
-              <div className="text-sm flex space-x-2">
-                <div className={readyState === ReadyState.OPEN ? 'text-green-300' : 'text-red-300'}>
-                  chat: {readyState === ReadyState.OPEN ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
-                </div>
-                <div className={driftDbConnected ? 'text-green-300' : 'text-red-300'}>
-                  cursors: {driftDbConnected ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
-                </div>
-              </div>
-            </TooltipContent>
-          </Tooltip>
+
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0">
@@ -486,9 +485,9 @@ const LayerList: React.FC<LayerListProps> = ({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button 
-                  size="sm" 
-                  variant="ghost" 
+                <Button
+                  size="sm"
+                  variant="ghost"
                   className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
                   disabled={zoomHistoryIndex <= 0}
                   onClick={() => {
@@ -515,9 +514,9 @@ const LayerList: React.FC<LayerListProps> = ({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button 
-                  size="sm" 
-                  variant="ghost" 
+                <Button
+                  size="sm"
+                  variant="ghost"
                   className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
                   disabled={zoomHistoryIndex >= zoomHistory.length - 1}
                   onClick={() => {

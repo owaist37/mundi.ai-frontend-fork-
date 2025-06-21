@@ -12,7 +12,9 @@ import {
   SidebarMenuItem,
   useSidebar,
 } from "@/components/ui/sidebar"
-import { LogOut, Map, LogIn, UserPlus, KeyRound, BookOpen, Cloud } from "lucide-react"
+import { LogOut, Map, LogIn, UserPlus, KeyRound, BookOpen, Cloud, PanelRightClose, PanelRightOpen } from "lucide-react"
+import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 
 import Session from "supertokens-auth-react/recipe/session";
 import { signOut } from "supertokens-auth-react/recipe/session";
@@ -25,7 +27,7 @@ import { ProjectState } from "@/lib/types";
 
 export function AppSidebar({ projects }: { projects: ProjectState }) {
   const sessionContext = Session.useSessionContext();
-  const { state } = useSidebar();
+  const { state, toggleSidebar } = useSidebar();
 
   async function onLogout() {
     await signOut();
@@ -34,17 +36,51 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
 
   return (
     <Sidebar collapsible="icon" data-theme="light">
-      <SidebarHeader className="flex items-center p-4">
+      <SidebarHeader className="flex flex-col items-center p-4">
         {state === "collapsed" ? (
-          <a href="https://mundi.ai/" target="_blank" className="w-8 h-8">
-            <img src={MLightSvg} alt="M" className="w-full h-full dark:hidden" />
-            <img src={MDarkSvg} alt="M" className="w-full h-full hidden dark:block" />
-          </a>
+          <>
+            <a href="https://mundi.ai/" target="_blank" className="w-8 h-8">
+              <img src={MLightSvg} alt="M" className="w-full h-full dark:hidden" />
+              <img src={MDarkSvg} alt="M" className="w-full h-full hidden dark:block" />
+            </a>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleSidebar}
+                  className="w-8 h-8 mt-2 cursor-pointer"
+                >
+                  <PanelRightOpen className="w-4 h-4 scale-x-[-1]" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Expand Sidebar</p>
+              </TooltipContent>
+            </Tooltip>
+          </>
         ) : (
-          <a href="https://docs.mundi.ai/" target="_blank" className="h-8">
-            <img src={MundiLightSvg} alt="Mundi" className="h-full dark:hidden" />
-            <img src={MundiDarkSvg} alt="Mundi" className="h-full hidden dark:block" />
-          </a>
+          <div className="flex items-center justify-between w-full">
+            <a href="https://docs.mundi.ai/" target="_blank" className="h-8">
+              <img src={MundiLightSvg} alt="Mundi" className="h-full dark:hidden" />
+              <img src={MundiDarkSvg} alt="Mundi" className="h-full hidden dark:block" />
+            </a>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={toggleSidebar}
+                  className="w-8 h-8 cursor-pointer"
+                >
+                  <PanelRightClose className="w-4 h-4 scale-x-[-1]" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">
+                <p>Collapse Sidebar</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         )}
       </SidebarHeader>
       <SidebarContent>
