@@ -442,7 +442,7 @@ async def process_chat_interaction_task(
                                     "description": "Optional description of what this zoom operation shows (e.g. 'Downtown Seattle', 'Layer bounds')",
                                 },
                             },
-                            "required": ["bounds"],
+                            "required": ["bounds", "zoom_description"],
                             "additionalProperties": False,
                         },
                     },

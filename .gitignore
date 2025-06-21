@@ -3,6 +3,5 @@ __pycache__
 test_output
 .env
 data
-
-**/.claude/settings.local.json
+src/conftest.py
 *.aux.xml

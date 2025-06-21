@@ -136,6 +136,14 @@ def sync_auth_client(sync_client):
     yield sync_client
 
 
+@pytest.fixture
+def websocket_url_for_map(sync_auth_client):
+    def _get_url(map_id):
+        return f"/api/maps/ws/{map_id}/messages/updates"
+
+    return _get_url
+
+
 def pytest_configure(config):
     """Configure pytest markers."""
     config.addinivalue_line("markers", "s3: mark test as requiring S3/MinIO access")
