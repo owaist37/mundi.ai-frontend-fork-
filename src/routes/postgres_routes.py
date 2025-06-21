@@ -663,16 +663,15 @@ async def get_map_layers(
         if not layer_ids:
             layers = []
         else:
-            # Get all layers by their IDs
-            placeholders = ",".join(["%s"] * len(layer_ids))
+            # Get all layers by their IDs using ANY() instead of f-string
             cursor.execute(
-                f"""
+                """
                 SELECT layer_id as id, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count
                 FROM map_layers
-                WHERE layer_id IN ({placeholders})
+                WHERE layer_id = ANY(%s)
                 ORDER BY id
                 """,
-                layer_ids,
+                (layer_ids,),
             )
 
             # Get all layers
