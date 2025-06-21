@@ -43,6 +43,7 @@ jobs:
         working-directory: ./docs
         env:
           NODE_ENV: production
+          POSTHOG_API_KEY: ${{ secrets.POSTHOG_API_KEY }}
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
