@@ -29,12 +29,18 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   }, [sessionContext]);
 
   const fetchProjects = async () => {
-    const response = await fetch('/api/projects/');
-    if (!response.ok) {
-      throw new Error('Failed to fetch projects');
+    try {
+      const response = await fetch('/api/projects/');
+      if (!response.ok) {
+        throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
+      }
+      const data = await response.json();
+      setProjects(data.projects || []);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch projects');
+      setProjects([]);
     }
-    const data = await response.json();
-    setProjects(data.projects || []);
   };
 
   const handleCreateMap = async () => {
@@ -115,7 +121,23 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
       </div>
 
       {error ? (
-        <div className="text-red-500">Error: {error}</div>
+        <Card className="border-red-500 border-2 text-white flex flex-col items-center justify-center p-6">
+          <div className="h-8 w-8 mb-2 text-red-500 flex items-center justify-center">
+            <svg className="h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium text-red-400">Error Loading Maps</h3>
+          <p className="text-sm text-gray-400 text-center mt-1">
+            {error}
+          </p>
+          <Button
+            onClick={fetchProjects}
+            className="mt-4 bg-[#C1FA3D] hover:bg-[#B8E92B] text-black hover:cursor-pointer"
+          >
+            Try Again
+          </Button>
+        </Card>
       ) : projects.length === 0 ? (
         <Card className="border-dashed border-2 border-slate-500 text-white flex flex-col items-center justify-center p-6">
           <Plus className="h-8 w-8 mb-2 text-[#e2420d]" />
