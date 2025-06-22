@@ -241,6 +241,9 @@ async def save_and_fork_map(
     request: Request,
     map_id: str,
     session: UserContext = Depends(verify_session_required),
+    postgis_provider: Callable = Depends(get_postgis_provider),
+    layer_describer: LayerDescriber = Depends(get_layer_describer),
+    chat_args: ChatArgsProvider = Depends(get_chat_args_provider),
 ):
     """
     Create a fork of an existing map with a new map ID.
@@ -336,7 +339,13 @@ async def save_and_fork_map(
         diff_summary = {"diff_summary": "first map"}
         if prev_map_id:
             diff_summary = await summarize_map_diff(
-                request, prev_map_id, map_id, session
+                request,
+                prev_map_id,
+                map_id,
+                session,
+                postgis_provider=postgis_provider,
+                layer_describer=layer_describer,
+                chat_args=chat_args,
             )
 
         # Update project to include the new map
