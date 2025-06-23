@@ -405,6 +405,10 @@ async def process_chat_interaction_task(
                         "parameters": {
                             "type": "object",
                             "properties": {
+                                "postgis_connection_id": {
+                                    "type": "string",
+                                    "description": "User's PostGIS connection ID to query against",
+                                },
                                 "sql_query": {
                                     "type": "string",
                                     "description": "SQL query to execute. Examples: 'SELECT COUNT(*) FROM table_name', 'SELECT * FROM spatial_table LIMIT 10', 'SELECT column_name FROM information_schema.columns WHERE table_name = \"my_table\"'. Use standard SQL syntax.",
@@ -416,7 +420,7 @@ async def process_chat_interaction_task(
                                     "maximum": 1000,
                                 },
                             },
-                            "required": ["sql_query"],
+                            "required": ["postgis_connection_id", "sql_query"],
                             "additionalProperties": False,
                         },
                     },
@@ -1123,37 +1127,34 @@ async def process_chat_interaction_task(
                         ),
                     )
                 elif function_name == "query_postgis_database":
+                    postgis_connection_id = tool_args.get("postgis_connection_id")
                     sql_query = tool_args.get("sql_query")
                     limit_rows = tool_args.get("limit_rows", 100)
 
-                    if not sql_query:
+                    if not postgis_connection_id or not sql_query:
                         tool_result = {
                             "status": "error",
-                            "error": "Missing required parameter: sql_query",
+                            "error": "Missing required parameters (postgis_connection_id or sql_query)",
                         }
                     else:
-                        # Get the project's PostgreSQL connection URIs
+                        # Verify the PostGIS connection exists and user has access
                         cursor.execute(
                             """
-                            SELECT ppc.connection_uri
-                            FROM project_postgres_connections ppc
-                            JOIN user_mundiai_maps m ON m.project_id = ppc.project_id
-                            WHERE m.id = %s
-                            ORDER BY ppc.created_at ASC
-                            LIMIT 1
+                            SELECT connection_uri FROM project_postgres_connections
+                            WHERE id = %s AND user_id = %s
                             """,
-                            (map_id,),
+                            (postgis_connection_id, user_id),
                         )
-                        project_result = cursor.fetchone()
+                        connection_result = cursor.fetchone()
 
-                        if not project_result:
+                        if not connection_result:
                             tool_result = {
                                 "status": "error",
-                                "error": "No PostgreSQL connections configured for this project",
+                                "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
                             }
                         else:
-                            # Use the first connection URI
-                            connection_uri = project_result["connection_uri"]
+                            # Use the connection URI
+                            connection_uri = connection_result["connection_uri"]
 
                             try:
                                 # Clamp limit_rows to be between 1 and 1000

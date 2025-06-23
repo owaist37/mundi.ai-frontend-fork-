@@ -786,7 +786,11 @@ async def get_map_description(
                 content.append("**Available Tables:** " + tables)
 
             except Exception:
-                continue
+                content.append(
+                    f'\n## PostGIS "{connection["connection_name"]}" (ID {connection["id"]})\n'
+                )
+
+                content.append("Exception while connecting to database.")
 
         # Get all layers for this map
         cursor.execute(
