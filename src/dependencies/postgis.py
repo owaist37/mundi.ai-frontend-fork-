@@ -14,16 +14,20 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import asyncpg
+import os
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from .postgres_connection import PostgresConnectionManager
+from redis import Redis
+
+redis = Redis(
+    host=os.environ["REDIS_HOST"],
+    port=int(os.environ["REDIS_PORT"]),
+    decode_responses=True,
+)
 
 
 class PostGISProvider(ABC):
-    @abstractmethod
-    async def __call__(self, connection_uri: str) -> str:
-        pass
-
     @abstractmethod
     async def get_tables_by_connection_id(
         self, connection_id: str, connection_manager: PostgresConnectionManager
@@ -32,26 +36,18 @@ class PostGISProvider(ABC):
 
 
 class DefaultPostGISProvider(PostGISProvider):
-    async def __call__(self, connection_uri: str) -> str:
-        postgres_conn = await asyncpg.connect(connection_uri)
-        try:
-            tables = await postgres_conn.fetch("""
-                SELECT
-                    t.table_name,
-                    t.table_schema
-                FROM information_schema.tables t
-                WHERE t.table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
-                AND t.table_type = 'BASE TABLE'
-                ORDER BY t.table_schema, t.table_name
-            """)
-
-            return str([dict(table) for table in tables])
-        finally:
-            await postgres_conn.close()
-
     async def get_tables_by_connection_id(
         self, connection_id: str, connection_manager: PostgresConnectionManager
     ) -> str:
+        cache_key = f"postgis:{connection_id}:tables"
+
+        try:
+            cached_result = redis.get(cache_key)
+            if cached_result:
+                return cached_result
+        except Exception:
+            pass
+
         postgres_conn = await connection_manager.connect_to_postgres(connection_id)
         try:
             tables = await postgres_conn.fetch("""
@@ -64,7 +60,14 @@ class DefaultPostGISProvider(PostGISProvider):
                 ORDER BY t.table_schema, t.table_name
             """)
 
-            return str([dict(table) for table in tables])
+            result = str([dict(table) for table in tables])
+
+            try:
+                redis.setex(cache_key, 3600, result)
+            except Exception:
+                pass
+
+            return result
         finally:
             await postgres_conn.close()
 
