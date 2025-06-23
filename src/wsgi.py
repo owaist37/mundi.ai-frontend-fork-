@@ -159,10 +159,12 @@ async def mock_session_refresh(request: Request):
 @app.exception_handler(StarletteHTTPException)
 async def spa_server(request: Request, exc: StarletteHTTPException):
     # Don't handle API 404s - let them bubble up as real 404s
-    if request.url.path.startswith("/api/") or request.url.path.startswith(
-        "/supertokens/"
+    if (
+        request.url.path.startswith("/api/")
+        or request.url.path.startswith("/supertokens/")
+        or request.url.path.startswith("/mcp")
     ):
-        # Return standard 404 response for API routes
+        # Return standard 404 response for API routes and MCP routes
         return JSONResponse(
             status_code=exc.status_code, content={"detail": str(exc.detail)}
         )

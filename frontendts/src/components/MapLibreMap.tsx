@@ -106,7 +106,7 @@ interface LayerListProps {
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
-  zoomHistory: Array<{bounds: [number, number, number, number];}>;
+  zoomHistory: Array<{ bounds: [number, number, number, number]; }>;
   zoomHistoryIndex: number;
   setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
 }
@@ -755,7 +755,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
-  const [zoomHistory, setZoomHistory] = useState<Array<{bounds: [number, number, number, number];}>>([]);
+  const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number]; }>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
 
 
@@ -1322,7 +1322,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             const currentBounds = mapRef.current.getBounds();
             const currentBoundsArray: [number, number, number, number] = [
               currentBounds.getWest(),
-              currentBounds.getSouth(), 
+              currentBounds.getSouth(),
               currentBounds.getEast(),
               currentBounds.getNorth()
             ];
