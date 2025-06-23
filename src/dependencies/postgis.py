@@ -16,6 +16,7 @@
 import asyncpg
 from abc import ABC, abstractmethod
 from functools import lru_cache
+from .postgres_connection import PostgresConnectionManager
 
 
 class PostGISProvider(ABC):
@@ -23,10 +24,35 @@ class PostGISProvider(ABC):
     async def __call__(self, connection_uri: str) -> str:
         pass
 
+    @abstractmethod
+    async def get_tables_by_connection_id(
+        self, connection_id: str, connection_manager: PostgresConnectionManager
+    ) -> str:
+        pass
+
 
 class DefaultPostGISProvider(PostGISProvider):
     async def __call__(self, connection_uri: str) -> str:
         postgres_conn = await asyncpg.connect(connection_uri)
+        try:
+            tables = await postgres_conn.fetch("""
+                SELECT
+                    t.table_name,
+                    t.table_schema
+                FROM information_schema.tables t
+                WHERE t.table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
+                AND t.table_type = 'BASE TABLE'
+                ORDER BY t.table_schema, t.table_name
+            """)
+
+            return str([dict(table) for table in tables])
+        finally:
+            await postgres_conn.close()
+
+    async def get_tables_by_connection_id(
+        self, connection_id: str, connection_manager: PostgresConnectionManager
+    ) -> str:
+        postgres_conn = await connection_manager.connect_to_postgres(connection_id)
         try:
             tables = await postgres_conn.fetch("""
                 SELECT

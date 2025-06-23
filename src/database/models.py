@@ -108,6 +108,9 @@ class ProjectPostgresConnection(Base):
     updated_at = Column(
         TIMESTAMP(timezone=True), server_default=func.current_timestamp()
     )
+    last_error_text = Column(Text, nullable=True)
+    last_error_timestamp = Column(TIMESTAMP(timezone=True), nullable=True)
+    soft_deleted_at = Column(TIMESTAMP(timezone=True))
 
     # Relationships
     project = relationship("UserMundiaiProject", back_populates="postgres_connections")

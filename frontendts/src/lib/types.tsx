@@ -35,6 +35,8 @@ export interface PostgresConnectionDetails {
   connection_id: string;
   table_count: number;
   friendly_name: string;
+  last_error_text?: string;
+  last_error_timestamp?: string;
 }
 
 export interface MapData {

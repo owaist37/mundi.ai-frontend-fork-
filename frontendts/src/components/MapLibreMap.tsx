@@ -462,26 +462,77 @@ const LayerList: React.FC<LayerListProps> = ({
             </div>
             <ul className="space-y-1 text-sm">
               {project.postgres_connections.map((connection, index) => (
-                <li
-                  key={index}
-                  className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
-                  onClick={() => handleDatabaseClick(connection, project.id)}
-                >
-                  <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
-                    <Database className="h-4 w-4" />
-                    {connection.friendly_name}
-                  </span>
-                  <div className="flex-shrink-0">
-                    <div className="group-hover:hidden">
-                      <span className="text-xs text-slate-500 dark:text-gray-400">
-                        {connection.table_count} tables
-                      </span>
+                connection.last_error_text ? (
+                  <TooltipProvider key={index}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <li
+                          className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group`}
+                          onClick={async () => {
+                            try {
+                              const response = await fetch(`/api/projects/${project.id}/postgis-connections/${connection.connection_id}`, {
+                                method: 'DELETE',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                },
+                              });
+
+                              if (response.ok) {
+                                toast.success('Database connection deleted successfully');
+                                updateProjectData(project.id);
+                                updateMapData(currentMapData.map_id);
+                              } else {
+                                const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+                                toast.error(`Failed to delete connection: ${errorData.detail || response.statusText}`);
+                              }
+                            } catch (error) {
+                              toast.error(`Network error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                            }
+                          }}
+                        >
+                          <span className="font-medium truncate flex items-center gap-2 text-red-400">
+                            <span className="text-red-400">⚠</span>
+                            Connection Error
+                          </span>
+                          <div className="flex-shrink-0">
+                            <div className="group-hover:hidden">
+                              <span className="text-xs text-red-400">Error</span>
+                            </div>
+                            <div className="hidden group-hover:block w-4 h-4">
+                              <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </div>
+                          </div>
+                        </li>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{connection.last_error_text}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <li
+                    key={index}
+                    className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
+                    onClick={() => handleDatabaseClick(connection, project.id)}
+                  >
+                    <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
+                      <Database className="h-4 w-4" />
+                      {connection.friendly_name}
+                    </span>
+                    <div className="flex-shrink-0">
+                      <div className="group-hover:hidden">
+                        <span className="text-xs text-slate-500 dark:text-gray-400">
+                          {connection.table_count} tables
+                        </span>
+                      </div>
+                      <div className="hidden group-hover:block w-4 h-4">
+                        <BookOpenText className="w-4 h-4" />
+                      </div>
                     </div>
-                    <div className="hidden group-hover:block w-4 h-4">
-                      <BookOpenText className="w-4 h-4" />
-                    </div>
-                  </div>
-                </li>
+                  </li>
+                )
               ))}
             </ul>
           </>
