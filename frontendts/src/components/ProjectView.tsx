@@ -143,8 +143,21 @@ export default function ProjectView() {
   const onDrop = useCallback((acceptedFiles: File[]) => {
     if (!versionId || acceptedFiles.length === 0) return;
 
+    const maxFileSize = 100 * 1024 * 1024; // 100MB in bytes
+
+    // Filter out files that are too large
+    const validFiles = acceptedFiles.filter(file => {
+      if (file.size > maxFileSize) {
+        toast.error(`File "${file.name}" is too large. Files over 100MB aren't supported yet.`);
+        return false;
+      }
+      return true;
+    });
+
+    if (validFiles.length === 0) return;
+
     // Create uploading file entries
-    const newUploadingFiles: UploadingFile[] = acceptedFiles.map(file => ({
+    const newUploadingFiles: UploadingFile[] = validFiles.map(file => ({
       id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
       file,
       progress: 0,
