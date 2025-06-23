@@ -37,7 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
+import { BookOpenText, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -464,16 +464,23 @@ const LayerList: React.FC<LayerListProps> = ({
               {project.postgres_connections.map((connection, index) => (
                 <li
                   key={index}
-                  className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
+                  className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
                   onClick={() => handleDatabaseClick(connection, project.id)}
                 >
                   <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
                     <Database className="h-4 w-4" />
                     {connection.friendly_name}
                   </span>
-                  <span className="text-xs text-slate-500 dark:text-gray-400">
-                    {connection.table_count} tables
-                  </span>
+                  <div className="flex-shrink-0">
+                    <div className="group-hover:hidden">
+                      <span className="text-xs text-slate-500 dark:text-gray-400">
+                        {connection.table_count} tables
+                      </span>
+                    </div>
+                    <div className="hidden group-hover:block w-4 h-4">
+                      <BookOpenText className="w-4 h-4" />
+                    </div>
+                  </div>
                 </li>
               ))}
             </ul>
