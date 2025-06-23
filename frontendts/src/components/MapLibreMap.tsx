@@ -76,6 +76,15 @@ interface ErrorEntry {
   shouldOverrideMessages: boolean;
 }
 
+// Add interface for tracking upload progress
+interface UploadingFile {
+  id: string;
+  file: File;
+  progress: number;
+  status: 'uploading' | 'completed' | 'error';
+  error?: string;
+}
+
 interface MapLibreMapProps {
   mapId: string;
   width?: string;
@@ -86,6 +95,7 @@ interface MapLibreMapProps {
   openDropzone?: () => void;
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
+  uploadingFiles?: UploadingFile[];
 }
 interface LayerWithStatus extends MapLayer {
   status: 'added' | 'removed' | 'edited' | 'existing';
@@ -109,6 +119,7 @@ interface LayerListProps {
   zoomHistory: Array<{ bounds: [number, number, number, number]; }>;
   zoomHistoryIndex: number;
   setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
+  uploadingFiles?: UploadingFile[];
 }
 
 function renderTree(tree: RenderElement | null): JSX.Element | null {
@@ -138,6 +149,7 @@ const LayerList: React.FC<LayerListProps> = ({
   zoomHistory,
   zoomHistoryIndex,
   setZoomHistoryIndex,
+  uploadingFiles,
 }) => {
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
 
@@ -452,6 +464,55 @@ const LayerList: React.FC<LayerListProps> = ({
         ) : (
           <p className="text-sm text-slate-500 px-2">No layers to display.</p>
         )}
+
+        {/* Upload Progress section */}
+        {uploadingFiles && uploadingFiles.length > 0 && (
+          <>
+            <div className="flex items-center px-2 py-2">
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+              <span className="px-3 text-xs font-medium text-gray-600 dark:text-gray-400">UPLOADING</span>
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+            </div>
+            <ul className="space-y-2 text-sm px-2">
+              {uploadingFiles.map((uploadingFile) => (
+                <li key={uploadingFile.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
+                      {uploadingFile.file.name}
+                    </span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                      {uploadingFile.status === 'uploading' && `${uploadingFile.progress}%`}
+                      {uploadingFile.status === 'completed' && '✓'}
+                      {uploadingFile.status === 'error' && '✗'}
+                    </span>
+                  </div>
+
+                  {uploadingFile.status === 'uploading' && (
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadingFile.progress}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {uploadingFile.status === 'completed' && (
+                    <div className="text-xs text-green-600 dark:text-green-400">
+                      Upload completed
+                    </div>
+                  )}
+
+                  {uploadingFile.status === 'error' && (
+                    <div className="text-xs text-red-600 dark:text-red-400">
+                      {uploadingFile.error || 'Upload failed'}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
         {/* Sources section */}
         {project?.postgres_connections && project.postgres_connections.length > 0 && (
           <>
@@ -800,7 +861,7 @@ const LayerList: React.FC<LayerListProps> = ({
 };
 
 
-export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData }: MapLibreMapProps) {
+export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData, uploadingFiles }: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
@@ -1549,6 +1610,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             zoomHistory={zoomHistory}
             zoomHistoryIndex={zoomHistoryIndex}
             setZoomHistoryIndex={setZoomHistoryIndex}
+            uploadingFiles={uploadingFiles}
           />
         )}
         {/* Changelog */}

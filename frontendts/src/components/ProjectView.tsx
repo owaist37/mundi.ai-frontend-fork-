@@ -10,6 +10,15 @@ import { toast } from 'sonner';
 import { MapData } from '../lib/types';
 import { MapProject } from '../lib/types';
 
+// Add interface for tracking upload progress
+interface UploadingFile {
+  id: string;
+  file: File;
+  progress: number;
+  status: 'uploading' | 'completed' | 'error';
+  error?: string;
+}
+
 export default function ProjectView() {
   // Get map ID from URL parameter or query string
   const { projectId, versionIdParam } = useParams();
@@ -21,6 +30,9 @@ export default function ProjectView() {
   const versionId = versionIdParam || project?.maps[project?.maps.length-1] || null;
 
   const [mapData, setMapData] = useState<MapData | null>(null);
+
+  // Add state for tracking uploading files
+  const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
 
   // pull changelog and other details
   async function updateProjectData(id: string) {
@@ -61,39 +73,92 @@ export default function ProjectView() {
     }
   }, []);
 
-  // Dropzone implementation
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (!versionId || acceptedFiles.length === 0) return;
+  // Helper function to upload a single file with progress tracking
+  const uploadFile = useCallback(async (file: File, fileId: string) => {
+    if (!versionId) return;
 
-    const file = acceptedFiles[0]; // Take just the first file
     const formData = new FormData();
     formData.append('file', file);
 
-    fetch(`/api/maps/${versionId}/layers`, {
-      method: 'POST',
-      body: formData,
-    })
-      .then(response => {
-        if (!response.ok) {
-          return response.json().then(data => {
-            throw new Error(data.detail || 'Failed to upload layer');
-          });
-        }
-        return response.json();
-      })
-      .then(data => {
-        toast.success(`Layer "${data.name}" uploaded successfully! Refreshing...`);
+    try {
+      const xhr = new XMLHttpRequest();
 
-        // Refresh the map data
-        setTimeout(() => {
-          updateMapData(versionId);
-        }, 2000);
-      })
-      .catch(err => {
-        toast.error(`Error: ${err.message}`);
-        console.error('Upload error:', err);
+      // Track upload progress
+      xhr.upload.addEventListener('progress', (event) => {
+        if (event.lengthComputable) {
+          const progress = Math.round((event.loaded / event.total) * 100);
+          setUploadingFiles(prev =>
+            prev.map(f => f.id === fileId ? { ...f, progress } : f)
+          );
+        }
       });
+
+      // Handle completion
+      xhr.addEventListener('load', () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          const response = JSON.parse(xhr.responseText);
+          toast.success(`Layer "${response.name}" uploaded successfully! Refreshing...`);
+
+          // Mark as completed
+          setUploadingFiles(prev =>
+            prev.map(f => f.id === fileId ? { ...f, status: 'completed', progress: 100 } : f)
+          );
+
+          // Remove from uploading list after delay
+          setTimeout(() => {
+            setUploadingFiles(prev => prev.filter(f => f.id !== fileId));
+          }, 2000);
+
+          // Refresh the map data
+          setTimeout(() => {
+            updateMapData(versionId);
+          }, 2000);
+        } else {
+          throw new Error(`Upload failed: ${xhr.statusText}`);
+        }
+      });
+
+      // Handle errors
+      xhr.addEventListener('error', () => {
+        const errorMessage = 'Upload failed due to network error';
+        setUploadingFiles(prev =>
+          prev.map(f => f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)
+        );
+        toast.error(`Error uploading ${file.name}: ${errorMessage}`);
+      });
+
+      xhr.open('POST', `/api/maps/${versionId}/layers`);
+      xhr.send(formData);
+
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+      setUploadingFiles(prev =>
+        prev.map(f => f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)
+      );
+      toast.error(`Error uploading ${file.name}: ${errorMessage}`);
+    }
   }, [versionId, updateMapData]);
+
+  // Modified dropzone implementation to handle multiple files
+  const onDrop = useCallback((acceptedFiles: File[]) => {
+    if (!versionId || acceptedFiles.length === 0) return;
+
+    // Create uploading file entries
+    const newUploadingFiles: UploadingFile[] = acceptedFiles.map(file => ({
+      id: `${file.name}-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
+      file,
+      progress: 0,
+      status: 'uploading'
+    }));
+
+    // Add to uploading files state
+    setUploadingFiles(prev => [...prev, ...newUploadingFiles]);
+
+    // Start uploading each file
+    newUploadingFiles.forEach(uploadingFile => {
+      uploadFile(uploadingFile.file, uploadingFile.id);
+    });
+  }, [versionId, uploadFile]);
 
   const {
     getRootProps,
@@ -179,6 +244,7 @@ export default function ProjectView() {
             openDropzone={open}
             updateMapData={updateMapData}
             updateProjectData={updateProjectData}
+            uploadingFiles={uploadingFiles}
           />
         </DriftDBProvider>
       ) : (
