@@ -221,7 +221,7 @@ async def process_chat_interaction_task(
     system_prompt_provider: SystemPromptProvider,
 ):
     # kick it off with a quick sleep, to detach from the event loop blocking /send
-    await asyncio.sleep(0.05)
+    await asyncio.sleep(0.5)
 
     with get_db_connection() as conn:
         cursor = conn.cursor(cursor_factory=RealDictCursor)
@@ -432,7 +432,7 @@ async def process_chat_interaction_task(
                             "properties": {
                                 "bounds": {
                                     "type": "array",
-                                    "description": "Bounding box in WGS84 format [west, south, east, north] or [xmin, ymin, xmax, ymax]",
+                                    "description": "Bounding box in WGS84 format [xmin, ymin, xmax, ymax]",
                                     "items": {"type": "number"},
                                     "minItems": 4,
                                     "maxItems": 4,
