@@ -593,7 +593,7 @@ const LayerList: React.FC<LayerListProps> = ({
               <DialogDescription>
                 Your database connection details will be stored on the server. Read-only access is best.{" "}
                 <a
-                  href="https://docs.mundi.ai/en/getting-started/adding-postgis-database/"
+                  href="https://docs.mundi.ai/guides/connecting-to-postgis/"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-blue-300 hover:text-blue-400 underline"
