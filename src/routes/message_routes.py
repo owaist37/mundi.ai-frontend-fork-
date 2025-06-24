@@ -23,7 +23,7 @@ import psycopg2
 from psycopg2.extras import RealDictCursor
 import json
 from fastapi import BackgroundTasks, WebSocket, WebSocketDisconnect
-
+from opentelemetry import trace
 import pandas as pd
 import asyncio
 import uuid
@@ -69,6 +69,7 @@ from src.utils import get_openai_client
 from src.openstreetmap import download_from_openstreetmap, has_openstreetmap_api_key
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 redis = Redis(
@@ -223,7 +224,10 @@ async def process_chat_interaction_task(
     # kick it off with a quick sleep, to detach from the event loop blocking /send
     await asyncio.sleep(0.5)
 
-    with get_db_connection() as conn:
+    with (
+        get_db_connection() as conn,
+        tracer.start_as_current_span("app.process_chat_interaction") as span,
+    ):
         cursor = conn.cursor(cursor_factory=RealDictCursor)
 
         def add_chat_completion_message(
@@ -239,26 +243,29 @@ async def process_chat_interaction_task(
                 break
 
             # Refresh messages to include any new system messages we just added
-            updated_messages_response = await get_all_map_messages(map_id, session)
+            with tracer.start_as_current_span("kue.fetch_messages"):
+                updated_messages_response = await get_all_map_messages(map_id, session)
+
             openai_messages = [
                 msg["message_json"] for msg in updated_messages_response["messages"]
             ]
 
-            cursor.execute(
-                """
-                SELECT ml.layer_id, ml.created_on, ml.last_edited, ml.type, ml.name
-                FROM map_layers ml
-                WHERE ml.owner_uuid = %s
-                AND NOT EXISTS (
-                    SELECT 1 FROM user_mundiai_maps m
-                    WHERE ml.layer_id = ANY(m.layers) AND m.owner_uuid = %s
+            with tracer.start_as_current_span("kue.fetch_unattached_layers"):
+                cursor.execute(
+                    """
+                    SELECT ml.layer_id, ml.created_on, ml.last_edited, ml.type, ml.name
+                    FROM map_layers ml
+                    WHERE ml.owner_uuid = %s
+                    AND NOT EXISTS (
+                        SELECT 1 FROM user_mundiai_maps m
+                        WHERE ml.layer_id = ANY(m.layers) AND m.owner_uuid = %s
+                    )
+                    ORDER BY ml.created_on DESC
+                    LIMIT 10
+                    """,
+                    (user_id, user_id),
                 )
-                ORDER BY ml.created_on DESC
-                LIMIT 10
-                """,
-                (user_id, user_id),
-            )
-            unattached_layers = cursor.fetchall()
+                unattached_layers = cursor.fetchall()
 
             layer_enum = {}
             for layer in unattached_layers:
@@ -505,18 +512,19 @@ async def process_chat_interaction_task(
                 chat_completions_args = await chat_args.get_args(
                     user_id, "send_map_message_async"
                 )
-                response = await client.chat.completions.create(
-                    **chat_completions_args,
-                    messages=[
-                        {
-                            "role": "system",
-                            "content": system_prompt_provider.get_system_prompt(),
-                        }
-                    ]
-                    + openai_messages,
-                    tools=tools_payload if tools_payload else None,
-                    tool_choice="auto" if tools_payload else None,
-                )
+                with tracer.start_as_current_span("kue.openai.chat.completions.create"):
+                    response = await client.chat.completions.create(
+                        **chat_completions_args,
+                        messages=[
+                            {
+                                "role": "system",
+                                "content": system_prompt_provider.get_system_prompt(),
+                            }
+                        ]
+                        + openai_messages,
+                        tools=tools_payload if tools_payload else None,
+                        tool_choice="auto" if tools_payload else None,
+                    )
 
             assistant_message = response.choices[0].message
 
@@ -531,6 +539,11 @@ async def process_chat_interaction_task(
                 function_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
                 tool_result = {}
+
+                span.add_event(
+                    "kue.tool_call_started",
+                    {"tool_name": function_name},
+                )
                 if function_name == "new_layer_from_postgis":
                     postgis_connection_id = tool_args.get("postgis_connection_id")
                     query = tool_args.get("query")
