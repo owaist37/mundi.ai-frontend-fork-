@@ -1773,7 +1773,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         {(criticalErrors.length > 0 || activeActions.length > 0 || lastAssistantMsg) && (
           <div className={`z-30 absolute bottom-12 mb-[34px] opacity-90 left-3/5 transform -translate-x-1/2 w-4/5 max-w-lg overflow-auto bg-white dark:bg-gray-800 rounded-t-md shadow-md p-2 text-sm transition-all duration-300 max-h-40 h-auto ${errors.length > 0 ? 'border-red-800' : ''}`}>
             {criticalErrors.length > 0 ? (
-              <div className="space-y-1">
+              <div className="space-y-1 max-h-20">
                 {criticalErrors.map((error) => (
                   <div key={error.id} className="flex items-center justify-between">
                     <div className="flex flex-col flex-1 mr-2">
