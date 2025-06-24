@@ -83,6 +83,11 @@ app.include_router(
     prefix="/api/projects",
     tags=["Projects"],
 )
+app.include_router(
+    basemap_router,
+    prefix="/api/basemaps",
+    tags=["Basemaps"],
+)
 
 
 # Create a combined proxy router for DriftDB that handles both HTTP and WebSocket

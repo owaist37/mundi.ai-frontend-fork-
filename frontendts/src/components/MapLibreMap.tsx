@@ -1,6 +1,6 @@
 // Copyright Bunting Labs, Inc. 2025
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Map, NavigationControl, ScaleControl, MapOptions } from 'maplibre-gl';
+import { Map, NavigationControl, ScaleControl, MapOptions, IControl } from 'maplibre-gl';
 import Session from "supertokens-auth-react/recipe/session";
 import { useConnectionStatus, usePresence } from 'driftdb-react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
@@ -68,6 +68,72 @@ interface ChatCompletionMessageRow {
 }
 
 // Import styles in the parent component
+
+// Custom Globe Control class
+class GlobeControl implements IControl {
+  private _container: HTMLDivElement | undefined;
+  private _availableBasemaps: string[];
+  private _currentBasemap: string;
+  private _onBasemapChange: (basemap: string) => void;
+
+  constructor(availableBasemaps: string[], currentBasemap: string, onBasemapChange: (basemap: string) => void) {
+    this._availableBasemaps = availableBasemaps;
+    this._currentBasemap = currentBasemap;
+    this._onBasemapChange = onBasemapChange;
+  }
+
+  onAdd(_map: Map): HTMLElement {
+    this._container = document.createElement('div');
+    this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+
+    const button = document.createElement('button');
+    button.className = 'maplibregl-ctrl-globe';
+    button.type = 'button';
+    button.title = 'Toggle satellite basemap';
+    button.setAttribute('aria-label', 'Toggle satellite basemap');
+
+    // Create globe icon (SVG)
+    button.innerHTML = `
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="#333">
+        <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-1 17.93c-3.94-.49-7-3.85-7-7.93 0-.62.08-1.21.21-1.79L9 15v1c0 1.1.9 2 2 2v1.93zm6.9-2.54c-.26-.81-1-1.39-1.9-1.39h-1v-3c0-.55-.45-1-1-1H8v-2h2c.55 0 1-.45 1-1V7h2c1.1 0 2-.9 2-2v-.41c2.93 1.19 5 4.06 5 7.41 0 2.08-.8 3.97-2.1 5.39z"/>
+      </svg>
+    `;
+    button.style.border = 'none';
+    button.style.background = 'transparent';
+    button.style.cursor = 'pointer';
+    button.style.padding = '5px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+
+    button.addEventListener('click', this._onClickGlobe.bind(this));
+
+    this._container.appendChild(button);
+    return this._container;
+  }
+
+  onRemove(): void {
+    if (this._container && this._container.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+  }
+
+  private _onClickGlobe(): void {
+    if (!this._availableBasemaps.length) return;
+
+    // Cycle to next basemap
+    const currentIndex = this._availableBasemaps.indexOf(this._currentBasemap);
+    const nextIndex = (currentIndex + 1) % this._availableBasemaps.length;
+    const nextBasemap = this._availableBasemaps[nextIndex];
+
+    this._currentBasemap = nextBasemap;
+    this._onBasemapChange(nextBasemap);
+  }
+
+  updateBasemap(basemap: string): void {
+    this._currentBasemap = basemap;
+  }
+}
 
 interface ErrorEntry {
   id: string;
@@ -864,11 +930,14 @@ const LayerList: React.FC<LayerListProps> = ({
 export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData, uploadingFiles }: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
+  const globeControlRef = useRef<GlobeControl | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
   const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number]; }>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
+  const [currentBasemap, setCurrentBasemap] = useState<string>('');
+  const [availableBasemaps, setAvailableBasemaps] = useState<string[]>([]);
 
 
 
@@ -902,6 +971,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
   const [isSaving, setIsSaving] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
+
+  // Function to handle basemap changes
+  const handleBasemapChange = async (newBasemap: string) => {
+    setCurrentBasemap(newBasemap);
+    // Trigger a style update with the new basemap
+    setToolResponseCount(prev => prev + 1);
+  };
 
   // Function to get the appropriate icon for an action
   const getActionIcon = (action: string) => {
@@ -1258,8 +1334,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       isUpdating = true;
 
       try {
-        // Fetch the new style
-        const response = await fetch(`/api/maps/${mapId}/style.json`);
+        // Fetch the new style with current basemap
+        const url = new URL(`/api/maps/${mapId}/style.json`, window.location.origin);
+        if (currentBasemap) {
+          url.searchParams.set('basemap', currentBasemap);
+        }
+        const response = await fetch(url.toString());
         if (!response.ok) {
           throw new Error(`Failed to fetch style: ${response.statusText}`);
         }
@@ -1295,7 +1375,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
     // If map is already loaded, update immediately, otherwise wait for load
     updateStyle();
-  }, [mapId, toolResponseCount, mapData]); // Update when these dependencies change
+  }, [mapId, toolResponseCount, mapData, currentBasemap]); // Update when these dependencies change
 
   // Update the points source when pointer positions change
   useEffect(() => {
@@ -1508,6 +1588,43 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       fetchMessages();
     }
   }, [mapId]);
+
+  // Fetch available basemaps on component mount
+  useEffect(() => {
+    const fetchAvailableBasemaps = async () => {
+      try {
+        const response = await fetch('/api/basemaps/available');
+        if (response.ok) {
+          const data = await response.json();
+          setAvailableBasemaps(data.styles);
+          if (data.styles.length > 0) {
+            setCurrentBasemap(data.styles[0]); // Set first style as default
+          }
+        }
+      } catch (error) {
+        console.error('Error fetching available basemaps:', error);
+      }
+    };
+
+    fetchAvailableBasemaps();
+  }, []);
+
+  // Add globe control when map and basemaps are available
+  useEffect(() => {
+    const map = mapRef.current;
+    if (map && availableBasemaps.length > 0 && currentBasemap && !globeControlRef.current) {
+      const globeControl = new GlobeControl(availableBasemaps, currentBasemap, handleBasemapChange);
+      globeControlRef.current = globeControl;
+      map.addControl(globeControl);
+    }
+  }, [availableBasemaps, currentBasemap]);
+
+  // Update globe control when basemap changes
+  useEffect(() => {
+    if (globeControlRef.current && currentBasemap) {
+      globeControlRef.current.updateBasemap(currentBasemap);
+    }
+  }, [currentBasemap]);
 
   useEffect(() => {
     if (errors.length > 0) {

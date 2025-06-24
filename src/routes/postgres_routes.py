@@ -99,6 +99,9 @@ redis = Redis(
 # Create router
 router = APIRouter()
 
+# Create separate router for basemap endpoints
+basemap_router = APIRouter()
+
 
 def generate_id(length=12, prefix=""):
     """Generate a unique ID for the map or layer.
@@ -847,6 +850,7 @@ async def get_map_style(
     only_show_inline_sources: bool = False,
     session: UserContext = Depends(verify_session_optional),
     override_layers: Optional[str] = None,
+    basemap: Optional[str] = None,
     base_map: BaseMapProvider = Depends(get_base_map_provider),
 ):
     # Get vector layers for this map from the database
@@ -880,8 +884,20 @@ async def get_map_style(
                 )
 
     return await get_map_style_internal(
-        map_id, base_map, only_show_inline_sources, override_layers
+        map_id, base_map, only_show_inline_sources, override_layers, basemap
     )
+
+
+@basemap_router.get(
+    "/available",
+    operation_id="get_available_basemaps",
+    response_class=StarletteJSONResponse,
+)
+async def get_available_basemaps(
+    base_map: BaseMapProvider = Depends(get_base_map_provider),
+):
+    """Get list of available basemap styles."""
+    return {"styles": base_map.get_available_styles()}
 
 
 async def get_map_style_internal(
@@ -889,6 +905,7 @@ async def get_map_style_internal(
     base_map: BaseMapProvider,
     only_show_inline_sources: bool = False,
     override_layers: Optional[str] = None,
+    basemap: Optional[str] = None,
 ):
     # Get vector layers for this map from the database
     async with get_async_db_connection() as conn:
@@ -943,7 +960,7 @@ async def get_map_style_internal(
         vector_layers.sort(key=get_geometry_order)
         postgis_layers.sort(key=get_geometry_order)
 
-    style_json = await base_map.get_base_style()
+    style_json = await base_map.get_base_style(basemap)
 
     # compute combined WGS84 bounds from all_layers and derive center + zoom with 20% padding
     bounds_list = [layer["bounds"] for layer in all_layers if layer.get("bounds")]

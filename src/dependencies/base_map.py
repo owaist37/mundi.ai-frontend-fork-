@@ -14,23 +14,32 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 from abc import ABC, abstractmethod
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 
 
 class BaseMapProvider(ABC):
     """Abstract base class for base map providers."""
 
     @abstractmethod
-    async def get_base_style(self) -> Dict[str, Any]:
+    async def get_base_style(self, name: Optional[str] = None) -> Dict[str, Any]:
         """Return the base MapLibre GL style JSON."""
+        pass
+
+    @abstractmethod
+    def get_available_styles(self) -> List[str]:
+        """Return list of available basemap style names."""
         pass
 
 
 class OpenStreetMapProvider(BaseMapProvider):
     """Default base map provider using OpenStreetMap tiles."""
 
-    async def get_base_style(self) -> Dict[str, Any]:
-        """Return a basic MapLibre GL style using OpenStreetMap tiles."""
+    async def get_base_style(self, name: Optional[str] = None) -> Dict[str, Any]:
+        """Return a basic MapLibre GL style using OpenStreetMap tiles.
+
+        Args:
+            name: Basemap name parameter (ignored in public version)
+        """
         return {
             "version": 8,
             "name": "OpenStreetMap",
@@ -61,6 +70,10 @@ class OpenStreetMapProvider(BaseMapProvider):
             "bearing": 0,
             "pitch": 0,
         }
+
+    def get_available_styles(self) -> List[str]:
+        """Return list of available basemap style names."""
+        return ["openstreetmap"]
 
 
 # Default dependency - can be overridden in closed source
