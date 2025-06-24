@@ -1236,6 +1236,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           zoom: map.getZoom(),
           layer: mapLayer as any
         });
+        // long lasting bug
+        if (tree?.attributes?.style?.backgroundImage === "url(null)") {
+          tree.attributes.style.backgroundImage = "none";
+          tree.attributes.style.width = '16px';
+          tree.attributes.style.height = '16px';
+          tree.attributes.style.opacity = '1.0';
+        }
 
         const symbolElement = renderTree(tree);
         if (symbolElement) {
