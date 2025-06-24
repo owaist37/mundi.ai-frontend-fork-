@@ -1,7 +1,8 @@
 // Copyright Bunting Labs, Inc. 2025
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Database, Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Database, Loader2, Trash2 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import MermaidComponent from "./MermaidComponent";
 import { useEffect, useState } from "react";
@@ -12,12 +13,14 @@ interface DatabaseDetailsDialogProps {
   databaseName: string;
   connectionId: string;
   projectId: string;
+  onDelete?: () => void;
 }
 
-const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, projectId }: DatabaseDetailsDialogProps) => {
+const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, projectId, onDelete }: DatabaseDetailsDialogProps) => {
   const [documentation, setDocumentation] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     if (isOpen && connectionId && projectId) {
@@ -45,6 +48,29 @@ const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, pr
     }
   }, [isOpen, connectionId, projectId]);
 
+  const handleDelete = async () => {
+    if (!connectionId || !projectId || !onDelete) return;
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(`/api/projects/${projectId}/postgis-connections/${connectionId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to delete connection: ${response.statusText}`);
+      }
+
+      onDelete();
+      onClose();
+    } catch (err) {
+      console.error('Error deleting database connection:', err);
+      setError(err instanceof Error ? err.message : 'Failed to delete connection');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
   // Fallback content for when documentation is not available
   const fallbackContent = `
 Documentation is being generated for this database. Please check back in a few moments.
@@ -56,9 +82,27 @@ If documentation generation fails, this indicates the database connection detail
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] flex flex-col xl:!max-w-4xl">
         <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Database className="h-5 w-5" />
-            {databaseName}
+          <DialogTitle className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Database className="h-5 w-5" />
+              {databaseName}
+            </div>
+            {onDelete && (
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleDelete}
+                disabled={isDeleting}
+                className="cursor-pointer mr-8"
+              >
+                {isDeleting ? (
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                ) : (
+                  <Trash2 className="h-4 w-4" />
+                )}
+                {isDeleting ? 'Deleting...' : 'Delete'}
+              </Button>
+            )}
           </DialogTitle>
         </DialogHeader>
 

@@ -920,6 +920,10 @@ const LayerList: React.FC<LayerListProps> = ({
           databaseName={selectedDatabase?.connection.friendly_name || ''}
           connectionId={selectedDatabase?.connection.connection_id || ''}
           projectId={selectedDatabase?.projectId || ''}
+          onDelete={() => {
+            setShowDatabaseDetails(false);
+            window.location.reload();
+          }}
         />
       </CardFooter>
     </Card >
