@@ -64,7 +64,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv venv && \
     uv pip install -r requirements.txt && \
     uv pip install hyperdx-opentelemetry && \
-    uv pip install opentelemetry-instrumentation-fastapi==0.55b1
+    uv pip install opentelemetry-instrumentation-fastapi==0.55b1 opentelemetry-instrumentation-asyncpg==0.55b1 opentelemetry-instrumentation-redis==0.55b1
 
 # frontend app
 FROM node:20-bookworm AS frontend-builder
