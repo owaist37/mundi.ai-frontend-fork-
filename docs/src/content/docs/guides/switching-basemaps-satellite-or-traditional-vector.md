@@ -17,17 +17,17 @@ photorealistic context.
 1.  To switch basemaps, locate the **Toggle satellite** button in the top right
     corner of the map view. It is represented by a globe icon.
 
-![Toggle satellite globe icon in the top right of the map view](/public/assets/basemaps/button.jpg)
+![Toggle satellite globe icon in the top right of the map view](../../../assets/basemaps/button.jpg)
 
 2.  Click the globe icon. The basemap will instantly switch to a satellite
     imagery view.
 
-![satellite basemap via MapTiler](/public/assets/basemaps/satellite.jpg)
+![satellite basemap via MapTiler](../../../assets/basemaps/satellite.jpg)
 
 You can click the same icon again at any time to toggle back to the
 traditional vector basemap.
 
-![traditional vector basemap via MapTiler](/public/assets/basemaps/vector.jpg)
+![traditional vector basemap via MapTiler](../../../assets/basemaps/vector.jpg)
 
 ## Video Tutorial
 
