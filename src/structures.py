@@ -18,9 +18,13 @@ import os
 from psycopg2 import pool
 import asyncpg
 from typing import Optional
+from opentelemetry import trace
 
 _connection_pool = None
 _async_connection_pool = None
+
+# Get tracer for this module
+tracer = trace.get_tracer(__name__)
 
 
 def _get_connection_pool():
@@ -85,10 +89,17 @@ class AsyncDatabaseConnection:
     suite and greatly simplifies correctness.
     """
 
-    def __init__(self):
+    def __init__(self, span_name: Optional[str] = None):
         self.conn: Optional[asyncpg.Connection] = None
+        self.span: Optional[trace.Span] = None
+        self.span_name: Optional[str] = span_name
 
     async def __aenter__(self) -> asyncpg.Connection:
+        # only create a span if we're in a recording context
+        current_span = trace.get_current_span()
+        if current_span.is_recording():
+            self.span = tracer.start_span(self.span_name or "asyncpg")
+
         # Construct URL from components
         user = os.environ["POSTGRES_USER"]
         password = os.environ["POSTGRES_PASSWORD"]
@@ -104,6 +115,8 @@ class AsyncDatabaseConnection:
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.conn is not None:
             await self.conn.close()
+        if self.span:
+            self.span.end()
 
 
 def get_db_connection():
@@ -112,3 +125,7 @@ def get_db_connection():
 
 def get_async_db_connection():
     return AsyncDatabaseConnection()
+
+
+def async_conn(span_name: Optional[str] = None):
+    return AsyncDatabaseConnection(span_name)
