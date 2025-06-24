@@ -27,7 +27,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "driftdb-react": "^1.0.12",
-    "legend-symbol-ts": "github:brendanashworth/legend-symbol#2e7b8d0",
+    "legend-symbol-ts": "github:brendanashworth/legend-symbol#4f0b923",
     "lucide-react": "^0.503.0",
     "maplibre-gl": "^5.4.0",
     "mermaid": "^11.6.0",
