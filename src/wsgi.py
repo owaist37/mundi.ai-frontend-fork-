@@ -31,7 +31,7 @@ from src.routes import (
     room_routes,
     message_routes,
 )
-from src.routes.postgres_routes import layer_router
+from src.routes.postgres_routes import layer_router, basemap_router
 
 
 @asynccontextmanager
