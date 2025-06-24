@@ -21,7 +21,7 @@ Click on the "Add Data Source" button or navigate to the database connection int
 
 Fill in your PostGIS connection parameters:
 
-![PostGIS Connection Dialog](/public/assets/postgis/connection_details.png)
+![PostGIS Connection Dialog](../../../assets/postgis/connection_details.png)
 
 - **Host**: The server address where your PostGIS database is hosted
 - **Port**: Usually 5432 for PostgreSQL/PostGIS
@@ -46,7 +46,7 @@ Once connected, you can:
 
 You can also connect to the same PostGIS database from QGIS for advanced GIS operations:
 
-![Connecting from QGIS](/public/assets/postgis/from-qgis.png)
+![Connecting from QGIS](../../../assets/postgis/from-qgis.png)
 
 This allows you to work with the same spatial data across both Mundi and QGIS environments.
 
