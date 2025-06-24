@@ -13,7 +13,7 @@ When you first log in to [Mundi](https://app.mundi.ai), you'll land on the "Your
 
 1.  Click the **Create Your First Map** button to get started.
 
-![Empty map list in dashboard](../../../assets/first-map/create-map.png)
+![Empty map list in dashboard](/public/assets/first-map/create-map.png)
 
 2.  Mundi will instantly generate a new map project for you, which appears as a card on your dashboard.
 
@@ -25,11 +25,11 @@ To add your own data to an empty map, you can either use the "Add Data" button o
 
 Drag your dataset (e.g., `.gpkg` file or a `.zip` file containing `.shp`, `.shx`, `.prj` etc) from your computer and drop it anywhere on the map canvas.
 
-![Empty Europe](../../../assets/first-map/empty-europe.png)
+![Empty Europe](/public/assets/first-map/empty-europe.png)
 
 Mundi will automatically upload and process the file. Once complete, your data will appear on the map, and a new layer will be added to the **Map Layers** panel on the left.
 
-![New layer added to map](../../../assets/first-map/added_layer.png)
+![New layer added to map](/public/assets/first-map/added_layer.png)
 
 Notice the layer name is highlighted in green. This signifies that the layer is a new, unsaved addition to your map.
 
@@ -39,14 +39,14 @@ Before styling, it's helpful to understand the data you're working with. Mundi's
 
 1.  Right-click the new layer in the **Map Layers** panel and select **View attributes**.
 
-![View attributes context menu](../../../assets/first-map/view-attributes.png)
+![View attributes context menu](/public/assets/first-map/view-attributes.png)
 
 2.  The attribute table will open. Here, you can type a natural language query into the search bar. For example, to find all points within Albuquerque, you can type:
     > *only show me the points that are in albuquerque*
 
 3.  Kue will translate your request into a SQL query and filter the table accordingly, showing you only the relevant records.
 
-![Attribute table with natural language query](../../../assets/first-map/attribute-table-llm.png)
+![Attribute table with natural language query](/public/assets/first-map/attribute-table-llm.png)
 
 ## Styling your map with natural language
 
@@ -57,14 +57,14 @@ This is where Kue truly shines. Instead of navigating complex symbology menus, y
 
     Kue will analyze the data, identify the "county" attribute, and apply a categorized style with different colors for different counties.
 
-![Symbology after first prompt](../../../assets/first-map/symbology1.png)
+![Symbology after first prompt](/public/assets/first-map/symbology1.png)
 
 2.  You can iterate and refine the style. In the initial result, many counties were left gray. We can ask Kue to improve this:
     > *great. lots of the counties are gray, I think you should list out more counties in new mexico for the symbology*
 
     Kue will update the color palette to include more counties, giving you a much more informative and visually appealing map.
 
-![Symbology after second prompt](../../../assets/first-map/symbology.png)
+![Symbology after second prompt](/public/assets/first-map/symbology.png)
 
 ## Saving versions of your map
 

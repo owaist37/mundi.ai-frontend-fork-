@@ -29,7 +29,7 @@ Before you begin, ensure you have the following:
     git clone https://github.com/BuntingLabs/mundi.ai.git
     ```
 
-    ![Screenshot of the 'git clone' command being run in the terminal.](../../../assets/selfhost/github.jpg)
+    ![Screenshot of the 'git clone' command being run in the terminal.](/public/assets/selfhost/github.jpg)
 
 2. Navigate into the new `mundi.ai` directory and initialize the git
    submodules. Mundi uses a submodule for its database component, and this
@@ -49,7 +49,7 @@ Before you begin, ensure you have the following:
     docker compose build
     ```
 
-    ![Screenshot of the terminal showing the Docker build process in action.](../../../assets/selfhost/dockercompose.jpg)
+    ![Screenshot of the terminal showing the Docker build process in action.](/public/assets/selfhost/dockercompose.jpg)
 
 ### Running Mundi
 
@@ -65,7 +65,7 @@ With the services built, you can now start the application.
     may see a warning like `The "OPENAI_API_KEY" variable is not set`.
     This is expected, as we haven't configured an LLM yet. (tutorial coming soon)
 
-    ![Screenshot of the terminal after running 'docker compose up app', showing the server starting.](../../../assets/selfhost/apponline.jpg)
+    ![Screenshot of the terminal after running 'docker compose up app', showing the server starting.](/public/assets/selfhost/apponline.jpg)
 
 2. Once the server is running, open your web browser and navigate to
    [`http://localhost:8000`](http://localhost:8000). You should see the Mundi welcome screen, ready
@@ -85,7 +85,7 @@ Now that Mundi is running, you can start using it.
     Here, I'm adding a GeoJSON file of US state capitals. Mundi
     automatically uploads the data and renders it on the map.
 
-    ![Screenshot showing a GeoJSON layer of US capitals successfully added to the map.](../../../assets/selfhost/upload.jpg)
+![Screenshot showing a GeoJSON layer of US capitals successfully added to the map.](/public/assets/selfhost/upload.jpg)
 
 ### Stopping the Server and Data Persistence
 
@@ -98,7 +98,7 @@ Your data is not lost when you shut down the application.
    This means you can stop and restart the server anytime without losing
    your work.
 
-    ![Screenshot of the terminal showing the data directories and the server being gracefully stopped with Ctrl+C.](../../../assets/selfhost/capitals.jpg)
+![Screenshot of the terminal showing the data directories and the server being gracefully stopped with Ctrl+C.](/public/assets/selfhost/capitals.jpg)
 
 ### Read-Only Mode
 
