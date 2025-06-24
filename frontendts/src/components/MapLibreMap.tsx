@@ -37,7 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { BookOpenText, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
+import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -655,7 +655,7 @@ const LayerList: React.FC<LayerListProps> = ({
                         </span>
                       </div>
                       <div className="hidden group-hover:block w-4 h-4">
-                        <BookOpenText className="w-4 h-4" />
+                        <Info className="w-4 h-4" />
                       </div>
                     </div>
                   </li>
