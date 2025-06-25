@@ -3,6 +3,7 @@ services:
   app:
     container_name: mundi-app
     platform: linux/amd64
+    image: "${APP_IMAGE:-mundi-public:local}"
     build:
       context: .
       dockerfile: Dockerfile
