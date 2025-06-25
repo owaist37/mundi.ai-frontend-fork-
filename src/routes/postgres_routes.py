@@ -1326,8 +1326,9 @@ async def upload_layer(
                     try:
                         # Fiona bounds are returned as (minx, miny, maxx, maxy)
                         bounds = list(collection.bounds)
-                        # Get feature count
-                        feature_count = len(collection)
+                        # Get feature count and add to metadata
+                        metadata_dict["feature_count"] = len(collection)
+                        feature_count = metadata_dict["feature_count"]
 
                         # Detect geometry type
                         # Try to get the geometry type from schema
@@ -1352,6 +1353,10 @@ async def upload_layer(
                                     # Update if the actual type is more specific
                                     if actual_type and actual_type != "null":
                                         geometry_type = actual_type
+
+                        # Add geometry type to metadata if not unknown
+                        if geometry_type != "unknown":
+                            metadata_dict["geometry_type"] = geometry_type
                     except Exception as e:
                         print(f"Error detecting geometry type: {str(e)}")
                         geometry_type = "unknown"
@@ -1377,13 +1382,6 @@ async def upload_layer(
                         xmax, ymax = transformer.transform(bounds[2], bounds[3])
 
                         bounds = [xmin, ymin, xmax, ymax]
-
-            # For vector layers, add geometry_type and feature_count to metadata
-            if layer_type == "vector":
-                if geometry_type != "unknown":
-                    metadata_dict["geometry_type"] = geometry_type
-                if feature_count is not None:
-                    metadata_dict["feature_count"] = feature_count
 
             # Generate MapLibre layers for vector layers
             maplibre_layers = None
