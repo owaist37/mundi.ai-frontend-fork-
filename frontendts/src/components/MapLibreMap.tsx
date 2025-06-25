@@ -432,6 +432,7 @@ const LayerList: React.FC<LayerListProps> = ({
               if (hasActiveAction) {
                 liClassName += ' animate-pulse';
               }
+              const num_highlighted = 0;
 
               return (
                 <DropdownMenu key={layerDetails.id}>
@@ -441,16 +442,29 @@ const LayerList: React.FC<LayerListProps> = ({
                         <span className="font-medium truncate" title={layerDetails.name}>
                           {layerDetails.name.length > 26 ? layerDetails.name.slice(0, 26) + '...' : layerDetails.name}
                         </span>
-                        <span className="text-xs text-slate-500 dark:text-gray-400">
-                          {layerDetails.feature_count ?? 'N/A'}
-                        </span>
                       </div>
-                      <div className="w-4 h-4 flex-shrink-0">
-                        <div className="group-hover:hidden">
-                          <LayerLegendSymbol layerDetails={layerDetails} />
-                        </div>
-                        <div className="hidden group-hover:block">
-                          <MoreHorizontal className="w-4 h-4" />
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-slate-500 dark:text-gray-400">
+                          {(() => {
+                            return num_highlighted > 0 ? (
+                              <>
+                                <span className="text-gray-300 font-bold">
+                                  {num_highlighted} /
+                                </span>{' '}
+                                {layerDetails.feature_count ?? 'N/A'}
+                              </>
+                            ) : (
+                              layerDetails.feature_count ?? 'N/A'
+                            );
+                          })()}
+                        </span>
+                        <div className="w-4 h-4 flex-shrink-0">
+                          <div className="group-hover:hidden">
+                            <LayerLegendSymbol layerDetails={layerDetails} />
+                          </div>
+                          <div className="hidden group-hover:block">
+                            <MoreHorizontal className="w-4 h-4" />
+                          </div>
                         </div>
                       </div>
                     </li>
