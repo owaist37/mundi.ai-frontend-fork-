@@ -44,7 +44,7 @@ from openai.types.chat.chat_completion_message_param import (
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
-from src.structures import get_async_db_connection
+from src.structures import get_async_db_connection, async_conn
 from src.symbology.verify import StyleValidationError, verify_style_json_str
 from src.routes.postgres_routes import generate_id, get_map_style_internal
 from src.dependencies.base_map import get_base_map_provider
@@ -1394,9 +1394,9 @@ class MessageSendResponse(BaseModel):
 @router.post(
     "/{map_id}/messages/send",
     response_model=MessageSendResponse,
-    operation_id="send_map_message_async",
+    operation_id="send_map_message",
 )
-async def send_map_message_async(
+async def send_map_message(
     request: Request,
     map_id: str,
     message: ChatCompletionUserMessageParam,
@@ -1408,35 +1408,35 @@ async def send_map_message_async(
     map_state: MapStateProvider = Depends(get_map_state_provider),
     system_prompt_provider: SystemPromptProvider = Depends(get_system_prompt_provider),
 ):
-    async with get_async_db_connection() as conn:
+    async with async_conn("send_map_message.authenticate") as conn:
         # Authenticate and check map
         map_result = await conn.fetchrow(
             "SELECT owner_uuid FROM user_mundiai_maps WHERE id = $1 AND soft_deleted_at IS NULL",
             map_id,
         )
 
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
+    if not map_result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
+        )
 
-        user_id = session.get_user_id()
-        if user_id != str(map_result["owner_uuid"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
-            )
+    user_id = session.get_user_id()
+    if user_id != str(map_result["owner_uuid"]):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required",
+        )
 
-        # Check if map is already being processed
-        lock_key = f"map_lock:{map_id}"
-        if redis.get(lock_key):
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Map is currently being processed by another request",
-            )
+    # Check if map is already being processed
+    lock_key = f"map_lock:{map_id}"
+    if redis.get(lock_key):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Map is currently being processed by another request",
+        )
 
-        # Lock the map for processing
-        redis.set(lock_key, "locked", ex=60)  # 60 second expiry
+    # Lock the map for processing
+    redis.set(lock_key, "locked", ex=60)  # 60 second expiry
 
     # Use map state provider to generate system messages
     messages_response = await get_all_map_messages(map_id, session)
@@ -1456,7 +1456,7 @@ async def send_map_message_async(
         current_messages, description_text
     )
 
-    async with get_async_db_connection() as conn:
+    async with async_conn("send_map_message.update_messages") as conn:
         # Add any generated system messages to the database
         for system_msg in system_messages:
             system_message = ChatCompletionSystemMessageParam(
