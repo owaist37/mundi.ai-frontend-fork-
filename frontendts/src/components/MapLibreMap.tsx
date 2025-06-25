@@ -1496,18 +1496,49 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
   }, [mapId, wsProtocol, jwt]);
 
+  // Track page visibility and allow socket to remain open for 10 minutes after hidden
+  const WS_REMAIN_OPEN_FOR_MS = 10 * 60 * 1000; // 10 minutes
+  const [isTabVisible, setIsTabVisible] = useState<boolean>(document.visibilityState === 'visible');
+  const [hiddenTimeoutExpired, setHiddenTimeoutExpired] = useState<boolean>(false);
+  const hiddenTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setIsTabVisible(true);
+        setHiddenTimeoutExpired(false);
+        if (hiddenTimerRef.current !== null) {
+          clearTimeout(hiddenTimerRef.current);
+          hiddenTimerRef.current = null;
+        }
+      } else {
+        setIsTabVisible(false);
+        hiddenTimerRef.current = window.setTimeout(() => {
+          setHiddenTimeoutExpired(true);
+          hiddenTimerRef.current = null;
+        }, WS_REMAIN_OPEN_FOR_MS);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (hiddenTimerRef.current !== null) {
+        clearTimeout(hiddenTimerRef.current);
+      }
+    };
+  }, []);
+
+  // WebSocket using react-use-websocket
+  const shouldConnect = !sessionContext.loading && (isTabVisible || !hiddenTimeoutExpired);
   const { lastMessage, readyState } = useWebSocket(wsUrl, {
-    onOpen: () => {
-      // WebSocket connected
-    },
     onError: (event) => {
       console.error('WebSocket error for map:', mapId, event);
       addError('Chat connection error.', false);
     },
-    shouldReconnect: () => true, // will attempt to reconnect on all close events
-    reconnectAttempts: 10,
-    reconnectInterval: 3000,
-  }, !sessionContext.loading); // connect if not loading
+    shouldReconnect: () => true,
+    reconnectAttempts: 2880, // 24 hours of continuous work, at 30 seconds each = 2,880
+    reconnectInterval: 30, // interval *between* reconnects, 30 milliseconds
+  }, shouldConnect);
 
   // Process incoming messages
   useEffect(() => {
