@@ -201,7 +201,6 @@ async def process_chat_interaction_task(
     await asyncio.sleep(0.1)
 
     async with get_async_db_connection() as conn:
-        # with tracer.start_as_current_span("app.process_chat_interaction") as span:
 
         async def add_chat_completion_message(
             message: Union[ChatCompletionMessage, ChatCompletionMessageParam],
@@ -220,565 +219,641 @@ async def process_chat_interaction_task(
                 json.dumps(message_dict),
             )
 
-        for i in range(25):
-            # Check if the message processing has been cancelled
-            if redis.get(f"messages:{map_id}:cancelled"):
-                redis.delete(f"messages:{map_id}:cancelled")
-                break
+        with tracer.start_as_current_span("app.process_chat_interaction") as span:
+            for i in range(25):
+                # Check if the message processing has been cancelled
+                if redis.get(f"messages:{map_id}:cancelled"):
+                    redis.delete(f"messages:{map_id}:cancelled")
+                    break
 
-            # Refresh messages to include any new system messages we just added
-            with tracer.start_as_current_span("kue.fetch_messages"):
-                updated_messages_response = await get_all_map_messages(map_id, session)
-
-            openai_messages = [
-                msg["message_json"] for msg in updated_messages_response["messages"]
-            ]
-
-            with tracer.start_as_current_span("kue.fetch_unattached_layers"):
-                unattached_layers = await conn.fetch(
-                    """
-                    SELECT ml.layer_id, ml.created_on, ml.last_edited, ml.type, ml.name
-                    FROM map_layers ml
-                    WHERE ml.owner_uuid = $1
-                    AND NOT EXISTS (
-                        SELECT 1 FROM user_mundiai_maps m
-                        WHERE ml.layer_id = ANY(m.layers) AND m.owner_uuid = $2
+                # Refresh messages to include any new system messages we just added
+                with tracer.start_as_current_span("kue.fetch_messages"):
+                    updated_messages_response = await get_all_map_messages(
+                        map_id, session
                     )
-                    ORDER BY ml.created_on DESC
-                    LIMIT 10
-                    """,
-                    user_id,
-                    user_id,
-                )
 
-            layer_enum = {}
-            for layer in unattached_layers:
-                layer_name = (
-                    layer.get("name") or f"Unnamed Layer ({layer['layer_id'][:8]})"
-                )
-                layer_enum[layer["layer_id"]] = (
-                    f"{layer_name} (type: {layer.get('type', 'unknown')}, created: {layer['created_on']})"
-                )
+                openai_messages = [
+                    msg["message_json"] for msg in updated_messages_response["messages"]
+                ]
 
-            client = get_openai_client()
+                with tracer.start_as_current_span("kue.fetch_unattached_layers"):
+                    unattached_layers = await conn.fetch(
+                        """
+                        SELECT ml.layer_id, ml.created_on, ml.last_edited, ml.type, ml.name
+                        FROM map_layers ml
+                        WHERE ml.owner_uuid = $1
+                        AND NOT EXISTS (
+                            SELECT 1 FROM user_mundiai_maps m
+                            WHERE ml.layer_id = ANY(m.layers) AND m.owner_uuid = $2
+                        )
+                        ORDER BY ml.created_on DESC
+                        LIMIT 10
+                        """,
+                        user_id,
+                        user_id,
+                    )
 
-            tools_payload = [
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "new_layer_from_postgis",
-                        "description": "Creates a new layer, given a PostGIS connection and query, and adds it to the map so the user can see it. Layer will automatically pull data from PostGIS. Modify style using the create_layer_style tool.",
-                        "strict": True,
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "postgis_connection_id": {
-                                    "type": "string",
-                                    "description": "Unique PostGIS connection ID used as source",
-                                },
-                                "query": {
-                                    "type": "string",
-                                    "description": "SQL query to execute against PostGIS database for this layer, should list fetched columns for attributes that might be used for symbology (+ shape geometry). This query MUST alias the geometry column as 'geom'.",
-                                },
-                                "layer_name": {
-                                    "type": "string",
-                                    "description": "Sets a human-readable name for this layer. This name will appear in the layer list/legend for the user.",
-                                },
-                            },
-                            "required": [
-                                "postgis_connection_id",
-                                "query",
-                                "layer_name",
-                            ],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "add_layer_to_map",
-                        "description": "Shows a newly created or existing unattached layer on the user's current map and layer list. Use this after a geoprocessing step that creates a layer, or if the user asks to see an existing layer that isn't currently on their map.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "layer_id": {
-                                    "type": "string",
-                                    "description": "The ID of the layer to add to the map. Choose from available unattached layers.",
-                                    "enum": list(layer_enum.keys())
-                                    if layer_enum
-                                    else ["NO_UNATTACHED_LAYERS"],
-                                },
-                                "new_name": {
-                                    "type": "string",
-                                    "description": "Sets a new human-readable name for this layer. This name will appear in the layer list/legend for the user.",
-                                },
-                            },
-                            "required": ["layer_id", "new_name"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "create_layer_style",
-                        "description": "Creates a new style for a layer with MapLibre JSON layers. Automatically renders the style for visual inspection.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "layer_id": {
-                                    "type": "string",
-                                    "description": "The ID of the layer to create a style for",
-                                },
-                                "maplibre_json_layers_str": {
-                                    "type": "string",
-                                    "description": 'JSON string of MapLibre layer objects. Example: [{"id": "LZJ5RmuZr6qN-line", "type": "line", "source": "LZJ5RmuZr6qN", "paint": {"line-color": "#1E90FF"}}]',
-                                },
-                            },
-                            "required": ["layer_id", "maplibre_json_layers_str"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "set_active_style",
-                        "description": "Sets a style as active for a layer in a map",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "layer_id": {
-                                    "type": "string",
-                                    "description": "The ID of the layer",
-                                },
-                                "style_id": {
-                                    "type": "string",
-                                    "description": "The ID of the style to set as active",
-                                },
-                            },
-                            "required": ["layer_id", "style_id"],
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "query_duckdb_sql",
-                        "description": "Execute a SQL query against vector layer data using DuckDB",
-                        "strict": True,
-                        "parameters": {
-                            "type": "object",
-                            "required": ["layer_ids", "sql_query", "head_n_rows"],
-                            "properties": {
-                                "layer_ids": {
-                                    "type": "array",
-                                    "description": "Load these vector layer IDs as tables",
-                                    "items": {"type": "string"},
-                                },
-                                "sql_query": {
-                                    "type": "string",
-                                    "description": "E.g. SELECT name_en,county FROM LCH6Na2SBvJr ORDER BY id",
-                                },
-                                "head_n_rows": {
-                                    "type": "number",
-                                    "description": "Truncate result to n rows (increase gingerly, MUST specify returned columns), n=20 is good",
-                                },
-                            },
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "query_postgis_database",
-                        "description": "Execute SQL queries on connected PostgreSQL/PostGIS databases. Use for data analysis, spatial queries, and exploring database tables. The query should be safe and read-only.",
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "postgis_connection_id": {
-                                    "type": "string",
-                                    "description": "User's PostGIS connection ID to query against",
-                                },
-                                "sql_query": {
-                                    "type": "string",
-                                    "description": "SQL query to execute. Examples: 'SELECT COUNT(*) FROM table_name', 'SELECT * FROM spatial_table LIMIT 10', 'SELECT column_name FROM information_schema.columns WHERE table_name = \"my_table\"'. Use standard SQL syntax.",
-                                },
-                                "limit_rows": {
-                                    "type": "integer",
-                                    "description": "Maximum number of rows to return (default: 100, max: 1000)",
-                                    "default": 100,
-                                    "maximum": 1000,
-                                },
-                            },
-                            "required": ["postgis_connection_id", "sql_query"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-                {
-                    "type": "function",
-                    "function": {
-                        "name": "zoom_to_bounds",
-                        "description": "Zoom the map to a specific bounding box in WGS84 coordinates. This will save the current zoom location to history and navigate to the new bounds.",
-                        "strict": True,
-                        "parameters": {
-                            "type": "object",
-                            "properties": {
-                                "bounds": {
-                                    "type": "array",
-                                    "description": "Bounding box in WGS84 format [xmin, ymin, xmax, ymax]",
-                                    "items": {"type": "number"},
-                                    "minItems": 4,
-                                    "maxItems": 4,
-                                },
-                                "zoom_description": {
-                                    "type": "string",
-                                    "description": "Optional description of what this zoom operation shows (e.g. 'Downtown Seattle', 'Layer bounds')",
-                                },
-                            },
-                            "required": ["bounds", "zoom_description"],
-                            "additionalProperties": False,
-                        },
-                    },
-                },
-            ]
+                layer_enum = {}
+                for layer in unattached_layers:
+                    layer_name = (
+                        layer.get("name") or f"Unnamed Layer ({layer['layer_id'][:8]})"
+                    )
+                    layer_enum[layer["layer_id"]] = (
+                        f"{layer_name} (type: {layer.get('type', 'unknown')}, created: {layer['created_on']})"
+                    )
 
-            # Conditionally add OpenStreetMap tool if API key is configured
-            if has_openstreetmap_api_key():
-                tools_payload.append(
+                client = get_openai_client()
+
+                tools_payload = [
                     {
                         "type": "function",
                         "function": {
-                            "name": "download_from_openstreetmap",
-                            "description": "Download features from OSM and add to project as a cloud FlatGeobuf layer",
+                            "name": "new_layer_from_postgis",
+                            "description": "Creates a new layer, given a PostGIS connection and query, and adds it to the map so the user can see it. Layer will automatically pull data from PostGIS. Modify style using the create_layer_style tool.",
                             "strict": True,
                             "parameters": {
                                 "type": "object",
-                                "required": [
-                                    "tags",
-                                    "bbox",
-                                    "new_layer_name",
-                                ],
                                 "properties": {
-                                    "tags": {
+                                    "postgis_connection_id": {
                                         "type": "string",
-                                        "description": "Tags to filter for e.g. leisure=park, use & to AND tags together e.g. highway=footway&name=*, no commas",
+                                        "description": "Unique PostGIS connection ID used as source",
                                     },
-                                    "bbox": {
+                                    "query": {
+                                        "type": "string",
+                                        "description": "SQL query to execute against PostGIS database for this layer, should list fetched columns for attributes that might be used for symbology (+ shape geometry). This query MUST alias the geometry column as 'geom'.",
+                                    },
+                                    "layer_name": {
+                                        "type": "string",
+                                        "description": "Sets a human-readable name for this layer. This name will appear in the layer list/legend for the user.",
+                                    },
+                                },
+                                "required": [
+                                    "postgis_connection_id",
+                                    "query",
+                                    "layer_name",
+                                ],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "add_layer_to_map",
+                            "description": "Shows a newly created or existing unattached layer on the user's current map and layer list. Use this after a geoprocessing step that creates a layer, or if the user asks to see an existing layer that isn't currently on their map.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "layer_id": {
+                                        "type": "string",
+                                        "description": "The ID of the layer to add to the map. Choose from available unattached layers.",
+                                        "enum": list(layer_enum.keys())
+                                        if layer_enum
+                                        else ["NO_UNATTACHED_LAYERS"],
+                                    },
+                                    "new_name": {
+                                        "type": "string",
+                                        "description": "Sets a new human-readable name for this layer. This name will appear in the layer list/legend for the user.",
+                                    },
+                                },
+                                "required": ["layer_id", "new_name"],
+                            },
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "create_layer_style",
+                            "description": "Creates a new style for a layer with MapLibre JSON layers. Automatically renders the style for visual inspection.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "layer_id": {
+                                        "type": "string",
+                                        "description": "The ID of the layer to create a style for",
+                                    },
+                                    "maplibre_json_layers_str": {
+                                        "type": "string",
+                                        "description": 'JSON string of MapLibre layer objects. Example: [{"id": "LZJ5RmuZr6qN-line", "type": "line", "source": "LZJ5RmuZr6qN", "paint": {"line-color": "#1E90FF"}}]',
+                                    },
+                                },
+                                "required": ["layer_id", "maplibre_json_layers_str"],
+                            },
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "set_active_style",
+                            "description": "Sets a style as active for a layer in a map",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "layer_id": {
+                                        "type": "string",
+                                        "description": "The ID of the layer",
+                                    },
+                                    "style_id": {
+                                        "type": "string",
+                                        "description": "The ID of the style to set as active",
+                                    },
+                                },
+                                "required": ["layer_id", "style_id"],
+                            },
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "query_duckdb_sql",
+                            "description": "Execute a SQL query against vector layer data using DuckDB",
+                            "strict": True,
+                            "parameters": {
+                                "type": "object",
+                                "required": ["layer_ids", "sql_query", "head_n_rows"],
+                                "properties": {
+                                    "layer_ids": {
                                         "type": "array",
-                                        "description": "Bounding box in [xmin, ymin, xmax, ymax] format e.g. [9.023802,39.172149,9.280779,39.275211] for Cagliari, Italy",
-                                        "items": {"type": "number"},
+                                        "description": "Load these vector layer IDs as tables",
+                                        "items": {"type": "string"},
                                     },
-                                    "new_layer_name": {
+                                    "sql_query": {
                                         "type": "string",
-                                        "description": "Human-friendly name e.g. Walking paths or Liquor stores in Seattle",
+                                        "description": "E.g. SELECT name_en,county FROM LCH6Na2SBvJr ORDER BY id",
+                                    },
+                                    "head_n_rows": {
+                                        "type": "number",
+                                        "description": "Truncate result to n rows (increase gingerly, MUST specify returned columns), n=20 is good",
                                     },
                                 },
                                 "additionalProperties": False,
                             },
                         },
-                    }
-                )
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "query_postgis_database",
+                            "description": "Execute SQL queries on connected PostgreSQL/PostGIS databases. Use for data analysis, spatial queries, and exploring database tables. The query should be safe and read-only.",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "postgis_connection_id": {
+                                        "type": "string",
+                                        "description": "User's PostGIS connection ID to query against",
+                                    },
+                                    "sql_query": {
+                                        "type": "string",
+                                        "description": "SQL query to execute. Examples: 'SELECT COUNT(*) FROM table_name', 'SELECT * FROM spatial_table LIMIT 10', 'SELECT column_name FROM information_schema.columns WHERE table_name = \"my_table\"'. Use standard SQL syntax.",
+                                    },
+                                    "limit_rows": {
+                                        "type": "integer",
+                                        "description": "Maximum number of rows to return (default: 100, max: 1000)",
+                                        "default": 100,
+                                        "maximum": 1000,
+                                    },
+                                },
+                                "required": ["postgis_connection_id", "sql_query"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                    {
+                        "type": "function",
+                        "function": {
+                            "name": "zoom_to_bounds",
+                            "description": "Zoom the map to a specific bounding box in WGS84 coordinates. This will save the current zoom location to history and navigate to the new bounds.",
+                            "strict": True,
+                            "parameters": {
+                                "type": "object",
+                                "properties": {
+                                    "bounds": {
+                                        "type": "array",
+                                        "description": "Bounding box in WGS84 format [xmin, ymin, xmax, ymax]",
+                                        "items": {"type": "number"},
+                                        "minItems": 4,
+                                        "maxItems": 4,
+                                    },
+                                    "zoom_description": {
+                                        "type": "string",
+                                        "description": "Optional description of what this zoom operation shows (e.g. 'Downtown Seattle', 'Layer bounds')",
+                                    },
+                                },
+                                "required": ["bounds", "zoom_description"],
+                                "additionalProperties": False,
+                            },
+                        },
+                    },
+                ]
 
-            if not layer_enum:
-                add_layer_tool = next(
-                    tool
-                    for tool in tools_payload
-                    if tool["function"]["name"] == "add_layer_to_map"
-                )
-                add_layer_tool["function"]["parameters"]["properties"]["layer_id"].pop(
-                    "enum", None
-                )
-
-            # Replace the thinking ephemeral updates with context manager
-            async with kue_ephemeral_action(map_id, "Kue is thinking..."):
-                chat_completions_args = await chat_args.get_args(
-                    user_id, "send_map_message_async"
-                )
-                with tracer.start_as_current_span("kue.openai.chat.completions.create"):
-                    response = await client.chat.completions.create(
-                        **chat_completions_args,
-                        messages=[
-                            {
-                                "role": "system",
-                                "content": system_prompt_provider.get_system_prompt(),
-                            }
-                        ]
-                        + openai_messages,
-                        tools=tools_payload if tools_payload else None,
-                        tool_choice="auto" if tools_payload else None,
+                # Conditionally add OpenStreetMap tool if API key is configured
+                if has_openstreetmap_api_key():
+                    tools_payload.append(
+                        {
+                            "type": "function",
+                            "function": {
+                                "name": "download_from_openstreetmap",
+                                "description": "Download features from OSM and add to project as a cloud FlatGeobuf layer",
+                                "strict": True,
+                                "parameters": {
+                                    "type": "object",
+                                    "required": [
+                                        "tags",
+                                        "bbox",
+                                        "new_layer_name",
+                                    ],
+                                    "properties": {
+                                        "tags": {
+                                            "type": "string",
+                                            "description": "Tags to filter for e.g. leisure=park, use & to AND tags together e.g. highway=footway&name=*, no commas",
+                                        },
+                                        "bbox": {
+                                            "type": "array",
+                                            "description": "Bounding box in [xmin, ymin, xmax, ymax] format e.g. [9.023802,39.172149,9.280779,39.275211] for Cagliari, Italy",
+                                            "items": {"type": "number"},
+                                        },
+                                        "new_layer_name": {
+                                            "type": "string",
+                                            "description": "Human-friendly name e.g. Walking paths or Liquor stores in Seattle",
+                                        },
+                                    },
+                                    "additionalProperties": False,
+                                },
+                            },
+                        }
                     )
 
-            assistant_message = response.choices[0].message
+                if not layer_enum:
+                    add_layer_tool = next(
+                        tool
+                        for tool in tools_payload
+                        if tool["function"]["name"] == "add_layer_to_map"
+                    )
+                    add_layer_tool["function"]["parameters"]["properties"][
+                        "layer_id"
+                    ].pop("enum", None)
 
-            # Store the assistant message in the database
-            await add_chat_completion_message(assistant_message)
-
-            # If no tool calls, break
-            if not assistant_message.tool_calls:
-                break
-
-            for tool_call in assistant_message.tool_calls:
-                function_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
-                tool_result = {}
-
-                # span.add_event(
-                #     "kue.tool_call_started",
-                #     {"tool_name": function_name},
-                # )
-                if function_name == "new_layer_from_postgis":
-                    postgis_connection_id = tool_args.get("postgis_connection_id")
-                    query = tool_args.get("query")
-                    layer_name = tool_args.get("layer_name")
-
-                    if not postgis_connection_id or not query:
-                        tool_result = {
-                            "status": "error",
-                            "error": "Missing required parameters (postgis_connection_id or query).",
-                        }
-                    else:
-                        # Verify the PostGIS connection exists and user has access
-                        connection_result = await conn.fetchrow(
-                            """
-                            SELECT connection_uri FROM project_postgres_connections
-                            WHERE id = $1 AND user_id = $2
-                            """,
-                            postgis_connection_id,
-                            user_id,
+                # Replace the thinking ephemeral updates with context manager
+                async with kue_ephemeral_action(map_id, "Kue is thinking..."):
+                    chat_completions_args = await chat_args.get_args(
+                        user_id, "send_map_message_async"
+                    )
+                    with tracer.start_as_current_span(
+                        "kue.openai.chat.completions.create"
+                    ):
+                        response = await client.chat.completions.create(
+                            **chat_completions_args,
+                            messages=[
+                                {
+                                    "role": "system",
+                                    "content": system_prompt_provider.get_system_prompt(),
+                                }
+                            ]
+                            + openai_messages,
+                            tools=tools_payload if tools_payload else None,
+                            tool_choice="auto" if tools_payload else None,
                         )
 
-                        if not connection_result:
-                            tool_result = {
-                                "status": "error",
-                                "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
-                            }
-                        else:
-                            try:
-                                # Validate the query before creating the layer
-                                conn_uri = connection_result["connection_uri"]
-                                pg = await asyncpg.connect(
-                                    conn_uri,
-                                    server_settings={
-                                        "default_transaction_read_only": "on"
-                                    },
+                assistant_message = response.choices[0].message
+
+                # Store the assistant message in the database
+                await add_chat_completion_message(assistant_message)
+
+                # If no tool calls, break
+                if not assistant_message.tool_calls:
+                    break
+
+                for tool_call in assistant_message.tool_calls:
+                    function_name = tool_call.function.name
+                    tool_args = json.loads(tool_call.function.arguments)
+                    tool_result = {}
+
+                    span.add_event(
+                        "kue.tool_call_started",
+                        {"tool_name": function_name},
+                    )
+                    with tracer.start_as_current_span(f"kue.{function_name}") as span:
+                        if function_name == "new_layer_from_postgis":
+                            postgis_connection_id = tool_args.get(
+                                "postgis_connection_id"
+                            )
+                            query = tool_args.get("query")
+                            layer_name = tool_args.get("layer_name")
+
+                            if not postgis_connection_id or not query:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": "Missing required parameters (postgis_connection_id or query).",
+                                }
+                            else:
+                                # Verify the PostGIS connection exists and user has access
+                                connection_result = await conn.fetchrow(
+                                    """
+                                    SELECT connection_uri FROM project_postgres_connections
+                                    WHERE id = $1 AND user_id = $2
+                                    """,
+                                    postgis_connection_id,
+                                    user_id,
                                 )
-                                try:
-                                    # 1. Make sure the SQL parsers and planners are happy
-                                    await pg.execute(
-                                        f"EXPLAIN {query}"
-                                    )  # catches typos & ambiguous refs
 
-                                    # 2. Make sure it returns a geometry column called geom
-                                    await pg.execute(
-                                        f"""
-                                        SELECT 1
-                                        FROM   ({query}) AS sub
-                                        WHERE  geom IS NOT NULL
-                                        LIMIT 1
-                                        """
-                                    )
-                                finally:
-                                    await pg.close()
-
-                                # Calculate feature count, bounds, and geometry type for the PostGIS layer
-                                feature_count = None
-                                bounds = None
-                                geometry_type = None
-                                try:
-                                    pg_stats = await asyncpg.connect(
-                                        conn_uri,
-                                        server_settings={
-                                            "default_transaction_read_only": "on"
-                                        },
-                                    )
-
+                                if not connection_result:
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
+                                    }
+                                else:
                                     try:
-                                        # Calculate feature count
-                                        count_result = await pg_stats.fetchval(
-                                            f"SELECT COUNT(*) FROM ({query}) AS sub"
+                                        # Validate the query before creating the layer
+                                        conn_uri = connection_result["connection_uri"]
+                                        pg = await asyncpg.connect(
+                                            conn_uri,
+                                            server_settings={
+                                                "default_transaction_read_only": "on"
+                                            },
                                         )
-                                        feature_count = (
-                                            int(count_result)
-                                            if count_result is not None
-                                            else None
-                                        )
+                                        try:
+                                            # 1. Make sure the SQL parsers and planners are happy
+                                            await pg.execute(
+                                                f"EXPLAIN {query}"
+                                            )  # catches typos & ambiguous refs
 
-                                        # Find geometry column by trying common names
-                                        geometry_column = None
-                                        common_geom_names = [
-                                            "geom",
-                                            "geometry",
-                                            "shape",
-                                            "the_geom",
-                                            "wkb_geometry",
-                                        ]
-
-                                        for geom_name in common_geom_names:
-                                            try:
-                                                await pg_stats.fetchval(
-                                                    f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
-                                                )
-                                                geometry_column = geom_name
-                                                break
-                                            except Exception:
-                                                continue
-
-                                        if geometry_column:
-                                            # Detect geometry type for styling
-                                            geometry_type_result = await pg_stats.fetchrow(
+                                            # 2. Make sure it returns a geometry column called geom
+                                            await pg.execute(
                                                 f"""
-                                                SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
-                                                FROM ({query}) AS sub
-                                                WHERE {geometry_column} IS NOT NULL
-                                                GROUP BY ST_GeometryType({geometry_column})
-                                                ORDER BY count DESC
+                                                SELECT 1
+                                                FROM   ({query}) AS sub
+                                                WHERE  geom IS NOT NULL
                                                 LIMIT 1
                                                 """
                                             )
+                                        finally:
+                                            await pg.close()
 
-                                            if (
-                                                geometry_type_result
-                                                and geometry_type_result["geom_type"]
-                                            ):
-                                                # Convert PostGIS geometry type to standard format
-                                                geometry_type = (
-                                                    geometry_type_result["geom_type"]
-                                                    .replace("ST_", "")
-                                                    .lower()
-                                                )
-
-                                            # Calculate bounds with proper SRID handling
-                                            # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
-                                            bounds_result = await pg_stats.fetchrow(
-                                                f"""
-                                                WITH extent_data AS (
-                                                    SELECT
-                                                        ST_Extent({geometry_column}) as extent_geom,
-                                                        (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
-                                                    FROM ({query}) AS sub
-                                                    WHERE {geometry_column} IS NOT NULL
-                                                )
-                                                SELECT
-                                                    CASE
-                                                        WHEN original_srid = 4326 THEN
-                                                            ST_XMin(extent_geom)
-                                                        ELSE
-                                                            ST_XMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                    END as xmin,
-                                                    CASE
-                                                        WHEN original_srid = 4326 THEN
-                                                            ST_YMin(extent_geom)
-                                                        ELSE
-                                                            ST_YMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                    END as ymin,
-                                                    CASE
-                                                        WHEN original_srid = 4326 THEN
-                                                            ST_XMax(extent_geom)
-                                                        ELSE
-                                                            ST_XMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                    END as xmax,
-                                                    CASE
-                                                        WHEN original_srid = 4326 THEN
-                                                            ST_YMax(extent_geom)
-                                                        ELSE
-                                                            ST_YMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                    END as ymax
-                                                FROM extent_data
-                                                WHERE extent_geom IS NOT NULL
-                                                """
+                                        # Calculate feature count, bounds, and geometry type for the PostGIS layer
+                                        feature_count = None
+                                        bounds = None
+                                        geometry_type = None
+                                        try:
+                                            pg_stats = await asyncpg.connect(
+                                                conn_uri,
+                                                server_settings={
+                                                    "default_transaction_read_only": "on"
+                                                },
                                             )
 
-                                            if bounds_result and all(
-                                                v is not None for v in bounds_result
-                                            ):
-                                                bounds = [
-                                                    float(bounds_result["xmin"]),
-                                                    float(bounds_result["ymin"]),
-                                                    float(bounds_result["xmax"]),
-                                                    float(bounds_result["ymax"]),
+                                            try:
+                                                # Calculate feature count
+                                                count_result = await pg_stats.fetchval(
+                                                    f"SELECT COUNT(*) FROM ({query}) AS sub"
+                                                )
+                                                feature_count = (
+                                                    int(count_result)
+                                                    if count_result is not None
+                                                    else None
+                                                )
+
+                                                # Find geometry column by trying common names
+                                                geometry_column = None
+                                                common_geom_names = [
+                                                    "geom",
+                                                    "geometry",
+                                                    "shape",
+                                                    "the_geom",
+                                                    "wkb_geometry",
                                                 ]
-                                        else:
+
+                                                for geom_name in common_geom_names:
+                                                    try:
+                                                        await pg_stats.fetchval(
+                                                            f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
+                                                        )
+                                                        geometry_column = geom_name
+                                                        break
+                                                    except Exception:
+                                                        continue
+
+                                                if geometry_column:
+                                                    # Detect geometry type for styling
+                                                    geometry_type_result = await pg_stats.fetchrow(
+                                                        f"""
+                                                        SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
+                                                        FROM ({query}) AS sub
+                                                        WHERE {geometry_column} IS NOT NULL
+                                                        GROUP BY ST_GeometryType({geometry_column})
+                                                        ORDER BY count DESC
+                                                        LIMIT 1
+                                                        """
+                                                    )
+
+                                                    if (
+                                                        geometry_type_result
+                                                        and geometry_type_result[
+                                                            "geom_type"
+                                                        ]
+                                                    ):
+                                                        # Convert PostGIS geometry type to standard format
+                                                        geometry_type = (
+                                                            geometry_type_result[
+                                                                "geom_type"
+                                                            ]
+                                                            .replace("ST_", "")
+                                                            .lower()
+                                                        )
+
+                                                    # Calculate bounds with proper SRID handling
+                                                    # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
+                                                    bounds_result = await pg_stats.fetchrow(
+                                                        f"""
+                                                        WITH extent_data AS (
+                                                            SELECT
+                                                                ST_Extent({geometry_column}) as extent_geom,
+                                                                (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
+                                                            FROM ({query}) AS sub
+                                                            WHERE {geometry_column} IS NOT NULL
+                                                        )
+                                                        SELECT
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_XMin(extent_geom)
+                                                                ELSE
+                                                                    ST_XMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as xmin,
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_YMin(extent_geom)
+                                                                ELSE
+                                                                    ST_YMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as ymin,
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_XMax(extent_geom)
+                                                                ELSE
+                                                                    ST_XMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as xmax,
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_YMax(extent_geom)
+                                                                ELSE
+                                                                    ST_YMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as ymax
+                                                        FROM extent_data
+                                                        WHERE extent_geom IS NOT NULL
+                                                        """
+                                                    )
+
+                                                    if bounds_result and all(
+                                                        v is not None
+                                                        for v in bounds_result
+                                                    ):
+                                                        bounds = [
+                                                            float(
+                                                                bounds_result["xmin"]
+                                                            ),
+                                                            float(
+                                                                bounds_result["ymin"]
+                                                            ),
+                                                            float(
+                                                                bounds_result["xmax"]
+                                                            ),
+                                                            float(
+                                                                bounds_result["ymax"]
+                                                            ),
+                                                        ]
+                                                else:
+                                                    print(
+                                                        "Warning: No geometry column found in PostGIS query"
+                                                    )
+                                            finally:
+                                                await pg_stats.close()
+                                        except Exception as e:
                                             print(
-                                                "Warning: No geometry column found in PostGIS query"
+                                                f"Warning: Failed to calculate feature count/bounds for PostGIS layer: {str(e)}"
                                             )
-                                    finally:
-                                        await pg_stats.close()
-                                except Exception as e:
-                                    print(
-                                        f"Warning: Failed to calculate feature count/bounds for PostGIS layer: {str(e)}"
-                                    )
-                                    feature_count = None
-                                    bounds = None
+                                            feature_count = None
+                                            bounds = None
 
-                                # Generate a new layer ID
-                                layer_id = generate_id(prefix="L")
+                                        # Generate a new layer ID
+                                        layer_id = generate_id(prefix="L")
 
-                                # Generate default style if geometry type was detected
-                                maplibre_layers = None
-                                if geometry_type:
-                                    try:
-                                        maplibre_layers = (
-                                            generate_maplibre_layers_for_layer_id(
-                                                layer_id, geometry_type
-                                            )
-                                        )
-                                        # PostGIS layers use MVT tiles, so source-layer is 'reprojectedfgb'
-                                        # This matches the expectation in the style generation function
-                                        print(
-                                            f"Generated default style for PostGIS layer {layer_id} with geometry type {geometry_type}"
-                                        )
-                                    except Exception as e:
-                                        print(
-                                            f"Warning: Failed to generate default style for PostGIS layer: {str(e)}"
-                                        )
+                                        # Generate default style if geometry type was detected
                                         maplibre_layers = None
+                                        if geometry_type:
+                                            try:
+                                                maplibre_layers = generate_maplibre_layers_for_layer_id(
+                                                    layer_id, geometry_type
+                                                )
+                                                # PostGIS layers use MVT tiles, so source-layer is 'reprojectedfgb'
+                                                # This matches the expectation in the style generation function
+                                                print(
+                                                    f"Generated default style for PostGIS layer {layer_id} with geometry type {geometry_type}"
+                                                )
+                                            except Exception as e:
+                                                print(
+                                                    f"Warning: Failed to generate default style for PostGIS layer: {str(e)}"
+                                                )
+                                                maplibre_layers = None
 
-                                # Create the layer in the database
+                                        # Create the layer in the database
+                                        await conn.execute(
+                                            """
+                                            INSERT INTO map_layers
+                                            (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, created_on, last_edited)
+                                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                                            """,
+                                            layer_id,
+                                            user_id,
+                                            layer_name,
+                                            "",  # Empty path for PostGIS layers
+                                            "postgis",
+                                            postgis_connection_id,
+                                            query,
+                                            feature_count,
+                                            bounds,
+                                            geometry_type,
+                                        )
+
+                                        # Create default style in separate table if we have geometry type
+                                        if maplibre_layers:
+                                            style_id = generate_id(prefix="S")
+                                            await conn.execute(
+                                                """
+                                                INSERT INTO layer_styles
+                                                (style_id, layer_id, style_json, created_by, created_on)
+                                                VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                                                """,
+                                                style_id,
+                                                layer_id,
+                                                json.dumps(maplibre_layers),
+                                                user_id,
+                                            )
+
+                                            await conn.execute(
+                                                """
+                                                INSERT INTO map_layer_styles
+                                                (map_id, layer_id, style_id)
+                                                VALUES ($1, $2, $3)
+                                                """,
+                                                map_id,
+                                                layer_id,
+                                                style_id,
+                                            )
+
+                                        await conn.execute(
+                                            """
+                                            UPDATE user_mundiai_maps
+                                            SET layers = array_append(layers, $1)
+                                            WHERE id = $2 AND NOT ($1 = ANY(layers))
+                                            """,
+                                            layer_id,
+                                            map_id,
+                                        )
+
+                                        tool_result = {
+                                            "status": "success",
+                                            "message": f"PostGIS layer created successfully with ID: {layer_id} and added to map",
+                                            "layer_id": layer_id,
+                                            "query": query,
+                                            "added_to_map": True,
+                                        }
+                                    except Exception as e:
+                                        tool_result = {
+                                            "status": "error",
+                                            "error": f"Query validation failed: {str(e)}",
+                                        }
+
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                )
+                            )
+                        elif function_name == "add_layer_to_map":
+                            layer_id_to_add = tool_args.get("layer_id")
+                            new_name = tool_args.get("new_name")
+
+                            layer_exists = await conn.fetchrow(
+                                """
+                                SELECT layer_id FROM map_layers
+                                WHERE layer_id = $1 AND owner_uuid = $2
+                                """,
+                                layer_id_to_add,
+                                user_id,
+                            )
+
+                            if not layer_exists:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": f"Layer ID '{layer_id_to_add}' not found or you do not have permission to use it.",
+                                }
+                            else:
                                 await conn.execute(
                                     """
-                                    INSERT INTO map_layers
-                                    (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, created_on, last_edited)
-                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                                    UPDATE map_layers SET name = $1 WHERE layer_id = $2
                                     """,
-                                    layer_id,
-                                    user_id,
-                                    layer_name,
-                                    "",  # Empty path for PostGIS layers
-                                    "postgis",
-                                    postgis_connection_id,
-                                    query,
-                                    feature_count,
-                                    bounds,
-                                    geometry_type,
+                                    new_name,
+                                    layer_id_to_add,
                                 )
-
-                                # Create default style in separate table if we have geometry type
-                                if maplibre_layers:
-                                    style_id = generate_id(prefix="S")
-                                    await conn.execute(
-                                        """
-                                        INSERT INTO layer_styles
-                                        (style_id, layer_id, style_json, created_by, created_on)
-                                        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
-                                        """,
-                                        style_id,
-                                        layer_id,
-                                        json.dumps(maplibre_layers),
-                                        user_id,
-                                    )
-
-                                    await conn.execute(
-                                        """
-                                        INSERT INTO map_layer_styles
-                                        (map_id, layer_id, style_id)
-                                        VALUES ($1, $2, $3)
-                                        """,
-                                        map_id,
-                                        layer_id,
-                                        style_id,
-                                    )
 
                                 await conn.execute(
                                     """
@@ -786,558 +861,526 @@ async def process_chat_interaction_task(
                                     SET layers = array_append(layers, $1)
                                     WHERE id = $2 AND NOT ($1 = ANY(layers))
                                     """,
-                                    layer_id,
+                                    layer_id_to_add,
                                     map_id,
                                 )
-
                                 tool_result = {
-                                    "status": "success",
-                                    "message": f"PostGIS layer created successfully with ID: {layer_id} and added to map",
-                                    "layer_id": layer_id,
-                                    "query": query,
-                                    "added_to_map": True,
-                                }
-                            except Exception as e:
-                                tool_result = {
-                                    "status": "error",
-                                    "error": f"Query validation failed: {str(e)}",
+                                    "status": f"Layer '{new_name}' (ID: {layer_id_to_add}) added to map '{map_id}'.",
+                                    "layer_id": layer_id_to_add,
+                                    "name": new_name,
                                 }
 
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        )
-                    )
-                elif function_name == "add_layer_to_map":
-                    layer_id_to_add = tool_args.get("layer_id")
-                    new_name = tool_args.get("new_name")
-
-                    layer_exists = await conn.fetchrow(
-                        """
-                        SELECT layer_id FROM map_layers
-                        WHERE layer_id = $1 AND owner_uuid = $2
-                        """,
-                        layer_id_to_add,
-                        user_id,
-                    )
-
-                    if not layer_exists:
-                        tool_result = {
-                            "status": "error",
-                            "error": f"Layer ID '{layer_id_to_add}' not found or you do not have permission to use it.",
-                        }
-                    else:
-                        await conn.execute(
-                            """
-                            UPDATE map_layers SET name = $1 WHERE layer_id = $2
-                            """,
-                            new_name,
-                            layer_id_to_add,
-                        )
-
-                        await conn.execute(
-                            """
-                            UPDATE user_mundiai_maps
-                            SET layers = array_append(layers, $1)
-                            WHERE id = $2 AND NOT ($1 = ANY(layers))
-                            """,
-                            layer_id_to_add,
-                            map_id,
-                        )
-                        tool_result = {
-                            "status": f"Layer '{new_name}' (ID: {layer_id_to_add}) added to map '{map_id}'.",
-                            "layer_id": layer_id_to_add,
-                            "name": new_name,
-                        }
-
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        )
-                    )
-                elif function_name == "query_duckdb_sql":
-                    layer_id = tool_args.get("layer_ids", [None])[
-                        0
-                    ]  # Use first layer or None
-                    sql_query = tool_args.get("sql_query")
-                    head_n_rows = tool_args.get("head_n_rows", 20)
-
-                    layer_exists = await conn.fetchrow(
-                        """
-                        SELECT layer_id FROM map_layers
-                        WHERE layer_id = $1 AND owner_uuid = $2
-                        """,
-                        layer_id,
-                        user_id,
-                    )
-
-                    if not layer_exists:
-                        tool_result = {
-                            "status": "error",
-                            "error": f"Layer ID '{layer_id}' not found or you do not have permission to access it.",
-                        }
-                        await add_chat_completion_message(
-                            ChatCompletionToolMessageParam(
-                                role="tool",
-                                tool_call_id=tool_call.id,
-                                content=json.dumps(tool_result),
-                            )
-                        )
-                        continue
-
-                    try:
-                        # Execute the query using the async function
-                        async with kue_ephemeral_action(
-                            map_id, "Querying with SQL...", layer_id=layer_id
-                        ):
-                            result = await execute_duckdb_query(
-                                sql_query=sql_query,
-                                layer_id=layer_id,
-                                max_n_rows=head_n_rows,
-                                timeout=10,
-                            )
-
-                        # Convert result to CSV format
-                        df = pd.DataFrame(result["result"], columns=result["headers"])
-                        result_text = df.to_csv(index=False)
-
-                        if len(result_text) > 25000:
-                            tool_result = {
-                                "status": "error",
-                                "error": f"DuckDB CSV result too large: {len(result_text)} characters exceeds 25,000 character limit, try reducing columns or head_n_rows",
-                            }
-                        else:
-                            tool_result = {
-                                "status": "success",
-                                "result": result_text,
-                                "row_count": result["row_count"],
-                                "query": sql_query,
-                            }
-                    except HTTPException as e:
-                        tool_result = {
-                            "status": "error",
-                            "error": f"DuckDB query error: {e.detail}",
-                        }
-                    except Exception as e:
-                        tool_result = {
-                            "status": "error",
-                            "error": f"Error executing SQL query: {str(e)}",
-                        }
-
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        )
-                    )
-                elif function_name == "create_layer_style":
-                    layer_id = tool_args.get("layer_id")
-                    maplibre_json_layers_str = tool_args.get("maplibre_json_layers_str")
-
-                    if not layer_id or not maplibre_json_layers_str:
-                        tool_result = {
-                            "status": "error",
-                            "error": "Missing required parameters (layer_id or maplibre_json_layers_str).",
-                        }
-                    else:
-                        # Generate a new style ID
-                        style_id = generate_id(prefix="S")
-
-                        try:
-                            layers = json.loads(maplibre_json_layers_str)
-
-                            # Validate that layers is a list
-                            if not isinstance(layers, list):
-                                raise ValueError(
-                                    f"Expected a JSON array of layer objects, but got {type(layers).__name__}: {repr(layers)[:200]}"
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
                                 )
-
-                            # Add source-layer property if missing to fix KeyError: 'source-layer'
-                            for layer in layers:
-                                if isinstance(layer, dict):
-                                    layer["source-layer"] = "reprojectedfgb"
-                                else:
-                                    raise ValueError(
-                                        f"Expected layer object to be a dict, but got {type(layer).__name__}: {repr(layer)[:200]}"
-                                    )
-
-                            # Get complete map style with our layer styling to validate it
-                            base_map_provider = get_base_map_provider()
-                            style_json = await get_map_style_internal(
-                                map_id=map_id,
-                                base_map=base_map_provider,
-                                only_show_inline_sources=True,
-                                override_layers=json.dumps({layer_id: layers}),
                             )
+                        elif function_name == "query_duckdb_sql":
+                            layer_id = tool_args.get("layer_ids", [None])[
+                                0
+                            ]  # Use first layer or None
+                            sql_query = tool_args.get("sql_query")
+                            head_n_rows = tool_args.get("head_n_rows", 20)
 
-                            # Validate the complete style
-                            verify_style_json_str(json.dumps(style_json))
-
-                            # If validation passes, create the style in the database
-                            await conn.execute(
+                            layer_exists = await conn.fetchrow(
                                 """
-                                INSERT INTO layer_styles
-                                (style_id, layer_id, style_json, created_by)
-                                VALUES ($1, $2, $3, $4)
+                                SELECT layer_id FROM map_layers
+                                WHERE layer_id = $1 AND owner_uuid = $2
                                 """,
-                                style_id,
                                 layer_id,
-                                json.dumps(layers),
                                 user_id,
                             )
 
-                            tool_result = {
-                                "status": "success",
-                                "style_id": style_id,
-                                "layer_id": layer_id,
-                            }
-                        except json.JSONDecodeError as e:
-                            print(f"JSON decode error: {str(e)}")
-                            tool_result = {
-                                "status": "error",
-                                "error": f"Invalid JSON format: {str(e)}",
-                                "layer_id": layer_id,
-                            }
-                        except ValueError as e:
-                            print(f"Value error in layer style: {str(e)}")
-                            tool_result = {
-                                "status": "error",
-                                "error": str(e),
-                                "layer_id": layer_id,
-                            }
-                        except StyleValidationError as e:
-                            print(
-                                f"Style validation error: {str(e)}",
-                                traceback.format_exc(),
-                                type(e),
-                            )
-                            tool_result = {
-                                "status": "error",
-                                "error": f"Style validation failed: {str(e)}",
-                                "layer_id": layer_id,
-                            }
-
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        ),
-                    )
-                elif function_name == "set_active_style":
-                    layer_id = tool_args.get("layer_id")
-                    style_id = tool_args.get("style_id")
-
-                    if not all([layer_id, style_id]):
-                        tool_result = {
-                            "status": "error",
-                            "error": "Missing required parameters (layer_id, or style_id).",
-                        }
-                    else:
-                        # Add or update the map_layer_styles entry
-                        async with kue_ephemeral_action(
-                            map_id,
-                            "Choosing a new style",
-                            update_style_json=True,
-                        ):
-                            await conn.execute(
-                                """
-                                INSERT INTO map_layer_styles (map_id, layer_id, style_id)
-                                VALUES ($1, $2, $3)
-                                ON CONFLICT (map_id, layer_id)
-                                DO UPDATE SET style_id = $3
-                                """,
-                                map_id,
-                                layer_id,
-                                style_id,
-                            )
-
-                        tool_result = {
-                            "status": "success",
-                            "message": f"Style {style_id} set as active for layer {layer_id}, user can now see it",
-                            "layer_id": layer_id,
-                            "style_id": style_id,
-                        }
-
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        ),
-                    )
-                elif function_name == "download_from_openstreetmap":
-                    tags = tool_args.get("tags")
-                    bbox = tool_args.get("bbox")
-                    new_layer_name = tool_args.get("new_layer_name")
-
-                    if not all([tags, bbox, new_layer_name]):
-                        tool_result = {
-                            "status": "error",
-                            "error": "Missing required parameters for OpenStreetMap download.",
-                        }
-                    else:
-                        try:
-                            # Keep context manager only around the specific API call
-                            async with kue_ephemeral_action(
-                                map_id,
-                                f"Downloading data from OpenStreetMap: {tags}",
-                            ):
-                                tool_result = await download_from_openstreetmap(
-                                    request=request,
-                                    map_id=map_id,
-                                    bbox=bbox,
-                                    tags=tags,
-                                    new_layer_name=new_layer_name,
-                                    session=session,
+                            if not layer_exists:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": f"Layer ID '{layer_id}' not found or you do not have permission to access it.",
+                                }
+                                await add_chat_completion_message(
+                                    ChatCompletionToolMessageParam(
+                                        role="tool",
+                                        tool_call_id=tool_call.id,
+                                        content=json.dumps(tool_result),
+                                    )
                                 )
-                        except Exception as e:
-                            print(traceback.format_exc())
-                            print(e)
-                            tool_result = {
-                                "status": "error",
-                                "error": f"Error downloading from OpenStreetMap: {str(e)}",
-                            }
-                    # Add instructions to tool result if download was successful
-                    if tool_result.get("status") == "success" and tool_result.get(
-                        "uploaded_layers"
-                    ):
-                        uploaded_layers = tool_result.get("uploaded_layers")
-                        layer_names = [
-                            f"{new_layer_name}_{layer['geometry_type']}"
-                            for layer in uploaded_layers
-                        ]
-                        layer_ids = [layer["layer_id"] for layer in uploaded_layers]
-                        tool_result["kue_instructions"] = (
-                            f"New layers available: {', '.join(layer_names)} "
-                            f"(IDs: {', '.join(layer_ids)}), all currently invisible. "
-                            'To make any of these visible to the user on their map, use "add_layer_to_map" with the layer_id and a descriptive new_name.'
-                        )
-
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        ),
-                    )
-                elif function_name == "query_postgis_database":
-                    postgis_connection_id = tool_args.get("postgis_connection_id")
-                    sql_query = tool_args.get("sql_query")
-                    limit_rows = tool_args.get("limit_rows", 100)
-
-                    if not postgis_connection_id or not sql_query:
-                        tool_result = {
-                            "status": "error",
-                            "error": "Missing required parameters (postgis_connection_id or sql_query)",
-                        }
-                    else:
-                        # Verify the PostGIS connection exists and user has access
-                        connection_result = await conn.fetchrow(
-                            """
-                            SELECT connection_uri FROM project_postgres_connections
-                            WHERE id = $1 AND user_id = $2
-                            """,
-                            postgis_connection_id,
-                            user_id,
-                        )
-
-                        if not connection_result:
-                            tool_result = {
-                                "status": "error",
-                                "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
-                            }
-                        else:
-                            # Use the connection URI
-                            connection_uri = connection_result["connection_uri"]
+                                continue
 
                             try:
-                                # Clamp limit_rows to be between 1 and 1000
-                                limit_rows = max(1, min(limit_rows, 1000))
-
-                                # Add LIMIT clause if not already present
-                                limited_query = sql_query.strip()
-                                if not limited_query.upper().endswith(
-                                    ("LIMIT", f"LIMIT {limit_rows}")
-                                ):
-                                    if "LIMIT" not in limited_query.upper():
-                                        limited_query += f" LIMIT {limit_rows}"
-
+                                # Execute the query using the async function
                                 async with kue_ephemeral_action(
-                                    map_id, "Querying PostgreSQL database..."
+                                    map_id, "Querying with SQL...", layer_id=layer_id
                                 ):
-                                    postgres_conn = await asyncpg.connect(
-                                        connection_uri,
-                                        server_settings={
-                                            "default_transaction_read_only": "on"
-                                        },
+                                    result = await execute_duckdb_query(
+                                        sql_query=sql_query,
+                                        layer_id=layer_id,
+                                        max_n_rows=head_n_rows,
+                                        timeout=10,
                                     )
-                                    try:
-                                        # Execute the query
-                                        rows = await postgres_conn.fetch(limited_query)
 
-                                        if not rows:
-                                            tool_result = {
-                                                "status": "success",
-                                                "message": "Query executed successfully but returned no rows",
-                                                "row_count": 0,
-                                                "query": limited_query,
-                                            }
-                                        else:
-                                            # Convert rows to list of dicts
-                                            result_data = [dict(row) for row in rows]
+                                # Convert result to CSV format
+                                df = pd.DataFrame(
+                                    result["result"], columns=result["headers"]
+                                )
+                                result_text = df.to_csv(index=False)
 
-                                            # Format the result as a readable string
-                                            if (
-                                                len(result_data) == 1
-                                                and len(result_data[0]) == 1
-                                            ):
-                                                # Single value result
-                                                single_value = list(
-                                                    result_data[0].values()
-                                                )[0]
-                                                result_text = (
-                                                    f"Query result: {single_value}"
-                                                )
-                                            else:
-                                                # Table format
-                                                if result_data:
-                                                    headers = list(
-                                                        result_data[0].keys()
-                                                    )
-                                                    result_lines = ["\t".join(headers)]
-                                                    for row in result_data:
-                                                        result_lines.append(
-                                                            "\t".join(
-                                                                str(row.get(h, ""))
-                                                                for h in headers
-                                                            )
-                                                        )
-                                                    result_text = "\n".join(
-                                                        result_lines
-                                                    )
-                                                else:
-                                                    result_text = "No results"
-
-                                            # Check if result is too large
-                                            if len(result_text) > 25000:
-                                                tool_result = {
-                                                    "status": "error",
-                                                    "error": f"Query result too large: {len(result_text)} characters exceeds 25,000 character limit. Try reducing the number of columns or rows.",
-                                                }
-                                            else:
-                                                tool_result = {
-                                                    "status": "success",
-                                                    "result": result_text,
-                                                    "row_count": len(result_data),
-                                                    "query": limited_query,
-                                                }
-                                    finally:
-                                        await postgres_conn.close()
-
+                                if len(result_text) > 25000:
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"DuckDB CSV result too large: {len(result_text)} characters exceeds 25,000 character limit, try reducing columns or head_n_rows",
+                                    }
+                                else:
+                                    tool_result = {
+                                        "status": "success",
+                                        "result": result_text,
+                                        "row_count": result["row_count"],
+                                        "query": sql_query,
+                                    }
+                            except HTTPException as e:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": f"DuckDB query error: {e.detail}",
+                                }
                             except Exception as e:
                                 tool_result = {
                                     "status": "error",
-                                    "error": f"PostgreSQL query error: {str(e)}",
-                                    "query": limited_query,
+                                    "error": f"Error executing SQL query: {str(e)}",
                                 }
 
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        ),
-                    )
-                elif function_name == "zoom_to_bounds":
-                    bounds = tool_args.get("bounds")
-                    description = tool_args.get("zoom_description", "")
-
-                    if not bounds or len(bounds) != 4:
-                        tool_result = {
-                            "status": "error",
-                            "error": "Invalid bounds. Must be an array of 4 numbers [west, south, east, north]",
-                        }
-                    else:
-                        try:
-                            # Validate bounds format
-                            west, south, east, north = bounds
-                            if not all(
-                                isinstance(coord, (int, float)) for coord in bounds
-                            ):
-                                raise ValueError(
-                                    "All bounds coordinates must be numbers"
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
                                 )
+                            )
+                        elif function_name == "create_layer_style":
+                            layer_id = tool_args.get("layer_id")
+                            maplibre_json_layers_str = tool_args.get(
+                                "maplibre_json_layers_str"
+                            )
 
-                            if west >= east or south >= north:
-                                raise ValueError(
-                                    "Invalid bounds: west must be < east and south must be < north"
-                                )
+                            if not layer_id or not maplibre_json_layers_str:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": "Missing required parameters (layer_id or maplibre_json_layers_str).",
+                                }
+                            else:
+                                # Generate a new style ID
+                                style_id = generate_id(prefix="S")
 
-                            if not (
-                                -180 <= west <= 180
-                                and -180 <= east <= 180
-                                and -90 <= south <= 90
-                                and -90 <= north <= 90
-                            ):
-                                raise ValueError("Bounds must be in valid WGS84 range")
+                                try:
+                                    layers = json.loads(maplibre_json_layers_str)
 
-                            # Send ephemeral action to trigger zoom on frontend
-                            async with kue_ephemeral_action(
-                                map_id,
-                                f"Zooming to bounds{': ' + description if description else ''}",
-                                update_style_json=False,
-                            ):
-                                # Send zoom action via WebSocket
-                                zoom_action = {
-                                    "map_id": map_id,
-                                    "ephemeral": True,
-                                    "action_id": str(uuid.uuid4()),
-                                    "action": "zoom_to_bounds",
-                                    "bounds": bounds,
-                                    "description": description,
-                                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                                    "status": "zoom_action",
+                                    # Validate that layers is a list
+                                    if not isinstance(layers, list):
+                                        raise ValueError(
+                                            f"Expected a JSON array of layer objects, but got {type(layers).__name__}: {repr(layers)[:200]}"
+                                        )
+
+                                    # Add source-layer property if missing to fix KeyError: 'source-layer'
+                                    for layer in layers:
+                                        if isinstance(layer, dict):
+                                            layer["source-layer"] = "reprojectedfgb"
+                                        else:
+                                            raise ValueError(
+                                                f"Expected layer object to be a dict, but got {type(layer).__name__}: {repr(layer)[:200]}"
+                                            )
+
+                                    # Get complete map style with our layer styling to validate it
+                                    base_map_provider = get_base_map_provider()
+                                    style_json = await get_map_style_internal(
+                                        map_id=map_id,
+                                        base_map=base_map_provider,
+                                        only_show_inline_sources=True,
+                                        override_layers=json.dumps({layer_id: layers}),
+                                    )
+
+                                    # Validate the complete style
+                                    verify_style_json_str(json.dumps(style_json))
+
+                                    # If validation passes, create the style in the database
+                                    await conn.execute(
+                                        """
+                                        INSERT INTO layer_styles
+                                        (style_id, layer_id, style_json, created_by)
+                                        VALUES ($1, $2, $3, $4)
+                                        """,
+                                        style_id,
+                                        layer_id,
+                                        json.dumps(layers),
+                                        user_id,
+                                    )
+
+                                    tool_result = {
+                                        "status": "success",
+                                        "style_id": style_id,
+                                        "layer_id": layer_id,
+                                    }
+                                except json.JSONDecodeError as e:
+                                    print(f"JSON decode error: {str(e)}")
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"Invalid JSON format: {str(e)}",
+                                        "layer_id": layer_id,
+                                    }
+                                except ValueError as e:
+                                    print(f"Value error in layer style: {str(e)}")
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": str(e),
+                                        "layer_id": layer_id,
+                                    }
+                                except StyleValidationError as e:
+                                    print(
+                                        f"Style validation error: {str(e)}",
+                                        traceback.format_exc(),
+                                        type(e),
+                                    )
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"Style validation failed: {str(e)}",
+                                        "layer_id": layer_id,
+                                    }
+
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                ),
+                            )
+                        elif function_name == "set_active_style":
+                            layer_id = tool_args.get("layer_id")
+                            style_id = tool_args.get("style_id")
+
+                            if not all([layer_id, style_id]):
+                                tool_result = {
+                                    "status": "error",
+                                    "error": "Missing required parameters (layer_id, or style_id).",
+                                }
+                            else:
+                                # Add or update the map_layer_styles entry
+                                async with kue_ephemeral_action(
+                                    map_id,
+                                    "Choosing a new style",
+                                    update_style_json=True,
+                                ):
+                                    await conn.execute(
+                                        """
+                                        INSERT INTO map_layer_styles (map_id, layer_id, style_id)
+                                        VALUES ($1, $2, $3)
+                                        ON CONFLICT (map_id, layer_id)
+                                        DO UPDATE SET style_id = $3
+                                        """,
+                                        map_id,
+                                        layer_id,
+                                        style_id,
+                                    )
+
+                                tool_result = {
+                                    "status": "success",
+                                    "message": f"Style {style_id} set as active for layer {layer_id}, user can now see it",
+                                    "layer_id": layer_id,
+                                    "style_id": style_id,
                                 }
 
-                                zoom_payload_str = json.dumps(zoom_action)
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                ),
+                            )
+                        elif function_name == "download_from_openstreetmap":
+                            tags = tool_args.get("tags")
+                            bbox = tool_args.get("bbox")
+                            new_layer_name = tool_args.get("new_layer_name")
 
-                                # Broadcast zoom action to WebSocket subscribers
-                                async with subscribers_lock:
-                                    queues = list(subscribers_by_map.get(map_id, []))
-                                for q in queues:
-                                    q.put_nowait(zoom_payload_str)
+                            if not all([tags, bbox, new_layer_name]):
+                                tool_result = {
+                                    "status": "error",
+                                    "error": "Missing required parameters for OpenStreetMap download.",
+                                }
+                            else:
+                                try:
+                                    # Keep context manager only around the specific API call
+                                    async with kue_ephemeral_action(
+                                        map_id,
+                                        f"Downloading data from OpenStreetMap: {tags}",
+                                    ):
+                                        tool_result = await download_from_openstreetmap(
+                                            request=request,
+                                            map_id=map_id,
+                                            bbox=bbox,
+                                            tags=tags,
+                                            new_layer_name=new_layer_name,
+                                            session=session,
+                                        )
+                                except Exception as e:
+                                    print(traceback.format_exc())
+                                    print(e)
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"Error downloading from OpenStreetMap: {str(e)}",
+                                    }
+                            # Add instructions to tool result if download was successful
+                            if tool_result.get(
+                                "status"
+                            ) == "success" and tool_result.get("uploaded_layers"):
+                                uploaded_layers = tool_result.get("uploaded_layers")
+                                layer_names = [
+                                    f"{new_layer_name}_{layer['geometry_type']}"
+                                    for layer in uploaded_layers
+                                ]
+                                layer_ids = [
+                                    layer["layer_id"] for layer in uploaded_layers
+                                ]
+                                tool_result["kue_instructions"] = (
+                                    f"New layers available: {', '.join(layer_names)} "
+                                    f"(IDs: {', '.join(layer_ids)}), all currently invisible. "
+                                    'To make any of these visible to the user on their map, use "add_layer_to_map" with the layer_id and a descriptive new_name.'
+                                )
 
-                            tool_result = {
-                                "status": "success",
-                                "message": f"Zoomed to bounds {bounds}{': ' + description if description else ''}",
-                                "bounds": bounds,
-                            }
-                        except ValueError as e:
-                            tool_result = {
-                                "status": "error",
-                                "error": str(e),
-                            }
-                        except Exception as e:
-                            tool_result = {
-                                "status": "error",
-                                "error": f"Error zooming to bounds: {str(e)}",
-                            }
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                ),
+                            )
+                        elif function_name == "query_postgis_database":
+                            postgis_connection_id = tool_args.get(
+                                "postgis_connection_id"
+                            )
+                            sql_query = tool_args.get("sql_query")
+                            limit_rows = tool_args.get("limit_rows", 100)
 
-                    await add_chat_completion_message(
-                        ChatCompletionToolMessageParam(
-                            role="tool",
-                            tool_call_id=tool_call.id,
-                            content=json.dumps(tool_result),
-                        ),
-                    )
-                else:
-                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
+                            if not postgis_connection_id or not sql_query:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": "Missing required parameters (postgis_connection_id or sql_query)",
+                                }
+                            else:
+                                # Verify the PostGIS connection exists and user has access
+                                connection_result = await conn.fetchrow(
+                                    """
+                                    SELECT connection_uri FROM project_postgres_connections
+                                    WHERE id = $1 AND user_id = $2
+                                    """,
+                                    postgis_connection_id,
+                                    user_id,
+                                )
+
+                                if not connection_result:
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
+                                    }
+                                else:
+                                    # Use the connection URI
+                                    connection_uri = connection_result["connection_uri"]
+
+                                    try:
+                                        # Clamp limit_rows to be between 1 and 1000
+                                        limit_rows = max(1, min(limit_rows, 1000))
+
+                                        # Add LIMIT clause if not already present
+                                        limited_query = sql_query.strip()
+                                        if not limited_query.upper().endswith(
+                                            ("LIMIT", f"LIMIT {limit_rows}")
+                                        ):
+                                            if "LIMIT" not in limited_query.upper():
+                                                limited_query += f" LIMIT {limit_rows}"
+
+                                        async with kue_ephemeral_action(
+                                            map_id, "Querying PostgreSQL database..."
+                                        ):
+                                            postgres_conn = await asyncpg.connect(
+                                                connection_uri,
+                                                server_settings={
+                                                    "default_transaction_read_only": "on"
+                                                },
+                                            )
+                                            try:
+                                                # Execute the query
+                                                rows = await postgres_conn.fetch(
+                                                    limited_query
+                                                )
+
+                                                if not rows:
+                                                    tool_result = {
+                                                        "status": "success",
+                                                        "message": "Query executed successfully but returned no rows",
+                                                        "row_count": 0,
+                                                        "query": limited_query,
+                                                    }
+                                                else:
+                                                    # Convert rows to list of dicts
+                                                    result_data = [
+                                                        dict(row) for row in rows
+                                                    ]
+
+                                                    # Format the result as a readable string
+                                                    if (
+                                                        len(result_data) == 1
+                                                        and len(result_data[0]) == 1
+                                                    ):
+                                                        # Single value result
+                                                        single_value = list(
+                                                            result_data[0].values()
+                                                        )[0]
+                                                        result_text = f"Query result: {single_value}"
+                                                    else:
+                                                        # Table format
+                                                        if result_data:
+                                                            headers = list(
+                                                                result_data[0].keys()
+                                                            )
+                                                            result_lines = [
+                                                                "\t".join(headers)
+                                                            ]
+                                                            for row in result_data:
+                                                                result_lines.append(
+                                                                    "\t".join(
+                                                                        str(
+                                                                            row.get(
+                                                                                h, ""
+                                                                            )
+                                                                        )
+                                                                        for h in headers
+                                                                    )
+                                                                )
+                                                            result_text = "\n".join(
+                                                                result_lines
+                                                            )
+                                                        else:
+                                                            result_text = "No results"
+
+                                                    # Check if result is too large
+                                                    if len(result_text) > 25000:
+                                                        tool_result = {
+                                                            "status": "error",
+                                                            "error": f"Query result too large: {len(result_text)} characters exceeds 25,000 character limit. Try reducing the number of columns or rows.",
+                                                        }
+                                                    else:
+                                                        tool_result = {
+                                                            "status": "success",
+                                                            "result": result_text,
+                                                            "row_count": len(
+                                                                result_data
+                                                            ),
+                                                            "query": limited_query,
+                                                        }
+                                            finally:
+                                                await postgres_conn.close()
+
+                                    except Exception as e:
+                                        tool_result = {
+                                            "status": "error",
+                                            "error": f"PostgreSQL query error: {str(e)}",
+                                            "query": limited_query,
+                                        }
+
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                ),
+                            )
+                        elif function_name == "zoom_to_bounds":
+                            bounds = tool_args.get("bounds")
+                            description = tool_args.get("zoom_description", "")
+
+                            if not bounds or len(bounds) != 4:
+                                tool_result = {
+                                    "status": "error",
+                                    "error": "Invalid bounds. Must be an array of 4 numbers [west, south, east, north]",
+                                }
+                            else:
+                                try:
+                                    # Validate bounds format
+                                    west, south, east, north = bounds
+                                    if not all(
+                                        isinstance(coord, (int, float))
+                                        for coord in bounds
+                                    ):
+                                        raise ValueError(
+                                            "All bounds coordinates must be numbers"
+                                        )
+
+                                    if west >= east or south >= north:
+                                        raise ValueError(
+                                            "Invalid bounds: west must be < east and south must be < north"
+                                        )
+
+                                    if not (
+                                        -180 <= west <= 180
+                                        and -180 <= east <= 180
+                                        and -90 <= south <= 90
+                                        and -90 <= north <= 90
+                                    ):
+                                        raise ValueError(
+                                            "Bounds must be in valid WGS84 range"
+                                        )
+
+                                    # Send ephemeral action to trigger zoom on frontend
+                                    async with kue_ephemeral_action(
+                                        map_id,
+                                        f"Zooming to bounds{': ' + description if description else ''}",
+                                        update_style_json=False,
+                                    ):
+                                        # Send zoom action via WebSocket
+                                        zoom_action = {
+                                            "map_id": map_id,
+                                            "ephemeral": True,
+                                            "action_id": str(uuid.uuid4()),
+                                            "action": "zoom_to_bounds",
+                                            "bounds": bounds,
+                                            "description": description,
+                                            "timestamp": datetime.now(
+                                                timezone.utc
+                                            ).isoformat(),
+                                            "status": "zoom_action",
+                                        }
+
+                                        zoom_payload_str = json.dumps(zoom_action)
+
+                                        # Broadcast zoom action to WebSocket subscribers
+                                        async with subscribers_lock:
+                                            queues = list(
+                                                subscribers_by_map.get(map_id, [])
+                                            )
+                                        for q in queues:
+                                            q.put_nowait(zoom_payload_str)
+
+                                    tool_result = {
+                                        "status": "success",
+                                        "message": f"Zoomed to bounds {bounds}{': ' + description if description else ''}",
+                                        "bounds": bounds,
+                                    }
+                                except ValueError as e:
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": str(e),
+                                    }
+                                except Exception as e:
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"Error zooming to bounds: {str(e)}",
+                                    }
+
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                ),
+                            )
+                        else:
+                            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
             # Async connections auto-commit, no need for explicit commit
 
