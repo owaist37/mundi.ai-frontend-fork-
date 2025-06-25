@@ -79,8 +79,6 @@ redis = Redis(
 # Create router
 router = APIRouter()
 
-# In-memory pub/sub for chat updates: job_id -> asyncio.Queue
-chat_channels: Dict[str, asyncio.Queue] = {}
 # Subscriber registry for WebSocket notifications by map_id
 subscribers_by_map = defaultdict(set)
 subscribers_lock = asyncio.Lock()
@@ -1389,7 +1387,6 @@ async def process_chat_interaction_task(
 
 
 class MessageSendResponse(BaseModel):
-    job_id: str
     message_id: str
     status: str
 
@@ -1498,9 +1495,6 @@ async def send_map_message_async(
             json.dumps(message_dict),
         )
 
-    job_id = str(uuid.uuid4())
-    chat_channels[job_id] = asyncio.Queue()
-
     # Start background task
     background_tasks.add_task(
         process_chat_interaction_task,
@@ -1514,7 +1508,6 @@ async def send_map_message_async(
     )
 
     return MessageSendResponse(
-        job_id=job_id,
         message_id=str(user_msg_db["id"]),
         status="processing_started",
     )
