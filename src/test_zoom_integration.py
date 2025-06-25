@@ -51,12 +51,12 @@ async def test_zoom_integration_with_real_openai(auth_client, test_map_id):
         except Exception as e:
             print(f"Error parsing WebSocket payload: {e}")
 
-    with patch("src.routes.message_routes.subscribers_by_map") as mock_subscribers:
+    with patch("src.routes.websocket.subscribers_by_map") as mock_subscribers:
         mock_queue = MagicMock()
         mock_queue.put_nowait = capture_websocket_message
         mock_subscribers.get.return_value = [mock_queue]
 
-        with patch("src.routes.message_routes.subscribers_lock"):
+        with patch("src.routes.websocket.subscribers_lock"):
             user_message = {
                 "role": "user",
                 "content": "Please zoom to downtown Seattle with bounds [-122.4194, 47.6062, -122.3320, 47.6205]",

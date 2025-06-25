@@ -31,6 +31,7 @@ from src.routes import (
     project_routes,
     room_routes,
     message_routes,
+    websocket,
 )
 from src.routes.postgres_routes import layer_router, basemap_router
 
@@ -73,6 +74,11 @@ app.include_router(
     message_routes.router,
     prefix="/api/maps",
     tags=["Messages"],
+)
+app.include_router(
+    websocket.router,
+    prefix="/api/maps",
+    tags=["WebSocket"],
 )
 app.include_router(
     layer_router,
