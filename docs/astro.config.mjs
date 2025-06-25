@@ -30,7 +30,7 @@ export default defineConfig({
 					label: 'Guides',
 					items: [
 						{ label: 'Connecting to PostGIS', slug: 'guides/connecting-to-postgis' },
-						{ label: 'Switching Basemaps', slug: 'guides/switching-basemaps-satellite-or-traditional-vector' },
+						{ label: 'Satellite basemaps', slug: 'guides/switching-basemaps-satellite-or-traditional-vector' },
 						{ label: 'Self-hosting Mundi', slug: 'guides/self-hosting-mundi' },
 					],
 				},

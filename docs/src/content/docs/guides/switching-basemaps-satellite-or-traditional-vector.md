@@ -1,9 +1,9 @@
 ---
-title: Switching Basemaps (Satellite / Vector)
+title: Switching basemaps (Satellite / Vector)
 description: Change the basemap between satellite and traditional vector on Mundi cloud / on-premise
 ---
 
-:::note
+:::note[Limited to Mundi Cloud + On-Premise]
 Open source Mundi only supports OpenStreetMap basemaps because there are no free satellite imagery providers.
 :::
 
