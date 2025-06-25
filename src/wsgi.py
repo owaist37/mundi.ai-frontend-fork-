@@ -28,6 +28,7 @@ from fastapi_proxy_lib.fastapi.app import reverse_http_app, reverse_ws_app
 
 from src.routes import (
     postgres_routes,
+    project_routes,
     room_routes,
     message_routes,
 )
@@ -79,7 +80,7 @@ app.include_router(
     tags=["Layers"],
 )
 app.include_router(
-    postgres_routes.project_router,
+    project_routes.project_router,
     prefix="/api/projects",
     tags=["Projects"],
 )
