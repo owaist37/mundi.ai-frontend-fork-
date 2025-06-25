@@ -1334,7 +1334,11 @@ async def process_chat_interaction_task(
                                         zoom_payload_str = json.dumps(zoom_action)
 
                                         # Broadcast zoom action to WebSocket subscribers
-                                        from src.routes.websocket import subscribers_lock, subscribers_by_map
+                                        from src.routes.websocket import (
+                                            subscribers_lock,
+                                            subscribers_by_map,
+                                        )
+
                                         async with subscribers_lock:
                                             queues = list(
                                                 subscribers_by_map.get(map_id, [])
@@ -1533,5 +1537,3 @@ async def cancel_map_message(
         redis.set(f"messages:{map_id}:cancelled", "true", ex=300)  # 5 minute expiry
 
         return JSONResponse(content={"status": "cancelled"})
-
-

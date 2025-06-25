@@ -33,7 +33,8 @@ from src.routes import (
     message_routes,
     websocket,
 )
-from src.routes.postgres_routes import layer_router, basemap_router
+from src.routes.postgres_routes import basemap_router
+from src.routes.layer_router import layer_router
 
 
 @asynccontextmanager
