@@ -198,7 +198,7 @@ async def process_chat_interaction_task(
     system_prompt_provider: SystemPromptProvider,
 ):
     # kick it off with a quick sleep, to detach from the event loop blocking /send
-    await asyncio.sleep(0.5)
+    await asyncio.sleep(0.1)
 
     async with get_async_db_connection() as conn:
         # with tracer.start_as_current_span("app.process_chat_interaction") as span:
@@ -1398,26 +1398,25 @@ async def send_map_message_async(
         # Lock the map for processing
         redis.set(lock_key, "locked", ex=60)  # 60 second expiry
 
-        # Use map state provider to generate system messages
-        messages_response = await get_all_map_messages(map_id, session)
-        current_messages = [
-            msg["message_json"] for msg in messages_response["messages"]
-        ]
+    # Use map state provider to generate system messages
+    messages_response = await get_all_map_messages(map_id, session)
+    current_messages = [msg["message_json"] for msg in messages_response["messages"]]
 
-        current_map_description = await get_map_description(
-            request,
-            map_id,
-            session,
-            postgis_provider=postgis_provider,
-            layer_describer=layer_describer,
-        )
-        description_text = current_map_description.body.decode("utf-8")
+    current_map_description = await get_map_description(
+        request,
+        map_id,
+        session,
+        postgis_provider=postgis_provider,
+        layer_describer=layer_describer,
+    )
+    description_text = current_map_description.body.decode("utf-8")
 
-        # Get system messages from the provider
-        system_messages = await map_state.get_system_messages(
-            current_messages, description_text
-        )
+    # Get system messages from the provider
+    system_messages = await map_state.get_system_messages(
+        current_messages, description_text
+    )
 
+    async with get_async_db_connection() as conn:
         # Add any generated system messages to the database
         for system_msg in system_messages:
             system_message = ChatCompletionSystemMessageParam(
@@ -1456,26 +1455,26 @@ async def send_map_message_async(
             json.dumps(message_dict),
         )
 
-        job_id = str(uuid.uuid4())
-        chat_channels[job_id] = asyncio.Queue()
+    job_id = str(uuid.uuid4())
+    chat_channels[job_id] = asyncio.Queue()
 
-        # Start background task
-        background_tasks.add_task(
-            process_chat_interaction_task,
-            request,
-            map_id,
-            session,
-            user_id,
-            chat_args,
-            map_state,
-            system_prompt_provider,
-        )
+    # Start background task
+    background_tasks.add_task(
+        process_chat_interaction_task,
+        request,
+        map_id,
+        session,
+        user_id,
+        chat_args,
+        map_state,
+        system_prompt_provider,
+    )
 
-        return MessageSendResponse(
-            job_id=job_id,
-            message_id=str(user_msg_db["id"]),
-            status="processing_started",
-        )
+    return MessageSendResponse(
+        job_id=job_id,
+        message_id=str(user_msg_db["id"]),
+        status="processing_started",
+    )
 
 
 @router.post(
