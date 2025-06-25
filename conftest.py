@@ -23,7 +23,6 @@ import asyncio
 from starlette.testclient import TestClient
 
 from src.wsgi import app
-import src.structures
 from src.database.migrate import run_migrations
 
 

@@ -47,7 +47,6 @@ from PIL import Image
 from redis import Redis
 import httpx
 import tempfile
-import json
 from starlette.responses import (
     JSONResponse as StarletteJSONResponse,
 )
