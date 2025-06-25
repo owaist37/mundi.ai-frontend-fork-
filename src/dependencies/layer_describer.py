@@ -17,15 +17,15 @@ import asyncpg
 import csv
 import fiona
 import io
+import json
 import os
 import tempfile
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Dict, Any, List
 
-from psycopg2.extras import RealDictCursor
 from src.utils import get_async_s3_client, get_bucket_name
-from src.structures import get_db_connection
+from src.structures import get_async_db_connection
 
 
 class LayerDescriber(ABC):
@@ -70,19 +70,16 @@ class DefaultLayerDescriber(LayerDescriber):
     async def describe_postgis_layer(self, layer_data: Dict[str, Any]) -> List[str]:
         markdown_content = []
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(
+        async with get_async_db_connection() as conn:
+            connection_result = await conn.fetchrow(
                 """
                 SELECT ppc.connection_name, ppc.connection_uri, pps.friendly_name
                 FROM project_postgres_connections ppc
                 LEFT JOIN project_postgres_summary pps ON pps.connection_id = ppc.id
-                WHERE ppc.id = %s
+                WHERE ppc.id = $1
                 """,
-                (layer_data.get("postgis_connection_id"),),
+                layer_data.get("postgis_connection_id"),
             )
-
-            connection_result = cursor.fetchone()
             if connection_result:
                 connection_name = (
                     connection_result["friendly_name"]
@@ -92,10 +89,6 @@ class DefaultLayerDescriber(LayerDescriber):
                 markdown_content.append(f"PostGIS Connection: {connection_name}")
 
                 try:
-                    postgis_conn = await asyncpg.connect(
-                        connection_result["connection_uri"]
-                    )
-
                     geom_type_query = f"""
                     SELECT ST_GeometryType(geom) as geom_type, COUNT(*) as count
                     FROM ({layer_data.get("postgis_query", "SELECT NULL as geom")}) t
@@ -104,8 +97,10 @@ class DefaultLayerDescriber(LayerDescriber):
                     ORDER BY count DESC
                     """
 
-                    geom_results = await postgis_conn.fetch(geom_type_query)
-                    await postgis_conn.close()
+                    async with asyncpg.connect(
+                        connection_result["connection_uri"]
+                    ) as postgis_conn:
+                        geom_results = await postgis_conn.fetch(geom_type_query)
 
                     if geom_results:
                         markdown_content.append("\n## Geometry Types\n")
@@ -146,12 +141,21 @@ class DefaultLayerDescriber(LayerDescriber):
                 f"Bounds (WGS84): {layer_data['bounds'][0]:.6f},{layer_data['bounds'][1]:.6f},{layer_data['bounds'][2]:.6f},{layer_data['bounds'][3]:.6f}"
             )
 
-        if layer_data["metadata"] and "raster_value_stats_b1" in layer_data["metadata"]:
-            markdown_content.append("\n## Raster Statistics\n")
-            min_val = layer_data["metadata"]["raster_value_stats_b1"]["min"]
-            max_val = layer_data["metadata"]["raster_value_stats_b1"]["max"]
-            markdown_content.append(f"Min Value: {min_val}")
-            markdown_content.append(f"Max Value: {max_val}")
+        if layer_data["metadata"]:
+            # Parse metadata JSON if it's a string (asyncpg returns JSON as strings)
+            metadata = layer_data["metadata"]
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
+
+            if metadata and "raster_value_stats_b1" in metadata:
+                markdown_content.append("\n## Raster Statistics\n")
+                min_val = metadata["raster_value_stats_b1"]["min"]
+                max_val = metadata["raster_value_stats_b1"]["max"]
+                markdown_content.append(f"Min Value: {min_val}")
+                markdown_content.append(f"Max Value: {max_val}")
 
         return markdown_content
 
@@ -199,17 +203,16 @@ class DefaultLayerDescriber(LayerDescriber):
 
                 markdown_content.append("\n## Schema Information\n")
 
-                with get_db_connection() as conn:
-                    cursor = conn.cursor(cursor_factory=RealDictCursor)
-                    cursor.execute(
+                async with get_async_db_connection() as conn:
+                    await conn.execute(
                         """
                         UPDATE map_layers
-                        SET feature_count = %s
-                        WHERE layer_id = %s
+                        SET feature_count = $1
+                        WHERE layer_id = $2
                         """,
-                        (feature_count, layer_id),
+                        feature_count,
+                        layer_id,
                     )
-                    conn.commit()
 
                 markdown_content.append(f"CRS: {crs.to_string() if crs else 'Unknown'}")
                 markdown_content.append(f"Driver: {src.driver}")

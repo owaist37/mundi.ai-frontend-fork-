@@ -18,9 +18,7 @@ import tempfile
 from collections import OrderedDict
 import asyncio
 from contextlib import asynccontextmanager
-from psycopg2.extras import RealDictCursor
-
-from src.structures import get_db_connection
+from src.structures import get_async_db_connection
 from src.utils import get_async_s3_client, get_bucket_name
 
 
@@ -110,32 +108,30 @@ class LayerCache:
             # not cached yet or missing file, proceed to fetch
             pass
 
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-            cursor.execute(
+        async with get_async_db_connection() as conn:
+            layer = await conn.fetchrow(
                 """
                 SELECT layer_id, name, type, metadata, bounds, geometry_type,
                     created_on, last_edited, feature_count, s3_key
                 FROM map_layers
-                WHERE layer_id = %s
+                WHERE layer_id = $1
                 """,
-                (layer_id,),
+                layer_id,
             )
 
-            layer = cursor.fetchone()
             if not layer:
                 raise KeyError(f"Layer {layer_id} not found")
 
             # Check if the layer is associated with any maps via the layers array
             # Order by created_on DESC to get the most recently created map first
-            cursor.execute(
+            await conn.fetch(
                 """
                 SELECT id, title, description, owner_uuid
                 FROM user_mundiai_maps
-                WHERE %s = ANY(layers) AND soft_deleted_at IS NULL
+                WHERE $1 = ANY(layers) AND soft_deleted_at IS NULL
                 ORDER BY created_on DESC
                 """,
-                (layer_id,),
+                layer_id,
             )
 
             bucket_name = get_bucket_name()

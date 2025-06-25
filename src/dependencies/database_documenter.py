@@ -13,13 +13,12 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import psycopg2
+import asyncpg
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Tuple
-from psycopg2.extras import RealDictCursor
 import secrets
-from src.structures import get_db_connection
+from src.structures import get_async_db_connection
 from src.utils import get_openai_client
 
 
@@ -55,57 +54,51 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
         """
         try:
             # Connect to the PostgreSQL database
-            conn = psycopg2.connect(connection_uri)
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
+            async with asyncpg.connect(connection_uri) as conn:
+                # Get all tables
+                tables = await conn.fetch("""
+                    SELECT table_name
+                    FROM information_schema.tables
+                    WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
+                    ORDER BY table_name
+                """)
 
-            # Get all tables
-            cursor.execute("""
-                SELECT table_name
-                FROM information_schema.tables
-                WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
-                ORDER BY table_name
-            """)
-            tables = cursor.fetchall()
+                # Build schema description
+                schema_description = f"Database: {connection_name}\n\n"
 
-            # Build schema description
-            schema_description = f"Database: {connection_name}\n\n"
+                table_names = []
+                for table in tables:
+                    table_name = table["table_name"]
+                    table_names.append(table_name)
 
-            table_names = []
-            for table in tables:
-                table_name = table["table_name"]
-                table_names.append(table_name)
-
-                # Get columns (like \d+ output)
-                cursor.execute(
-                    """
-                    SELECT 
-                        column_name,
-                        data_type,
-                        is_nullable,
-                        column_default
-                    FROM information_schema.columns
-                    WHERE table_schema = 'public' AND table_name = %s
-                    ORDER BY ordinal_position
-                """,
-                    (table_name,),
-                )
-                columns = cursor.fetchall()
-
-                schema_description += f"Table: {table_name}\n"
-                schema_description += "Columns:\n"
-
-                for col in columns:
-                    nullable = "" if col["is_nullable"] == "YES" else " NOT NULL"
-                    default = (
-                        f" DEFAULT {col['column_default']}"
-                        if col["column_default"]
-                        else ""
+                    # Get columns (like \d+ output)
+                    columns = await conn.fetch(
+                        """
+                        SELECT
+                            column_name,
+                            data_type,
+                            is_nullable,
+                            column_default
+                        FROM information_schema.columns
+                        WHERE table_schema = 'public' AND table_name = $1
+                        ORDER BY ordinal_position
+                    """,
+                        table_name,
                     )
-                    schema_description += f"  {col['column_name']} - {col['data_type']}{nullable}{default}\n"
 
-                schema_description += "\n"
+                    schema_description += f"Table: {table_name}\n"
+                    schema_description += "Columns:\n"
 
-            conn.close()
+                    for col in columns:
+                        nullable = "" if col["is_nullable"] == "YES" else " NOT NULL"
+                        default = (
+                            f" DEFAULT {col['column_default']}"
+                            if col["column_default"]
+                            else ""
+                        )
+                        schema_description += f"  {col['column_name']} - {col['data_type']}{nullable}{default}\n"
+
+                    schema_description += "\n"
 
             # OpenAI API call
             client = get_openai_client()
@@ -158,17 +151,18 @@ Schema:
 
             # Save the generated summary to the new table
             summary_id = generate_id(prefix="S")
-            with get_db_connection() as doc_conn:
-                doc_cursor = doc_conn.cursor()
-                doc_cursor.execute(
+            async with get_async_db_connection() as doc_conn:
+                await doc_conn.execute(
                     """
                     INSERT INTO project_postgres_summary
                     (id, connection_id, friendly_name, summary_md)
-                    VALUES (%s, %s, %s, %s)
+                    VALUES ($1, $2, $3, $4)
                 """,
-                    (summary_id, connection_id, friendly_name, documentation),
+                    summary_id,
+                    connection_id,
+                    friendly_name,
+                    documentation,
                 )
-                doc_conn.commit()
 
             print(
                 f"Successfully generated documentation and friendly name for connection {connection_id}"

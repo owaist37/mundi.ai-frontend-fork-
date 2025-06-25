@@ -38,25 +38,9 @@ async def client():
     # Run database migrations before tests
     await run_migrations()
 
-    # Reset global async connection pool for each test to ensure fresh connections
-    if src.structures._async_connection_pool:
-        try:
-            await src.structures._async_connection_pool.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
-    src.structures._async_connection_pool = None
-
     transport = ASGIWebSocketTransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         yield client
-
-    # Clean up the connection pool after each test
-    if src.structures._async_connection_pool:
-        try:
-            await src.structures._async_connection_pool.close()
-        except Exception:
-            pass  # Ignore errors during cleanup
-        src.structures._async_connection_pool = None
 
 
 @pytest.fixture(scope="session")
@@ -110,24 +94,8 @@ def sync_client():
     # Run database migrations before tests
     asyncio.run(run_migrations())
 
-    # Reset global async connection pool for each test to ensure fresh connections
-    if src.structures._async_connection_pool:
-        try:
-            asyncio.run(src.structures._async_connection_pool.close())
-        except Exception:
-            pass  # Ignore errors during cleanup
-    src.structures._async_connection_pool = None
-
     with TestClient(app) as client:
         yield client
-
-    # Clean up the connection pool after each test
-    if src.structures._async_connection_pool:
-        try:
-            asyncio.run(src.structures._async_connection_pool.close())
-        except Exception:
-            pass  # Ignore errors during cleanup
-        src.structures._async_connection_pool = None
 
 
 @pytest.fixture(scope="function")

@@ -15,13 +15,18 @@
 
 from __future__ import annotations
 import os
+import sys
 from psycopg2 import pool
 import asyncpg
 from typing import Optional
 from opentelemetry import trace
+import asyncio
+
+IS_RUNNING_PYTEST = "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
 
 _connection_pool = None
 _async_connection_pool = None
+_async_pool_lock = asyncio.Lock()
 
 # Get tracer for this module
 tracer = trace.get_tracer(__name__)
@@ -48,18 +53,20 @@ def _get_connection_pool():
 async def _get_async_connection_pool():
     global _async_connection_pool
     if _async_connection_pool is None:
-        # Construct URL from components
-        user = os.environ["POSTGRES_USER"]
-        password = os.environ["POSTGRES_PASSWORD"]
-        host = os.environ["POSTGRES_HOST"]
-        port = os.environ.get("POSTGRES_PORT", "5432")
-        db = os.environ["POSTGRES_DB"]
-        postgres_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
-        _async_connection_pool = await asyncpg.create_pool(
-            dsn=postgres_url,
-            min_size=1,
-            max_size=10,
-        )
+        async with _async_pool_lock:
+            if _async_connection_pool is None:
+                # Construct URL from components
+                user = os.environ["POSTGRES_USER"]
+                password = os.environ["POSTGRES_PASSWORD"]
+                host = os.environ["POSTGRES_HOST"]
+                port = os.environ.get("POSTGRES_PORT", "5432")
+                db = os.environ["POSTGRES_DB"]
+                postgres_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+                _async_connection_pool = await asyncpg.create_pool(
+                    dsn=postgres_url,
+                    min_size=1,
+                    max_size=10,
+                )
     return _async_connection_pool
 
 
@@ -100,21 +107,28 @@ class AsyncDatabaseConnection:
         if current_span.is_recording():
             self.span = tracer.start_span(self.span_name or "asyncpg")
 
-        # Construct URL from components
-        user = os.environ["POSTGRES_USER"]
-        password = os.environ["POSTGRES_PASSWORD"]
-        host = os.environ["POSTGRES_HOST"]
-        port = os.environ.get("POSTGRES_PORT", "5432")
-        db = os.environ["POSTGRES_DB"]
-        postgres_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
-        # Create a brand-new connection so that no other coroutine can
-        # possibly be using it concurrently.
-        self.conn = await asyncpg.connect(dsn=postgres_url)
+        # In pytest, connect directly instead of using pool
+        if IS_RUNNING_PYTEST:
+            user = os.environ["POSTGRES_USER"]
+            password = os.environ["POSTGRES_PASSWORD"]
+            host = os.environ["POSTGRES_HOST"]
+            port = os.environ.get("POSTGRES_PORT", "5432")
+            db = os.environ["POSTGRES_DB"]
+            postgres_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
+            self.conn = await asyncpg.connect(postgres_url)
+        else:
+            # Get connection from the pool
+            pool = await _get_async_connection_pool()
+            self.conn = await pool.acquire()
         return self.conn
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         if self.conn is not None:
-            await self.conn.close()
+            if IS_RUNNING_PYTEST:
+                await self.conn.close()
+            else:
+                pool = await _get_async_connection_pool()
+                await pool.release(self.conn)
         if self.span:
             self.span.end()
 

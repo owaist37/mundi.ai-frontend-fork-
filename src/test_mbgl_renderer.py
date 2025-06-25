@@ -21,7 +21,7 @@ from PIL import Image
 import secrets
 import uuid
 
-from src.structures import get_db_connection
+from src.structures import get_async_db_connection
 
 # Reference images directory
 REFERENCE_DIR = Path(__file__).parent.parent / "test_fixtures" / "reference_images"
@@ -209,33 +209,31 @@ async def test_mbgl_idaho(test_map_with_vector_layers, auth_client):
         valid_chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
         return "S" + "".join(secrets.choice(valid_chars) for _ in range(11))
 
-    with get_db_connection() as conn:
-        with conn.cursor() as cursor:
-            cursor.execute(
-                """
-                INSERT INTO layer_styles (style_id, layer_id, style_json, created_by)
-                VALUES (
-                    %s, %s, %s, %s
-                )
-                RETURNING style_id
-                """,
-                (
-                    generate_style_id(),
-                    layer_id,
-                    json.dumps(maplibre_style),
-                    str(uuid.uuid4()),
-                ),
+    async with get_async_db_connection() as conn:
+        style_result = await conn.fetchrow(
+            """
+            INSERT INTO layer_styles (style_id, layer_id, style_json, created_by)
+            VALUES (
+                $1, $2, $3, $4
             )
-            new_style_id = cursor.fetchone()[0]
-            cursor.execute(
-                """
-                INSERT INTO map_layer_styles (map_id, layer_id, style_id)
-                VALUES (%s, %s, %s)
-                ON CONFLICT (map_id, layer_id) DO UPDATE SET style_id = EXCLUDED.style_id
-                """,
-                (map_id, layer_id, new_style_id),
-            )
-            conn.commit()
+            RETURNING style_id
+            """,
+            generate_style_id(),
+            layer_id,
+            json.dumps(maplibre_style),
+            str(uuid.uuid4()),
+        )
+        new_style_id = style_result[0]
+        await conn.execute(
+            """
+            INSERT INTO map_layer_styles (map_id, layer_id, style_id)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (map_id, layer_id) DO UPDATE SET style_id = EXCLUDED.style_id
+            """,
+            map_id,
+            layer_id,
+            new_style_id,
+        )
 
     idaho_bbox = {"xmin": -117.2, "ymin": 41.9, "xmax": -111.0, "ymax": 49.0}
     width = 768

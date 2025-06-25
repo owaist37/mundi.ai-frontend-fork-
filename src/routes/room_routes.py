@@ -16,7 +16,6 @@
 import os
 import logging
 import httpx
-from psycopg2.extras import RealDictCursor
 from typing import Optional
 from fastapi import APIRouter, HTTPException, status, Request, Depends
 from pydantic import BaseModel
@@ -25,7 +24,7 @@ from ..dependencies.session import (
     verify_session_optional,
     UserContext,
 )
-from ..structures import get_db_connection
+from ..structures import get_async_db_connection
 
 router = APIRouter()
 
@@ -50,18 +49,16 @@ async def get_map_room(
     request: Request,
     session: Optional[UserContext] = Depends(verify_session_optional),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+    async with get_async_db_connection() as conn:
+        map_result = await conn.fetchrow(
             """
             SELECT m.id, m.owner_uuid, p.link_accessible
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-        map_result = cursor.fetchone()
 
         if not map_result:
             raise HTTPException(

@@ -19,8 +19,6 @@ from typing import List, Dict, Any, Union, Tuple
 from pydantic import BaseModel
 import logging
 import os
-import psycopg2
-from psycopg2.extras import RealDictCursor
 import json
 from fastapi import BackgroundTasks, WebSocket, WebSocketDisconnect
 from opentelemetry import trace
@@ -46,7 +44,7 @@ from openai.types.chat.chat_completion_message_param import (
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
-from src.structures import get_db_connection, get_async_db_connection
+from src.structures import get_async_db_connection
 from src.symbology.verify import StyleValidationError, verify_style_json_str
 from src.routes.postgres_routes import generate_id, get_map_style_internal
 from src.dependencies.base_map import get_base_map_provider
@@ -142,19 +140,16 @@ async def get_all_map_messages(
     map_id: str,
     session: UserContext,
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
-        cursor.execute(
+    async with get_async_db_connection() as conn:
+        map_result = await conn.fetchrow(
             """
             SELECT id, owner_uuid
             FROM user_mundiai_maps
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
 
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
@@ -166,50 +161,31 @@ async def get_all_map_messages(
                 detail="Authentication required",
                 headers={"WWW-Authenticate": "Bearer"},
             )
-        cursor.execute(
+
+        db_messages = await conn.fetch(
             """
             SELECT id, map_id, sender_id, message_json, created_at
             FROM chat_completion_messages
-            WHERE map_id = %s
+            WHERE map_id = $1
             ORDER BY created_at ASC
             """,
-            (map_id,),
+            map_id,
         )
 
-        db_messages = cursor.fetchall()
         # We keep everything as dict here, which is because serializing to chat completion row
         # kept fucking up image urls.
-        messages = list(db_messages)
+        messages = []
+        for msg in db_messages:
+            msg_dict = dict(msg)
+            # Parse message_json if it's a string
+            if isinstance(msg_dict["message_json"], str):
+                msg_dict["message_json"] = json.loads(msg_dict["message_json"])
+            messages.append(msg_dict)
 
         return {
             "map_id": map_id,
             "messages": messages,
         }
-
-
-def add_chat_completion_message_args(
-    cursor,
-    map_id: str,
-    user_id: str,
-    message: Union[ChatCompletionMessage, ChatCompletionMessageParam],
-) -> dict:
-    if isinstance(message, BaseModel):
-        message = message.model_dump()
-
-    cursor.execute(
-        """
-        INSERT INTO chat_completion_messages
-        (map_id, sender_id, message_json)
-        VALUES (%s, %s, %s)
-        RETURNING id, map_id, sender_id, message_json, created_at
-        """,
-        (
-            map_id,
-            user_id,
-            psycopg2.extras.Json(message),
-        ),
-    )
-    return cursor.fetchone()
 
 
 async def process_chat_interaction_task(
@@ -224,17 +200,25 @@ async def process_chat_interaction_task(
     # kick it off with a quick sleep, to detach from the event loop blocking /send
     await asyncio.sleep(0.5)
 
-    with (
-        get_db_connection() as conn,
-        tracer.start_as_current_span("app.process_chat_interaction") as span,
-    ):
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    async with get_async_db_connection() as conn:
+        # with tracer.start_as_current_span("app.process_chat_interaction") as span:
 
-        def add_chat_completion_message(
+        async def add_chat_completion_message(
             message: Union[ChatCompletionMessage, ChatCompletionMessageParam],
         ):
-            add_chat_completion_message_args(cursor, map_id, user_id, message)
-            conn.commit()
+            message_dict = (
+                message.model_dump() if isinstance(message, BaseModel) else message
+            )
+            await conn.execute(
+                """
+                INSERT INTO chat_completion_messages
+                (map_id, sender_id, message_json)
+                VALUES ($1, $2, $3)
+                """,
+                map_id,
+                user_id,
+                json.dumps(message_dict),
+            )
 
         for i in range(25):
             # Check if the message processing has been cancelled
@@ -251,21 +235,21 @@ async def process_chat_interaction_task(
             ]
 
             with tracer.start_as_current_span("kue.fetch_unattached_layers"):
-                cursor.execute(
+                unattached_layers = await conn.fetch(
                     """
                     SELECT ml.layer_id, ml.created_on, ml.last_edited, ml.type, ml.name
                     FROM map_layers ml
-                    WHERE ml.owner_uuid = %s
+                    WHERE ml.owner_uuid = $1
                     AND NOT EXISTS (
                         SELECT 1 FROM user_mundiai_maps m
-                        WHERE ml.layer_id = ANY(m.layers) AND m.owner_uuid = %s
+                        WHERE ml.layer_id = ANY(m.layers) AND m.owner_uuid = $2
                     )
                     ORDER BY ml.created_on DESC
                     LIMIT 10
                     """,
-                    (user_id, user_id),
+                    user_id,
+                    user_id,
                 )
-                unattached_layers = cursor.fetchall()
 
             layer_enum = {}
             for layer in unattached_layers:
@@ -529,7 +513,7 @@ async def process_chat_interaction_task(
             assistant_message = response.choices[0].message
 
             # Store the assistant message in the database
-            add_chat_completion_message(assistant_message)
+            await add_chat_completion_message(assistant_message)
 
             # If no tool calls, break
             if not assistant_message.tool_calls:
@@ -540,10 +524,10 @@ async def process_chat_interaction_task(
                 tool_args = json.loads(tool_call.function.arguments)
                 tool_result = {}
 
-                span.add_event(
-                    "kue.tool_call_started",
-                    {"tool_name": function_name},
-                )
+                # span.add_event(
+                #     "kue.tool_call_started",
+                #     {"tool_name": function_name},
+                # )
                 if function_name == "new_layer_from_postgis":
                     postgis_connection_id = tool_args.get("postgis_connection_id")
                     query = tool_args.get("query")
@@ -556,14 +540,14 @@ async def process_chat_interaction_task(
                         }
                     else:
                         # Verify the PostGIS connection exists and user has access
-                        cursor.execute(
+                        connection_result = await conn.fetchrow(
                             """
                             SELECT connection_uri FROM project_postgres_connections
-                            WHERE id = %s AND user_id = %s
+                            WHERE id = $1 AND user_id = $2
                             """,
-                            (postgis_connection_id, user_id),
+                            postgis_connection_id,
+                            user_id,
                         )
-                        connection_result = cursor.fetchone()
 
                         if not connection_result:
                             tool_result = {
@@ -752,62 +736,59 @@ async def process_chat_interaction_task(
                                         maplibre_layers = None
 
                                 # Create the layer in the database
-                                cursor.execute(
+                                await conn.execute(
                                     """
                                     INSERT INTO map_layers
                                     (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, created_on, last_edited)
-                                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                                     """,
-                                    (
-                                        layer_id,
-                                        user_id,
-                                        layer_name,
-                                        "",  # Empty path for PostGIS layers
-                                        "postgis",
-                                        postgis_connection_id,
-                                        query,
-                                        feature_count,
-                                        bounds,
-                                        geometry_type,
-                                    ),
+                                    layer_id,
+                                    user_id,
+                                    layer_name,
+                                    "",  # Empty path for PostGIS layers
+                                    "postgis",
+                                    postgis_connection_id,
+                                    query,
+                                    feature_count,
+                                    bounds,
+                                    geometry_type,
                                 )
 
                                 # Create default style in separate table if we have geometry type
                                 if maplibre_layers:
                                     style_id = generate_id(prefix="S")
-                                    cursor.execute(
+                                    await conn.execute(
                                         """
                                         INSERT INTO layer_styles
                                         (style_id, layer_id, style_json, created_by, created_on)
-                                        VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                                        VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
                                         """,
-                                        (
-                                            style_id,
-                                            layer_id,
-                                            psycopg2.extras.Json(maplibre_layers),
-                                            user_id,
-                                        ),
+                                        style_id,
+                                        layer_id,
+                                        json.dumps(maplibre_layers),
+                                        user_id,
                                     )
 
-                                    cursor.execute(
+                                    await conn.execute(
                                         """
                                         INSERT INTO map_layer_styles
                                         (map_id, layer_id, style_id)
-                                        VALUES (%s, %s, %s)
+                                        VALUES ($1, $2, $3)
                                         """,
-                                        (map_id, layer_id, style_id),
+                                        map_id,
+                                        layer_id,
+                                        style_id,
                                     )
 
-                                cursor.execute(
+                                await conn.execute(
                                     """
                                     UPDATE user_mundiai_maps
-                                    SET layers = array_append(layers, %s)
-                                    WHERE id = %s AND NOT (%s = ANY(layers))
+                                    SET layers = array_append(layers, $1)
+                                    WHERE id = $2 AND NOT ($1 = ANY(layers))
                                     """,
-                                    (layer_id, map_id, layer_id),
+                                    layer_id,
+                                    map_id,
                                 )
-
-                                conn.commit()
 
                                 tool_result = {
                                     "status": "success",
@@ -822,7 +803,7 @@ async def process_chat_interaction_task(
                                     "error": f"Query validation failed: {str(e)}",
                                 }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -833,14 +814,14 @@ async def process_chat_interaction_task(
                     layer_id_to_add = tool_args.get("layer_id")
                     new_name = tool_args.get("new_name")
 
-                    cursor.execute(
+                    layer_exists = await conn.fetchrow(
                         """
                         SELECT layer_id FROM map_layers
-                        WHERE layer_id = %s AND owner_uuid = %s
+                        WHERE layer_id = $1 AND owner_uuid = $2
                         """,
-                        (layer_id_to_add, user_id),
+                        layer_id_to_add,
+                        user_id,
                     )
-                    layer_exists = cursor.fetchone()
 
                     if not layer_exists:
                         tool_result = {
@@ -848,20 +829,22 @@ async def process_chat_interaction_task(
                             "error": f"Layer ID '{layer_id_to_add}' not found or you do not have permission to use it.",
                         }
                     else:
-                        cursor.execute(
+                        await conn.execute(
                             """
-                            UPDATE map_layers SET name = %s WHERE layer_id = %s
+                            UPDATE map_layers SET name = $1 WHERE layer_id = $2
                             """,
-                            (new_name, layer_id_to_add),
+                            new_name,
+                            layer_id_to_add,
                         )
 
-                        cursor.execute(
+                        await conn.execute(
                             """
                             UPDATE user_mundiai_maps
-                            SET layers = array_append(layers, %s)
-                            WHERE id = %s AND NOT (%s = ANY(layers))
+                            SET layers = array_append(layers, $1)
+                            WHERE id = $2 AND NOT ($1 = ANY(layers))
                             """,
-                            (layer_id_to_add, map_id, layer_id_to_add),
+                            layer_id_to_add,
+                            map_id,
                         )
                         tool_result = {
                             "status": f"Layer '{new_name}' (ID: {layer_id_to_add}) added to map '{map_id}'.",
@@ -869,7 +852,7 @@ async def process_chat_interaction_task(
                             "name": new_name,
                         }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -883,21 +866,21 @@ async def process_chat_interaction_task(
                     sql_query = tool_args.get("sql_query")
                     head_n_rows = tool_args.get("head_n_rows", 20)
 
-                    cursor.execute(
+                    layer_exists = await conn.fetchrow(
                         """
                         SELECT layer_id FROM map_layers
-                        WHERE layer_id = %s AND owner_uuid = %s
+                        WHERE layer_id = $1 AND owner_uuid = $2
                         """,
-                        (layer_id, user_id),
+                        layer_id,
+                        user_id,
                     )
-                    layer_exists = cursor.fetchone()
 
                     if not layer_exists:
                         tool_result = {
                             "status": "error",
                             "error": f"Layer ID '{layer_id}' not found or you do not have permission to access it.",
                         }
-                        add_chat_completion_message(
+                        await add_chat_completion_message(
                             ChatCompletionToolMessageParam(
                                 role="tool",
                                 tool_call_id=tool_call.id,
@@ -945,7 +928,7 @@ async def process_chat_interaction_task(
                             "error": f"Error executing SQL query: {str(e)}",
                         }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -996,15 +979,17 @@ async def process_chat_interaction_task(
                             verify_style_json_str(json.dumps(style_json))
 
                             # If validation passes, create the style in the database
-                            cursor.execute(
+                            await conn.execute(
                                 """
                                 INSERT INTO layer_styles
                                 (style_id, layer_id, style_json, created_by)
-                                VALUES (%s, %s, %s, %s)
+                                VALUES ($1, $2, $3, $4)
                                 """,
-                                (style_id, layer_id, json.dumps(layers), user_id),
+                                style_id,
+                                layer_id,
+                                json.dumps(layers),
+                                user_id,
                             )
-                            conn.commit()
 
                             tool_result = {
                                 "status": "success",
@@ -1037,7 +1022,7 @@ async def process_chat_interaction_task(
                                 "layer_id": layer_id,
                             }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -1060,16 +1045,17 @@ async def process_chat_interaction_task(
                             "Choosing a new style",
                             update_style_json=True,
                         ):
-                            cursor.execute(
+                            await conn.execute(
                                 """
                                 INSERT INTO map_layer_styles (map_id, layer_id, style_id)
-                                VALUES (%s, %s, %s)
+                                VALUES ($1, $2, $3)
                                 ON CONFLICT (map_id, layer_id)
-                                DO UPDATE SET style_id = %s
+                                DO UPDATE SET style_id = $3
                                 """,
-                                (map_id, layer_id, style_id, style_id),
+                                map_id,
+                                layer_id,
+                                style_id,
                             )
-                            conn.commit()
 
                         tool_result = {
                             "status": "success",
@@ -1078,7 +1064,7 @@ async def process_chat_interaction_task(
                             "style_id": style_id,
                         }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -1099,7 +1085,8 @@ async def process_chat_interaction_task(
                         try:
                             # Keep context manager only around the specific API call
                             async with kue_ephemeral_action(
-                                map_id, f"Downloading data from OpenStreetMap: {tags}"
+                                map_id,
+                                f"Downloading data from OpenStreetMap: {tags}",
                             ):
                                 tool_result = await download_from_openstreetmap(
                                     request=request,
@@ -1132,7 +1119,7 @@ async def process_chat_interaction_task(
                             'To make any of these visible to the user on their map, use "add_layer_to_map" with the layer_id and a descriptive new_name.'
                         )
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -1151,14 +1138,14 @@ async def process_chat_interaction_task(
                         }
                     else:
                         # Verify the PostGIS connection exists and user has access
-                        cursor.execute(
+                        connection_result = await conn.fetchrow(
                             """
                             SELECT connection_uri FROM project_postgres_connections
-                            WHERE id = %s AND user_id = %s
+                            WHERE id = $1 AND user_id = $2
                             """,
-                            (postgis_connection_id, user_id),
+                            postgis_connection_id,
+                            user_id,
                         )
-                        connection_result = cursor.fetchone()
 
                         if not connection_result:
                             tool_result = {
@@ -1260,7 +1247,7 @@ async def process_chat_interaction_task(
                                     "query": limited_query,
                                 }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -1342,7 +1329,7 @@ async def process_chat_interaction_task(
                                 "error": f"Error zooming to bounds: {str(e)}",
                             }
 
-                    add_chat_completion_message(
+                    await add_chat_completion_message(
                         ChatCompletionToolMessageParam(
                             role="tool",
                             tool_call_id=tool_call.id,
@@ -1352,8 +1339,7 @@ async def process_chat_interaction_task(
                 else:
                     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST)
 
-            # Commit all DB changes for this turn (OpenAI response + all tool calls/responses + system msgs)
-            conn.commit()
+            # Async connections auto-commit, no need for explicit commit
 
         # Unlock the map when processing is complete
         redis.delete(f"map_lock:{map_id}")
@@ -1382,15 +1368,12 @@ async def send_map_message_async(
     map_state: MapStateProvider = Depends(get_map_state_provider),
     system_prompt_provider: SystemPromptProvider = Depends(get_system_prompt_provider),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Authenticate and check map
-        cursor.execute(
-            "SELECT owner_uuid FROM user_mundiai_maps WHERE id = %s AND soft_deleted_at IS NULL",
-            (map_id,),
+        map_result = await conn.fetchrow(
+            "SELECT owner_uuid FROM user_mundiai_maps WHERE id = $1 AND soft_deleted_at IS NULL",
+            map_id,
         )
-        map_result = cursor.fetchone()
 
         if not map_result:
             raise HTTPException(
@@ -1441,16 +1424,37 @@ async def send_map_message_async(
                 role="system",
                 content=system_msg["content"],
             )
-            add_chat_completion_message_args(cursor, map_id, user_id, system_message)
+            system_message_dict = (
+                system_message.model_dump()
+                if isinstance(system_message, BaseModel)
+                else system_message
+            )
+            await conn.execute(
+                """
+                INSERT INTO chat_completion_messages
+                (map_id, sender_id, message_json)
+                VALUES ($1, $2, $3)
+                """,
+                map_id,
+                user_id,
+                json.dumps(system_message_dict),
+            )
 
         # Add user's message to DB
-        user_msg_db = add_chat_completion_message_args(
-            cursor,
+        message_dict = (
+            message.model_dump() if isinstance(message, BaseModel) else message
+        )
+        user_msg_db = await conn.fetchrow(
+            """
+            INSERT INTO chat_completion_messages
+            (map_id, sender_id, message_json)
+            VALUES ($1, $2, $3)
+            RETURNING id, map_id, sender_id, message_json, created_at
+            """,
             map_id,
             user_id,
-            message,
+            json.dumps(message_dict),
         )
-        conn.commit()
 
         job_id = str(uuid.uuid4())
         chat_channels[job_id] = asyncio.Queue()

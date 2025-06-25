@@ -15,10 +15,9 @@
 
 import os
 import uuid
-import psycopg2
 import math
 import secrets
-from psycopg2.extras import RealDictCursor
+import json
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -68,7 +67,7 @@ import io
 import subprocess
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
 from src.duckdb import execute_duckdb_query
-from ..structures import get_db_connection, get_async_db_connection
+from ..structures import get_async_db_connection, async_conn
 from ..dependencies.base_map import BaseMapProvider, get_base_map_provider
 from ..dependencies.postgis import get_postgis_provider
 from ..dependencies.layer_describer import LayerDescriber, get_layer_describer
@@ -82,12 +81,14 @@ from ..dependencies.postgres_connection import (
     get_postgres_connection_manager,
 )
 from typing import Callable
+from opentelemetry import trace
 
 # Global semaphore to limit concurrent social image renderings
 # This prevents OOM issues when many maps load simultaneously
 SOCIAL_RENDER_SEMAPHORE = asyncio.Semaphore(2)  # Max 2 concurrent renders
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 redis = Redis(
     host=os.environ["REDIS_HOST"],
@@ -180,42 +181,33 @@ async def create_map(
     map_id = generate_id(prefix="M")
 
     # Connect to database
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # First create a project
-        cursor.execute(
+        await conn.execute(
             """
             INSERT INTO user_mundiai_projects
             (id, owner_uuid, link_accessible, maps)
-            VALUES (%s, %s, FALSE, ARRAY[%s])
+            VALUES ($1, $2, FALSE, ARRAY[$3])
             """,
-            (
-                project_id,
-                owner_id,
-                map_id,
-            ),
+            project_id,
+            owner_id,
+            map_id,
         )
 
         # Then insert map with data including project_id and layer_ids
-        cursor.execute(
+        result = await conn.fetchrow(
             """
             INSERT INTO user_mundiai_maps
             (id, project_id, owner_uuid, title, description, display_as_diff)
-            VALUES (%s, %s, %s, %s, %s, TRUE)
+            VALUES ($1, $2, $3, $4, $5, TRUE)
             RETURNING id, title, description, created_on, last_edited
             """,
-            (
-                map_id,
-                project_id,
-                owner_id,
-                map_request.title,
-                map_request.description,
-            ),
+            map_id,
+            project_id,
+            owner_id,
+            map_request.title,
+            map_request.description,
         )
-
-        # Get the created map data
-        result = cursor.fetchone()
 
         # Validate the result
         if not result:
@@ -257,43 +249,41 @@ async def save_and_fork_map(
     """
     owner_id = session.get_user_id()
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Check if source map exists and user has access
-        cursor.execute(
+        source_map = await conn.fetchrow(
             """
             SELECT m.id, m.project_id, m.title, m.description, p.link_accessible, m.owner_uuid, m.layers
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
 
-        source_map = cursor.fetchone()
         if not source_map:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Source map not found"
             )
 
         # Check access permissions
-        if not source_map["link_accessible"] and owner_id != source_map["owner_uuid"]:
+        if not source_map["link_accessible"] and owner_id != str(
+            source_map["owner_uuid"]
+        ):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to fork this map",
             )
 
         # Get the project's current maps to find the previous map for diff
-        cursor.execute(
+        project = await conn.fetchrow(
             """
             SELECT maps
             FROM user_mundiai_projects
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (source_map["project_id"],),
+            source_map["project_id"],
         )
-        project = cursor.fetchone()
         proj_maps = project["maps"] or [] if project else []
 
         # Find the previous map for diff calculation
@@ -309,37 +299,33 @@ async def save_and_fork_map(
         new_map_id = generate_id(prefix="M")
 
         # Create new map as a copy of the source map, including layers
-        cursor.execute(
+        await conn.fetchrow(
             """
             INSERT INTO user_mundiai_maps
             (id, project_id, owner_uuid, title, description, layers, display_as_diff)
-            VALUES (%s, %s, %s, %s, %s, %s, TRUE)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
             RETURNING id, title, description, created_on, last_edited
             """,
-            (
-                new_map_id,
-                source_map["project_id"],
-                owner_id,
-                source_map["title"],
-                source_map["description"],
-                source_map["layers"],
-            ),
+            new_map_id,
+            source_map["project_id"],
+            owner_id,
+            source_map["title"],
+            source_map["description"],
+            source_map["layers"],
         )
-        cursor.fetchone()
-        conn.commit()
 
         # Copy over all map_layer_styles to the new map
         if source_map["layers"]:
-            cursor.execute(
+            await conn.execute(
                 """
                 INSERT INTO map_layer_styles (map_id, layer_id, style_id)
-                SELECT %s, layer_id, style_id
+                SELECT $1, layer_id, style_id
                 FROM map_layer_styles
-                WHERE map_id = %s
+                WHERE map_id = $2
                 """,
-                (new_map_id, map_id),
+                new_map_id,
+                map_id,
             )
-            conn.commit()
 
         # Get a summary of the changes from the previous map to the source map
         diff_summary = {"diff_summary": "first map"}
@@ -355,14 +341,16 @@ async def save_and_fork_map(
             )
 
         # Update project to include the new map
-        cursor.execute(
+        await conn.execute(
             """
             UPDATE user_mundiai_projects
-            SET maps = array_append(maps, %s),
-                map_diff_messages = array_append(map_diff_messages, %s)
-            WHERE id = %s
+            SET maps = array_append(maps, $1),
+                map_diff_messages = array_append(map_diff_messages, $2)
+            WHERE id = $3
             """,
-            (new_map_id, diff_summary["diff_summary"], source_map["project_id"]),
+            new_map_id,
+            diff_summary["diff_summary"],
+            source_map["project_id"],
         )
 
         return {
@@ -381,25 +369,23 @@ async def get_map(
     diff_map_id: Optional[str] = None,
     session: UserContext = Depends(verify_session_optional),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    async with get_async_db_connection() as conn:
         # Retrieve the map and check access
-        cursor.execute(
+        map_rec = await conn.fetchrow(
             """
             SELECT m.id, m.project_id, p.link_accessible, m.owner_uuid, m.layers, m.display_as_diff
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-        map_rec = cursor.fetchone()
         if not map_rec:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
             )
         if not map_rec["link_accessible"]:
-            if session is None or session.get_user_id() != map_rec["owner_uuid"]:
+            if session is None or session.get_user_id() != str(map_rec["owner_uuid"]):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required",
@@ -415,15 +401,14 @@ async def get_map(
             )
 
         # Load project and its changelog
-        cursor.execute(
+        project = await conn.fetchrow(
             """
             SELECT maps, map_diff_messages
             FROM user_mundiai_projects
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (project_id,),
+            project_id,
         )
-        project = cursor.fetchone()
         if not project:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -446,18 +431,15 @@ async def get_map(
         # Get last_edited times for maps in the project
         map_ids = project["maps"] or []
         if map_ids:
-            placeholders = ", ".join(["%s"] * len(map_ids))
-            cursor.execute(
-                f"""
+            map_edit_rows = await conn.fetch(
+                """
                 SELECT id, last_edited
                 FROM user_mundiai_maps
-                WHERE id IN ({placeholders})
+                WHERE id = ANY($1)
                 """,
                 map_ids,
             )
-            map_edit_times = {
-                row["id"]: row["last_edited"] for row in cursor.fetchall()
-            }
+            map_edit_times = {row["id"]: row["last_edited"] for row in map_edit_rows}
         else:
             map_edit_times = {}
 
@@ -482,9 +464,8 @@ async def get_map(
 
         # Load layers using the layer IDs
         if layer_ids:
-            placeholders = ", ".join(["%s"] * len(layer_ids))
-            cursor.execute(
-                f"""
+            layers = await conn.fetch(
+                """
                 SELECT layer_id AS id,
                        name,
                        path,
@@ -495,12 +476,13 @@ async def get_map(
                        geometry_type,
                        feature_count
                 FROM map_layers
-                WHERE layer_id IN ({placeholders})
+                WHERE layer_id = ANY($1)
                 ORDER BY id
                 """,
                 layer_ids,
             )
-            layers = cursor.fetchall()
+            # Convert Record objects to mutable dictionaries
+            layers = [dict(layer) for layer in layers]
             for layer in layers:
                 if layer.get("metadata") and isinstance(layer["metadata"], str):
                     layer["metadata"] = json.loads(layer["metadata"])
@@ -509,35 +491,37 @@ async def get_map(
         # Calculate diff if prev_map_id is provided
         layer_diffs = None
         if prev_map_id:
-            user_id = session.get_user_id() if session else map_rec["owner_uuid"]
+            user_id = session.get_user_id() if session else str(map_rec["owner_uuid"])
 
             # Get previous map layers with their style IDs
-            cursor.execute(
+            prev_layer_rows = await conn.fetch(
                 """
                 SELECT ml.layer_id, ml.name, ml.type, ml.metadata, ml.geometry_type, ml.feature_count,
                        mls.style_id
                 FROM user_mundiai_maps m
                 JOIN map_layers ml ON ml.layer_id = ANY(m.layers)
                 LEFT JOIN map_layer_styles mls ON mls.map_id = m.id AND mls.layer_id = ml.layer_id
-                WHERE m.id = %s AND m.owner_uuid = %s AND m.soft_deleted_at IS NULL
+                WHERE m.id = $1 AND m.owner_uuid = $2 AND m.soft_deleted_at IS NULL
                 """,
-                (prev_map_id, user_id),
+                prev_map_id,
+                user_id,
             )
-            prev_layers = {row["layer_id"]: row for row in cursor.fetchall()}
+            prev_layers = {row["layer_id"]: row for row in prev_layer_rows}
 
             # Get current map layers with their style IDs
-            cursor.execute(
+            current_layer_rows = await conn.fetch(
                 """
                 SELECT ml.layer_id, ml.name, ml.type, ml.metadata, ml.geometry_type, ml.feature_count,
                        mls.style_id
                 FROM user_mundiai_maps m
                 JOIN map_layers ml ON ml.layer_id = ANY(m.layers)
                 LEFT JOIN map_layer_styles mls ON mls.map_id = m.id AND mls.layer_id = ml.layer_id
-                WHERE m.id = %s AND m.owner_uuid = %s AND m.soft_deleted_at IS NULL
+                WHERE m.id = $1 AND m.owner_uuid = $2 AND m.soft_deleted_at IS NULL
                 """,
-                (map_id, user_id),
+                map_id,
+                user_id,
             )
-            new_layers = {row["layer_id"]: row for row in cursor.fetchall()}
+            new_layers = {row["layer_id"]: row for row in current_layer_rows}
 
             # Calculate diffs
             layer_diffs = []
@@ -643,20 +627,18 @@ async def get_map_layers(
     map_id: str,
     session: UserContext = Depends(verify_session_optional),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    async with get_async_db_connection() as conn:
         # First check if the map exists and is accessible
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT m.id, p.link_accessible, m.owner_uuid, m.layers
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
 
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
@@ -665,7 +647,9 @@ async def get_map_layers(
         # Check if map is publicly accessible
         if not map_result["link_accessible"]:
             # If not publicly accessible, verify that we have auth
-            if session is None or session.get_user_id() != map_result["owner_uuid"]:
+            if session is None or session.get_user_id() != str(
+                map_result["owner_uuid"]
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required",
@@ -679,20 +663,19 @@ async def get_map_layers(
             layers = []
         else:
             # Get all layers by their IDs using ANY() instead of f-string
-            cursor.execute(
+            layers = await conn.fetch(
                 """
                 SELECT layer_id as id, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count
                 FROM map_layers
-                WHERE layer_id = ANY(%s)
+                WHERE layer_id = ANY($1)
                 ORDER BY id
                 """,
-                (layer_ids,),
+                layer_ids,
             )
 
-            # Get all layers
-            layers = cursor.fetchall()
-
         # Process metadata JSON and add feature_count for vector layers if possible
+        # Convert Record objects to mutable dictionaries
+        layers = [dict(layer) for layer in layers]
         for layer in layers:
             if layer["metadata"] is not None:
                 # Convert metadata from JSON string to Python dict if needed
@@ -725,27 +708,23 @@ async def get_map_description(
         get_postgres_connection_manager
     ),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # First check if the map exists and is accessible
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT id, title, description, owner_uuid
             FROM user_mundiai_maps
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
             )
 
         # User must own the map to access this endpoint
-        if session.get_user_id() != map_result["owner_uuid"]:
+        if session.get_user_id() != str(map_result["owner_uuid"]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You must own this map to access map description",
@@ -754,20 +733,18 @@ async def get_map_description(
         content = []
 
         # Get PostgreSQL connections for this map's project
-        cursor.execute(
+        postgres_connections = await conn.fetch(
             """
             SELECT ppc.id, ppc.connection_uri, ppc.connection_name,
                    pps.friendly_name
             FROM project_postgres_connections ppc
             JOIN user_mundiai_maps m ON ppc.project_id = m.project_id
             LEFT JOIN project_postgres_summary pps ON pps.connection_id = ppc.id
-            WHERE m.id = %s AND ppc.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND ppc.soft_deleted_at IS NULL
             ORDER BY ppc.connection_name
             """,
-            (map_id,),
+            map_id,
         )
-
-        postgres_connections = cursor.fetchall()
 
         # Add PostgreSQL connection data to content
         for connection in postgres_connections:
@@ -796,18 +773,16 @@ async def get_map_description(
                 content.append("Exception while connecting to database.")
 
         # Get all layers for this map
-        cursor.execute(
+        layers = await conn.fetch(
             """
             SELECT ml.layer_id, ml.name, ml.type
             FROM map_layers ml
             JOIN user_mundiai_maps m ON ml.layer_id = ANY(m.layers)
-            WHERE m.id = %s
+            WHERE m.id = $1
             ORDER BY ml.name
             """,
-            (map_id,),
+            map_id,
         )
-
-        layers = cursor.fetchall()
 
         # Generate comprehensive description
         content.append(f"# Map: {map_result['title']}\n")
@@ -854,34 +829,32 @@ async def get_map_style(
     base_map: BaseMapProvider = Depends(get_base_map_provider),
 ):
     # Get vector layers for this map from the database
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
+    async with async_conn("get_map_style.fetch_map") as conn:
         # First check if the map exists and is accessible
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT m.id, p.link_accessible, m.owner_uuid, m.layers
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
 
-        map_result = cursor.fetchone()
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
+    if not map_result:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
+        )
 
-        # Check if map is publicly accessible
-        if not map_result["link_accessible"]:
-            # If not publicly accessible, verify that we have auth
-            if session is None or session.get_user_id() != map_result["owner_uuid"]:
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+    # Check if map is publicly accessible
+    if not map_result["link_accessible"]:
+        # If not publicly accessible, verify that we have auth
+        if session is None or session.get_user_id() != str(map_result["owner_uuid"]):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
     return await get_map_style_internal(
         map_id, base_map, only_show_inline_sources, override_layers, basemap
@@ -908,7 +881,7 @@ async def get_map_style_internal(
     basemap: Optional[str] = None,
 ):
     # Get vector layers for this map from the database
-    async with get_async_db_connection() as conn:
+    async with async_conn("get_map_style_internal.fetch_layers") as conn:
         # Get layers from the map
         map_result = await conn.fetchrow(
             """
@@ -928,18 +901,17 @@ async def get_map_style_internal(
             all_layers = []
         else:
             # Fetch metadata as well to check for cog_url_suffix
-            placeholders = ",".join(f"${i + 2}" for i in range(len(layer_ids)))
             all_layers = await conn.fetch(
-                f"""
+                """
                 SELECT ml.layer_id, ml.name, ml.type, ls.style_json as maplibre_layers, ml.raster_cog_url, ml.feature_count, ml.bounds, ml.metadata, ml.geometry_type
                 FROM map_layers ml
                 LEFT JOIN map_layer_styles mls ON ml.layer_id = mls.layer_id AND mls.map_id = $1
                 LEFT JOIN layer_styles ls ON mls.style_id = ls.style_id
-                WHERE ml.layer_id IN ({placeholders})
+                WHERE ml.layer_id = ANY($2)
                 ORDER BY ml.id
                 """,
                 map_id,
-                *layer_ids,
+                layer_ids,
             )
 
         vector_layers = [layer for layer in all_layers if layer["type"] == "vector"]
@@ -1159,20 +1131,17 @@ async def upload_layer(
     """Upload a new layer (vector or raster) to an existing map. If layer_name is not provided, the filename without extension will be used."""
 
     # Connect to database
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # First check if the map exists and user owns it, then get its project_id
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT m.id, m.project_id
             FROM user_mundiai_maps m
-            WHERE m.id = %s AND m.owner_uuid = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.owner_uuid = $2 AND m.soft_deleted_at IS NULL
             """,
-            (map_id, session.get_user_id()),
+            map_id,
+            session.get_user_id(),
         )
-
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
@@ -1424,59 +1393,54 @@ async def upload_layer(
                     layer_id, geometry_type
                 )
 
-            cursor.execute(
+            new_layer_result = await conn.fetchrow(
                 """
                 INSERT INTO map_layers
                 (layer_id, owner_uuid, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count, s3_key, size_bytes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING layer_id
                 """,
-                (
-                    layer_id,
-                    session.get_user_id(),
-                    layer_name,
-                    presigned_url,
-                    layer_type,
-                    raster_cog_url,
-                    psycopg2.extras.Json(metadata_dict),
-                    bounds,
-                    geometry_type if layer_type == "vector" else None,
-                    feature_count,
-                    s3_key,
-                    file_size_bytes,
-                ),
+                layer_id,
+                session.get_user_id(),
+                layer_name,
+                presigned_url,
+                layer_type,
+                raster_cog_url,
+                json.dumps(metadata_dict),
+                bounds,
+                geometry_type if layer_type == "vector" else None,
+                feature_count,
+                s3_key,
+                file_size_bytes,
             )
 
-            new_layer_id = cursor.fetchone()["layer_id"]
+            new_layer_id = new_layer_result["layer_id"]
 
             # If adding layer to map, update the map with the new layer
             if add_layer_to_map:
                 # First get the current layers array
-                cursor.execute(
+                map_data = await conn.fetchrow(
                     """
                     SELECT layers FROM user_mundiai_maps
-                    WHERE id = %s
+                    WHERE id = $1
                     """,
-                    (map_id,),
+                    map_id,
                 )
-                map_data = cursor.fetchone()
                 current_layers = (
                     map_data["layers"] if map_data and map_data["layers"] else []
                 )
 
                 # Then update with the new layer appended
-                cursor.execute(
+                await conn.execute(
                     """
                     UPDATE user_mundiai_maps
-                    SET layers = %s,
+                    SET layers = $1,
                         last_edited = CURRENT_TIMESTAMP
-                    WHERE id = %s
+                    WHERE id = $2
                     """,
-                    (current_layers + [new_layer_id], map_id),
+                    current_layers + [new_layer_id],
+                    map_id,
                 )
-
-            # Commit changes
-            conn.commit()
 
             # Create direct URL for the layer based on type
             layer_url = (
@@ -1493,29 +1457,28 @@ async def upload_layer(
 
                 # Create a default style entry
                 style_id = generate_id(prefix="S")
-                cursor.execute(
+                await conn.execute(
                     """
                     INSERT INTO layer_styles
                     (style_id, layer_id, style_json, created_by)
-                    VALUES (%s, %s, %s, %s)
+                    VALUES ($1, $2, $3, $4)
                     """,
-                    (
-                        style_id,
-                        new_layer_id,
-                        psycopg2.extras.Json(maplibre_layers),
-                        session.get_user_id(),
-                    ),
+                    style_id,
+                    new_layer_id,
+                    json.dumps(maplibre_layers),
+                    session.get_user_id(),
                 )
 
                 # Link the style to the map
-                cursor.execute(
+                await conn.execute(
                     """
                     INSERT INTO map_layer_styles (map_id, layer_id, style_id)
-                    VALUES (%s, %s, %s)
+                    VALUES ($1, $2, $3)
                     """,
-                    (map_id, new_layer_id, style_id),
+                    map_id,
+                    new_layer_id,
+                    style_id,
                 )
-                conn.commit()
 
                 # Generate PMTiles for vector layers
                 if feature_count is not None and feature_count > 0:
@@ -1529,27 +1492,29 @@ async def upload_layer(
                     )
 
                     # Update metadata with PMTiles key
-                    cursor.execute(
+                    result = await conn.fetchrow(
                         """
                         SELECT metadata FROM map_layers
-                        WHERE layer_id = %s
+                        WHERE layer_id = $1
                         """,
-                        (new_layer_id,),
+                        new_layer_id,
                     )
-                    result = cursor.fetchone()
-                    metadata = result["metadata"] or {}
+                    metadata = result["metadata"] if result["metadata"] else {}
+                    # Parse metadata JSON if it's a string
+                    if isinstance(metadata, str):
+                        metadata = json.loads(metadata)
                     metadata["pmtiles_key"] = pmtiles_key
 
                     # Update the database
-                    cursor.execute(
+                    await conn.execute(
                         """
                         UPDATE map_layers
-                        SET metadata = %s
-                        WHERE layer_id = %s
+                        SET metadata = $1
+                        WHERE layer_id = $2
                         """,
-                        (psycopg2.extras.Json(metadata), new_layer_id),
+                        json.dumps(metadata),
+                        new_layer_id,
                     )
-                    conn.commit()
 
             # Cleanup temp_dir if it exists
             if temp_dir:
@@ -1582,20 +1547,17 @@ async def get_layer_cog_tif(
     If the COG doesn't exist yet, it will be created on-the-fly.
     """
     # Connect to database
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Get the layer by layer_id
-        cursor.execute(
+        layer = await conn.fetchrow(
             """
             SELECT layer_id, name, path, type, raster_cog_url, metadata, feature_count, s3_key
             FROM map_layers
-            WHERE layer_id = %s
+            WHERE layer_id = $1
             """,
-            (layer_id,),
+            layer_id,
         )
 
-        layer = cursor.fetchone()
         if not layer:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
@@ -1609,20 +1571,19 @@ async def get_layer_cog_tif(
             )
 
         # Check if layer is associated with any maps via the layers array
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT m.id, p.link_accessible, m.owner_uuid
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE %s = ANY(m.layers) AND m.soft_deleted_at IS NULL
+            WHERE $1 = ANY(m.layers) AND m.soft_deleted_at IS NULL
             """,
-            (layer_id,),
+            layer_id,
         )
 
-        map_result = cursor.fetchone()
         if map_result and not map_result["link_accessible"]:
             # If not publicly accessible, verify that we have auth
-            if session.get_user_id() != map_result["owner_uuid"]:
+            if session.get_user_id() != str(map_result["owner_uuid"]):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required",
@@ -1633,7 +1594,7 @@ async def get_layer_cog_tif(
         bucket_name = get_bucket_name()
 
         # Check if metadata has cog_key
-        metadata = layer["metadata"] or {}
+        metadata = json.loads(layer["metadata"] or "{}")
         cog_key = metadata.get("cog_key")
 
         # Set up MinIO/S3 client
@@ -1781,15 +1742,15 @@ async def get_layer_cog_tif(
                 metadata["cog_key"] = cog_key
 
                 # Update the database
-                cursor.execute(
+                await conn.execute(
                     """
                     UPDATE map_layers
-                    SET metadata = %s
-                    WHERE layer_id = %s
+                    SET metadata = $1
+                    WHERE layer_id = $2
                     """,
-                    (psycopg2.extras.Json(metadata), layer_id),
+                    json.dumps(metadata),
+                    layer_id,
                 )
-                conn.commit()
                 print(f"INFO: Updated metadata for layer {layer_id}", metadata)
 
         # Ensure cog_key is available if it was just generated
@@ -1950,33 +1911,33 @@ async def generate_pmtiles_for_layer(
         await s3.upload_file(local_output_file, bucket_name, pmtiles_key)
 
         # Update the database with the PMTiles key
-        with get_db_connection() as conn:
-            cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+        async with get_async_db_connection() as conn:
             # Get current metadata
-            cursor.execute(
+            result = await conn.fetchrow(
                 """
                 SELECT metadata FROM map_layers
-                WHERE layer_id = %s
+                WHERE layer_id = $1
                 """,
-                (layer_id,),
+                layer_id,
             )
-            result = cursor.fetchone()
-            metadata = result["metadata"] or {}
+            metadata = result["metadata"] if result["metadata"] else {}
+            # Parse metadata JSON if it's a string
+            if isinstance(metadata, str):
+                metadata = json.loads(metadata)
 
             # Update metadata with PMTiles key
             metadata["pmtiles_key"] = pmtiles_key
 
             # Update the database
-            cursor.execute(
+            await conn.execute(
                 """
                 UPDATE map_layers
-                SET metadata = %s
-                WHERE layer_id = %s
+                SET metadata = $1
+                WHERE layer_id = $2
                 """,
-                (psycopg2.extras.Json(metadata), layer_id),
+                json.dumps(metadata),
+                layer_id,
             )
-            conn.commit()
 
         return pmtiles_key
 
@@ -2249,20 +2210,16 @@ async def get_layer_geojson(
     request: Request,
     session: UserContext = Depends(verify_session_required),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Get the layer by layer_id
-        cursor.execute(
+        layer = await conn.fetchrow(
             """
             SELECT layer_id, name, path, type, metadata, feature_count, owner_uuid, s3_key
             FROM map_layers
-            WHERE layer_id = %s
+            WHERE layer_id = $1
             """,
-            (layer_id,),
+            layer_id,
         )
-
-        layer = cursor.fetchone()
         if not layer:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
@@ -2276,19 +2233,17 @@ async def get_layer_geojson(
             )
 
         # First check direct layer ownership
-        if session.get_user_id() != layer["owner_uuid"]:
+        if session.get_user_id() != str(layer["owner_uuid"]):
             # Check if layer is associated with any public map
-            cursor.execute(
+            map_result = await conn.fetchrow(
                 """
                 SELECT m.id, p.link_accessible, m.owner_uuid
                 FROM user_mundiai_maps m
                 JOIN user_mundiai_projects p ON m.project_id = p.id
-                WHERE %s = ANY(m.layers) AND m.soft_deleted_at IS NULL AND p.link_accessible = true
+                WHERE $1 = ANY(m.layers) AND m.soft_deleted_at IS NULL AND p.link_accessible = true
                 """,
-                (layer_id,),
+                layer_id,
             )
-
-            map_result = cursor.fetchone()
             if not map_result:
                 # Not owner and not in any public map
                 raise HTTPException(
@@ -2425,18 +2380,16 @@ async def query_layer(
     max_n_rows = min(body.max_n_rows, 25)  # Cap at 25 rows
     user_id = session.get_user_id()
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+    async with get_async_db_connection() as conn:
+        layer = await conn.fetchrow(
             """
             SELECT layer_id, name, path, type, s3_key
             FROM map_layers
-            WHERE layer_id = %s AND owner_uuid = %s
+            WHERE layer_id = $1 AND owner_uuid = $2
             """,
-            (layer_id, user_id),
+            layer_id,
+            user_id,
         )
-
-        layer = cursor.fetchone()
         if not layer:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
@@ -2523,20 +2476,18 @@ async def describe_layer_internal(
     layer_describer: LayerDescriber,
     session_user_id: str,
 ) -> str:
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+    async with get_async_db_connection() as conn:
+        layer = await conn.fetchrow(
             """
             SELECT layer_id, name, type, metadata, bounds, geometry_type,
                    created_on, last_edited, feature_count, s3_key,
                    postgis_query, postgis_connection_id
             FROM map_layers
-            WHERE layer_id = %s
+            WHERE layer_id = $1
             """,
-            (layer_id,),
+            layer_id,
         )
 
-        layer = cursor.fetchone()
         if not layer:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
@@ -2544,20 +2495,18 @@ async def describe_layer_internal(
 
         # Check if the layer is associated with any maps via the layers array
         # Order by created_on DESC to get the most recently created map first
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT id, title, description, owner_uuid
             FROM user_mundiai_maps
-            WHERE %s = ANY(layers) AND soft_deleted_at IS NULL
+            WHERE $1 = ANY(layers) AND soft_deleted_at IS NULL
             ORDER BY created_on DESC
             """,
-            (layer_id,),
+            layer_id,
         )
-
-        map_result = cursor.fetchone()
         if map_result:
             # User must own the map to access this endpoint
-            if session_user_id != map_result["owner_uuid"]:
+            if session_user_id != str(map_result["owner_uuid"]):
                 raise HTTPException(
                     status_code=status.HTTP_403_FORBIDDEN,
                     detail="You must own this map to access layer description",
@@ -2568,21 +2517,26 @@ async def describe_layer_internal(
 
         # Fetch active style JSON if layer is associated with a map
         if map_result:
-            cursor.execute(
+            style_result = await conn.fetchrow(
                 """
                 SELECT ls.style_json, ls.style_id
                 FROM map_layer_styles mls
                 JOIN layer_styles ls ON mls.style_id = ls.style_id
-                WHERE mls.map_id = %s AND mls.layer_id = %s
+                WHERE mls.map_id = $1 AND mls.layer_id = $2
                 """,
-                (map_result["id"], layer_id),
+                map_result["id"],
+                layer_id,
             )
-            style_result = cursor.fetchone()
             if style_result:
                 # Add style information if available (for vector layers)
                 style_section = f"\n## Style ID ({style_result['style_id']})\n"
                 style_section += "```json\n"
-                style_section += json.dumps(style_result["style_json"])
+                # Parse style_json if it's a string (asyncpg returns JSON as strings)
+                style_json = style_result["style_json"]
+                if isinstance(style_json, str):
+                    style_section += style_json
+                else:
+                    style_section += json.dumps(style_json)
                 style_section += "\n```"
                 markdown_response += style_section
 
@@ -2616,43 +2570,37 @@ async def add_layer_to_map(
     layer_id: str,
     session: UserContext = Depends(verify_session_required),
 ):
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Check if the map exists and get current layers
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT id, owner_uuid, layers
             FROM user_mundiai_maps
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
             )
 
         # Check if user is the owner of the map
-        if session.get_user_id() != map_result["owner_uuid"]:
+        if session.get_user_id() != str(map_result["owner_uuid"]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to modify this map",
             )
 
         # Check if the layer exists
-        cursor.execute(
+        layer_result = await conn.fetchrow(
             """
             SELECT layer_id, name
             FROM map_layers
-            WHERE layer_id = %s
+            WHERE layer_id = $1
             """,
-            (layer_id,),
+            layer_id,
         )
-
-        layer_result = cursor.fetchone()
         if not layer_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
@@ -2664,19 +2612,17 @@ async def add_layer_to_map(
             return {"message": "Layer is already associated with this map"}
 
         # Update the map to include the layer_id in its layers array
-        cursor.execute(
+        updated_map = await conn.fetchrow(
             """
             UPDATE user_mundiai_maps
-            SET layers = array_append(layers, %s),
+            SET layers = array_append(layers, $1),
                 last_edited = CURRENT_TIMESTAMP
-            WHERE id = %s
+            WHERE id = $2
             RETURNING id
             """,
-            (layer_id, map_id),
+            layer_id,
+            map_id,
         )
-
-        updated_map = cursor.fetchone()
-        conn.commit()
 
         if not updated_map:
             raise HTTPException(
@@ -2692,11 +2638,10 @@ async def add_layer_to_map(
         }
 
 
-def pull_bounds_from_map(map_id: str) -> tuple[float, float, float, float]:
+async def pull_bounds_from_map(map_id: str) -> tuple[float, float, float, float]:
     """Pull the bounds from the map in the database by taking the min and max of all layer bounds."""
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+    async with get_async_db_connection() as conn:
+        result = await conn.fetchrow(
             """
             SELECT
                 MIN(ml.bounds[1]) as xmin,
@@ -2705,11 +2650,10 @@ def pull_bounds_from_map(map_id: str) -> tuple[float, float, float, float]:
                 MAX(ml.bounds[4]) as ymax
             FROM map_layers ml
             JOIN user_mundiai_maps m ON ml.layer_id = ANY(m.layers)
-            WHERE m.id = %s AND ml.bounds IS NOT NULL
+            WHERE m.id = $1 AND ml.bounds IS NOT NULL
             """,
-            (map_id,),
+            map_id,
         )
-        result = cursor.fetchone()
 
         if not result or result["xmin"] is None:
             # No layers with bounds found
@@ -2736,19 +2680,16 @@ async def render_map(
     session: Optional[UserContext] = Depends(verify_session_optional),
 ):
     # Verify user has access to map
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-        cursor.execute(
+    async with get_async_db_connection() as conn:
+        map_result = await conn.fetchrow(
             """
             SELECT m.id, p.link_accessible, m.owner_uuid
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = %s AND m.soft_deleted_at IS NULL
+            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
@@ -2757,7 +2698,9 @@ async def render_map(
         # Check if map is publicly accessible
         if not map_result["link_accessible"]:
             # If not publicly accessible, verify that we have auth
-            if session is None or session.get_user_id() != map_result["owner_uuid"]:
+            if session is None or session.get_user_id() != str(
+                map_result["owner_uuid"]
+            ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
                     detail="Authentication required to access this map",
@@ -2785,7 +2728,7 @@ async def render_map_internal(
     map_id, bbox, width, height, renderer, bgcolor, style_json
 ) -> tuple[Response, dict]:
     if bbox is None:
-        xmin, ymin, xmax, ymax = pull_bounds_from_map(map_id)
+        xmin, ymin, xmax, ymax = await pull_bounds_from_map(map_id)
     else:
         xmin, ymin, xmax, ymax = map(float, bbox.split(","))
 
@@ -2876,42 +2819,37 @@ async def remove_layer_from_map(
     Remove a layer from a map by setting its map_id to NULL.
     The layer still exists in the database but is no longer associated with the map.
     """
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Check if the map exists
-        cursor.execute(
+        map_result = await conn.fetchrow(
             """
             SELECT id, owner_uuid
             FROM user_mundiai_maps
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (map_id,),
+            map_id,
         )
-
-        map_result = cursor.fetchone()
         if not map_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
             )
 
         # Check if user owns the map
-        if session.get_user_id() != map_result["owner_uuid"]:
+        if session.get_user_id() != str(map_result["owner_uuid"]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to modify this map",
             )
         # Check if the layer exists and is in the map's layers array
-        cursor.execute(
+        map_data = await conn.fetchrow(
             """
-            SELECT layers, (SELECT name FROM map_layers WHERE layer_id = %s) as layer_name
+            SELECT layers, (SELECT name FROM map_layers WHERE layer_id = $1) as layer_name
             FROM user_mundiai_maps
-            WHERE id = %s
+            WHERE id = $2
             """,
-            (layer_id, map_id),
+            layer_id,
+            map_id,
         )
-
-        map_data = cursor.fetchone()
         if not map_data or not map_data["layers"] or layer_id not in map_data["layers"]:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -2919,18 +2857,16 @@ async def remove_layer_from_map(
             )
 
         # Remove the layer from the map's layers array
-        cursor.execute(
+        updated_map = await conn.fetchrow(
             """
             UPDATE user_mundiai_maps
-            SET layers = array_remove(layers, %s)
-            WHERE id = %s
+            SET layers = array_remove(layers, $1)
+            WHERE id = $2
             RETURNING id
             """,
-            (layer_id, map_id),
+            layer_id,
+            map_id,
         )
-
-        updated_map = cursor.fetchone()
-        conn.commit()
 
         if not updated_map:
             raise HTTPException(
@@ -2959,23 +2895,18 @@ async def get_user_maps(
     user_id = session.get_user_id()
 
     # Connect to database
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Get all maps owned by this user that are not soft-deleted
-        cursor.execute(
+        maps_data = await conn.fetch(
             """
             SELECT m.id, m.title, m.description, m.created_on, m.last_edited, p.link_accessible, m.project_id
             FROM user_mundiai_maps m
             JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.owner_uuid = %s AND m.soft_deleted_at IS NULL
+            WHERE m.owner_uuid = $1 AND m.soft_deleted_at IS NULL
             ORDER BY m.last_edited DESC
             """,
-            (user_id,),
+            user_id,
         )
-
-        # Fetch all maps
-        maps_data = cursor.fetchall()
 
         # Convert datetime objects to ISO format strings for JSON serialization
         maps_response = []
@@ -3055,30 +2986,31 @@ async def summarize_map_diff(
     chat_completions_args = await chat_args.get_args(
         session.get_user_id(), "summarize_map_diff"
     )
-    response = await client.chat.completions.create(
-        **chat_completions_args,
-        messages=[
-            {
-                "role": "system",
-                "content": """
-Summarize the map changes in 8 words or less based on the diff provided.
-Be specific but concise about what changed.
+    with tracer.start_as_current_span("app.summarize_map_diff.openai"):
+        response = await client.chat.completions.create(
+            **chat_completions_args,
+            messages=[
+                {
+                    "role": "system",
+                    "content": """
+    Summarize the map changes in 8 words or less based on the diff provided.
+    Be specific but concise about what changed.
 
-Coordinate bounds change often, and are rarely important.
+    Coordinate bounds change often, and are rarely important.
 
-Keep your response to a maximum of 8 words. Use lowercase except for proper nouns/acronyms
-("fixed polygons" instead of "Fixed polygons")
+    Keep your response to a maximum of 8 words. Use lowercase except for proper nouns/acronyms
+    ("fixed polygons" instead of "Fixed polygons")
 
-If no changes, use "no edits".
-""",
-            },
-            {
-                "role": "user",
-                "content": diff_content,
-            },
-        ],
-        max_tokens=30,
-    )
+    If no changes, use "no edits".
+    """,
+                },
+                {
+                    "role": "user",
+                    "content": diff_content,
+                },
+            ],
+            max_tokens=30,
+        )
 
     summary = response.choices[0].message.content.strip()
     return {"diff_summary": summary}
@@ -3430,19 +3362,16 @@ async def update_project(
     """
     user_id = session.get_user_id()
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # First check if user is the owner
-        cursor.execute(
+        project_data = await conn.fetchrow(
             """
             SELECT owner_uuid
             FROM user_mundiai_projects
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (project_id,),
+            project_id,
         )
-        project_data = cursor.fetchone()
 
         if project_data is None:
             raise HTTPException(
@@ -3458,15 +3387,15 @@ async def update_project(
             )
 
         # Update link_accessible
-        cursor.execute(
+        await conn.execute(
             """
             UPDATE user_mundiai_projects
-            SET link_accessible = %s
-            WHERE id = %s
+            SET link_accessible = $1
+            WHERE id = $2
             """,
-            (update_data.link_accessible, project_id),
+            update_data.link_accessible,
+            project_id,
         )
-        conn.commit()
 
         return ProjectUpdateResponse(updated=True)
 
@@ -3507,19 +3436,16 @@ async def add_postgis_connection(
     """
     user_id = session.get_user_id()
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Check if user has access to the project
-        cursor.execute(
+        project = await conn.fetchrow(
             """
             SELECT owner_uuid, editor_uuids
             FROM user_mundiai_projects
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (project_id,),
+            project_id,
         )
-        project = cursor.fetchone()
 
         if not project:
             raise HTTPException(
@@ -3545,35 +3471,33 @@ async def add_postgis_connection(
             )
 
         # Check if connection already exists
-        cursor.execute(
+        existing_conn = await conn.fetchrow(
             """
             SELECT id FROM project_postgres_connections
-            WHERE project_id = %s AND user_id = %s AND connection_uri = %s AND soft_deleted_at IS NULL
+            WHERE project_id = $1 AND user_id = $2 AND connection_uri = $3 AND soft_deleted_at IS NULL
             """,
-            (project_id, user_id, connection_uri),
+            project_id,
+            user_id,
+            connection_uri,
         )
-        existing_conn = cursor.fetchone()
 
         if not existing_conn:
             # Generate new connection ID
             connection_id = generate_id(prefix="C")
 
             # Insert the new connection
-            cursor.execute(
+            await conn.execute(
                 """
                 INSERT INTO project_postgres_connections
                 (id, project_id, user_id, connection_uri, connection_name)
-                VALUES (%s, %s, %s, %s, %s)
+                VALUES ($1, $2, $3, $4, $5)
                 """,
-                (
-                    connection_id,
-                    project_id,
-                    user_id,
-                    connection_data.connection_uri,
-                    connection_data.connection_name,
-                ),
+                connection_id,
+                project_id,
+                user_id,
+                connection_data.connection_uri,
+                connection_data.connection_name,
             )
-            conn.commit()
 
             # Start background task to generate database documentation
             background_tasks.add_task(
@@ -3688,19 +3612,16 @@ async def get_database_documentation(
     """
     user_id = session.get_user_id()
 
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Check if user has access to the project
-        cursor.execute(
+        project = await conn.fetchrow(
             """
             SELECT owner_uuid, editor_uuids, viewer_uuids
             FROM user_mundiai_projects
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (project_id,),
+            project_id,
         )
-        project = cursor.fetchone()
 
         if not project:
             raise HTTPException(
@@ -3720,7 +3641,7 @@ async def get_database_documentation(
             )
 
         # Get the database connection and documentation (most recent summary)
-        cursor.execute(
+        connection = await conn.fetchrow(
             """
             SELECT
                 ppc.id,
@@ -3730,13 +3651,13 @@ async def get_database_documentation(
                 pps.generated_at
             FROM project_postgres_connections ppc
             LEFT JOIN project_postgres_summary pps ON ppc.id = pps.connection_id
-            WHERE ppc.id = %s AND ppc.project_id = %s AND ppc.soft_deleted_at IS NULL
+            WHERE ppc.id = $1 AND ppc.project_id = $2 AND ppc.soft_deleted_at IS NULL
             ORDER BY pps.generated_at DESC
             LIMIT 1
             """,
-            (connection_id, project_id),
+            connection_id,
+            project_id,
         )
-        connection = cursor.fetchone()
 
         if not connection:
             raise HTTPException(
@@ -3851,45 +3772,38 @@ async def delete_project(
     Soft delete a project by setting its soft_deleted_at timestamp.
     The project still exists in the database but is no longer accessible.
     """
-    with get_db_connection() as conn:
-        cursor = conn.cursor(cursor_factory=RealDictCursor)
-
+    async with get_async_db_connection() as conn:
         # Check if the project exists
-        cursor.execute(
+        project_result = await conn.fetchrow(
             """
             SELECT id, owner_uuid
             FROM user_mundiai_projects
-            WHERE id = %s AND soft_deleted_at IS NULL
+            WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            (project_id,),
+            project_id,
         )
-
-        project_result = cursor.fetchone()
         if not project_result:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
             )
 
         # Check if user owns the project
-        if session.get_user_id() != project_result["owner_uuid"]:
+        if session.get_user_id() != str(project_result["owner_uuid"]):
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You don't have permission to delete this project",
             )
 
         # Soft delete the project
-        cursor.execute(
+        updated_project = await conn.fetchrow(
             """
             UPDATE user_mundiai_projects
             SET soft_deleted_at = CURRENT_TIMESTAMP
-            WHERE id = %s
+            WHERE id = $1
             RETURNING id
             """,
-            (project_id,),
+            project_id,
         )
-
-        updated_project = cursor.fetchone()
-        conn.commit()
 
         if not updated_project:
             raise HTTPException(
