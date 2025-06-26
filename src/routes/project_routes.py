@@ -485,6 +485,9 @@ async def add_postgis_connection(
     background_tasks: BackgroundTasks,
     session: UserContext = Depends(verify_session_required),
     database_documenter: DatabaseDocumenter = Depends(get_database_documenter),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     """
     Add a PostgreSQL connection URI to a project.
@@ -561,6 +564,7 @@ async def add_postgis_connection(
                 connection_id,
                 connection_data.connection_uri,
                 connection_data.connection_name or "Database",
+                connection_manager,
             )
 
             return PostgresConnectionResponse(

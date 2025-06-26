@@ -14,6 +14,7 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import pytest
+import asyncio
 
 
 @pytest.mark.anyio
@@ -38,6 +39,8 @@ async def test_postgres_error_stored_in_database(auth_client):
         },
     )
     assert add_connection_response.status_code == 200
+
+    await asyncio.sleep(3)
 
     projects_response = await auth_client.get("/api/projects/")
     assert projects_response.status_code == 200

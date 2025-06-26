@@ -18,8 +18,11 @@ from datetime import datetime, timezone
 from typing import Optional, Dict, Any
 import asyncpg
 from fastapi import HTTPException, status
+import logging
 
 from ..structures import get_async_db_connection
+
+logger = logging.getLogger(__name__)
 
 
 class PostgresConnectionManager:
@@ -99,6 +102,7 @@ class PostgresConnectionManager:
                 detail=f"Failed to connect to postgres: {error_msg}",
             )
         except Exception as e:
+            logger.error(f"Unexpected third-party asyncpg error: {str(e)}")
             error_msg = f"Unexpected error: {str(e)}"
             await self.update_error_status(connection_id, error_msg)
             raise HTTPException(

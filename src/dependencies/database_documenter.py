@@ -20,6 +20,7 @@ from typing import Tuple
 import secrets
 from src.structures import get_async_db_connection
 from src.utils import get_openai_client
+from .postgres_connection import PostgresConnectionManager
 
 
 def generate_id(length=12, prefix=""):
@@ -34,7 +35,11 @@ def generate_id(length=12, prefix=""):
 class DatabaseDocumenter(ABC):
     @abstractmethod
     async def generate_documentation(
-        self, connection_id: str, connection_uri: str, connection_name: str
+        self,
+        connection_id: str,
+        connection_uri: str,
+        connection_name: str,
+        connection_manager: PostgresConnectionManager,
     ) -> Tuple[str, str]:
         """
         Generate database documentation and friendly name.
@@ -45,7 +50,11 @@ class DatabaseDocumenter(ABC):
 
 class DefaultDatabaseDocumenter(DatabaseDocumenter):
     async def generate_documentation(
-        self, connection_id: str, connection_uri: str, connection_name: str
+        self,
+        connection_id: str,
+        connection_uri: str,
+        connection_name: str,
+        connection_manager: PostgresConnectionManager,
     ) -> Tuple[str, str]:
         """
         Generate basic database documentation and friendly name.
@@ -53,8 +62,8 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
         and generates a friendly display name and simple documentation.
         """
         try:
-            # Establish a connection (asyncpg.connect returns a coroutine, so we must await it)
-            conn = await asyncpg.connect(connection_uri)
+            # Establish a connection using the connection manager for proper error tracking
+            conn = await connection_manager.connect_to_postgres(connection_id)
             try:
                 # Get all tables
                 tables = await conn.fetch(
@@ -183,6 +192,7 @@ Schema:
                 f"Error generating database documentation for connection {connection_id}: {str(e)}"
             )
             # Don't raise the exception - background tasks should fail silently as requested
+            # Connection manager already handled error reporting
             return None, None
 
 
