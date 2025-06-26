@@ -16,7 +16,6 @@
 from __future__ import annotations
 import os
 import sys
-from psycopg2 import pool
 import asyncpg
 from typing import Optional
 from opentelemetry import trace
@@ -24,30 +23,11 @@ import asyncio
 
 IS_RUNNING_PYTEST = "pytest" in sys.modules or "PYTEST_CURRENT_TEST" in os.environ
 
-_connection_pool = None
 _async_connection_pool = None
 _async_pool_lock = asyncio.Lock()
 
 # Get tracer for this module
 tracer = trace.get_tracer(__name__)
-
-
-def _get_connection_pool():
-    global _connection_pool
-    if _connection_pool is None:
-        # Construct URL from components
-        user = os.environ["POSTGRES_USER"]
-        password = os.environ["POSTGRES_PASSWORD"]
-        host = os.environ["POSTGRES_HOST"]
-        port = os.environ.get("POSTGRES_PORT", "5432")
-        db = os.environ["POSTGRES_DB"]
-        postgres_url = f"postgresql://{user}:{password}@{host}:{port}/{db}"
-        _connection_pool = pool.ThreadedConnectionPool(
-            minconn=1,
-            maxconn=10,
-            dsn=postgres_url,
-        )
-    return _connection_pool
 
 
 async def _get_async_connection_pool():
@@ -68,22 +48,6 @@ async def _get_async_connection_pool():
                     max_size=10,
                 )
     return _async_connection_pool
-
-
-class DatabaseConnection:
-    def __init__(self):
-        self.conn = None
-
-    def __enter__(self):
-        pool = _get_connection_pool()
-        self.conn = pool.getconn()
-        self.conn.autocommit = True
-        return self.conn
-
-    def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.conn:
-            pool = _get_connection_pool()
-            pool.putconn(self.conn)
 
 
 class AsyncDatabaseConnection:
@@ -131,10 +95,6 @@ class AsyncDatabaseConnection:
                 await pool.release(self.conn)
         if self.span:
             self.span.end()
-
-
-def get_db_connection():
-    return DatabaseConnection()
 
 
 def get_async_db_connection():
