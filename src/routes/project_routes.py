@@ -100,6 +100,8 @@ class ProjectResponse(BaseModel):
 
 class UserProjectsResponse(BaseModel):
     projects: List[ProjectResponse]
+    total_pages: int
+    total_items: int
 
 
 @project_router.get(
@@ -110,6 +112,8 @@ async def list_user_projects(
     connection_manager: PostgresConnectionManager = Depends(
         get_postgres_connection_manager
     ),
+    page: int = 1,
+    limit: int = 12,
 ):
     """
     List all projects associated with the authenticated user.
@@ -117,7 +121,29 @@ async def list_user_projects(
     """
     user_id = session.get_user_id()
 
+    # Calculate offset for pagination
+    offset = (page - 1) * limit
+
     async with get_async_db_connection() as conn:
+        # Get total count for pagination
+        total_items = await conn.fetchval(
+            """
+            SELECT COUNT(*)
+            FROM user_mundiai_projects p
+            WHERE (
+                p.owner_uuid = $1 OR
+                $2 = ANY(p.editor_uuids) OR
+                $3 = ANY(p.viewer_uuids)
+            ) AND p.soft_deleted_at IS NULL
+            """,
+            user_id,
+            user_id,
+            user_id,
+        )
+
+        # Calculate total pages
+        total_pages = (total_items + limit - 1) // limit
+
         projects_data = await conn.fetch(
             """
             SELECT p.id, p.owner_uuid, p.link_accessible, p.maps, p.created_on
@@ -128,10 +154,13 @@ async def list_user_projects(
                 $3 = ANY(p.viewer_uuids)
             ) AND p.soft_deleted_at IS NULL
             ORDER BY p.created_on DESC
+            LIMIT $4 OFFSET $5
             """,
             user_id,
             user_id,
             user_id,
+            limit,
+            offset,
         )
 
         projects_response = []
@@ -248,7 +277,11 @@ async def list_user_projects(
                 )
             )
 
-    return UserProjectsResponse(projects=projects_response)
+    return UserProjectsResponse(
+        projects=projects_response,
+        total_pages=total_pages,
+        total_items=total_items,
+    )
 
 
 @project_router.get(
