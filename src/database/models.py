@@ -43,6 +43,8 @@ class UserMundiaiProject(Base):
     editor_uuids = Column(ARRAY(UUID))  # list of uuids that can edit this project
     viewer_uuids = Column(ARRAY(UUID))  # list of uuids that can view this project
     link_accessible = Column(Boolean, default=False)
+    name = Column(String)  # project name
+    description = Column(Text)  # project description
     maps = Column(ARRAY(String(12)))  # most recent is last
     map_diff_messages = Column(
         ARRAY(Text)
