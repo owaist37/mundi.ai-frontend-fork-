@@ -53,15 +53,18 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
         and generates a friendly display name and simple documentation.
         """
         try:
-            # Connect to the PostgreSQL database
-            async with asyncpg.connect(connection_uri) as conn:
+            # Establish a connection (asyncpg.connect returns a coroutine, so we must await it)
+            conn = await asyncpg.connect(connection_uri)
+            try:
                 # Get all tables
-                tables = await conn.fetch("""
+                tables = await conn.fetch(
+                    """
                     SELECT table_name
                     FROM information_schema.tables
                     WHERE table_schema = 'public' AND table_type = 'BASE TABLE'
                     ORDER BY table_name
-                """)
+                """
+                )
 
                 # Build schema description
                 schema_description = f"Database: {connection_name}\n\n"
@@ -71,7 +74,7 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
                     table_name = table["table_name"]
                     table_names.append(table_name)
 
-                    # Get columns (like \d+ output)
+                    # Get columns (similar to \d+ output)
                     columns = await conn.fetch(
                         """
                         SELECT
@@ -99,6 +102,9 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
                         schema_description += f"  {col['column_name']} - {col['data_type']}{nullable}{default}\n"
 
                     schema_description += "\n"
+            finally:
+                # Ensure the connection is closed to avoid leaks
+                await conn.close()
 
             # OpenAI API call
             client = get_openai_client()
@@ -151,17 +157,19 @@ Schema:
 
             # Save the generated summary to the new table
             summary_id = generate_id(prefix="S")
+            table_count = len(table_names)
             async with get_async_db_connection() as doc_conn:
                 await doc_conn.execute(
                     """
                     INSERT INTO project_postgres_summary
-                    (id, connection_id, friendly_name, summary_md)
-                    VALUES ($1, $2, $3, $4)
+                    (id, connection_id, friendly_name, summary_md, table_count)
+                    VALUES ($1, $2, $3, $4, $5)
                 """,
                     summary_id,
                     connection_id,
                     friendly_name,
                     documentation,
+                    table_count,
                 )
 
             print(

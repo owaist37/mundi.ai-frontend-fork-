@@ -139,6 +139,7 @@ class ProjectPostgresSummary(Base):
         String(255), nullable=False
     )  # AI-generated friendly name for display
     summary_md = Column(Text, nullable=False)  # AI-generated markdown summary
+    table_count = Column(Integer, nullable=True)  # Number of tables in the database
     generated_at = Column(
         TIMESTAMP(timezone=True), server_default=func.current_timestamp()
     )

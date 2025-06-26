@@ -211,10 +211,10 @@ async def list_user_projects(
             for postgres_conn_result in postgres_conn_results:
                 connection_id = postgres_conn_result["id"]
 
-                # Get AI-generated friendly name, fallback to connection_name if not available
+                # Get AI-generated friendly name and table_count, fallback to connection_name if not available
                 summary_result = await conn.fetchrow(
                     """
-                    SELECT friendly_name
+                    SELECT friendly_name, table_count
                     FROM project_postgres_summary
                     WHERE connection_id = $1
                     ORDER BY generated_at DESC
@@ -228,27 +228,11 @@ async def list_user_projects(
                     if summary_result and summary_result["friendly_name"]
                     else postgres_conn_result["connection_name"] or "Loading..."
                 )
-                table_count = 0
-
-                try:
-                    postgres_conn = await connection_manager.connect_to_postgres(
-                        connection_id
-                    )
-                    try:
-                        # Count tables in all schemas (excluding system schemas)
-                        table_count_result = await postgres_conn.fetchval("""
-                            SELECT COUNT(*)
-                            FROM information_schema.tables
-                            WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
-                            AND table_type = 'BASE TABLE'
-                        """)
-                        table_count = table_count_result or 0
-                    finally:
-                        await postgres_conn.close()
-                except Exception as e:
-                    # If connection fails, just log and continue with 0 count
-                    print(f"Failed to connect to PostgreSQL for table count: {e}")
-                    table_count = 0
+                table_count = (
+                    summary_result["table_count"]
+                    if summary_result and summary_result["table_count"] is not None
+                    else 0
+                )
 
                 # Get error details from the database (they were stored during the connection attempt)
                 connection_details = await connection_manager.get_connection(
@@ -365,10 +349,10 @@ async def get_project(
         for postgres_conn_result in postgres_conn_results:
             connection_id = postgres_conn_result["id"]
 
-            # Get AI-generated friendly name, fallback to connection_name if not available
+            # Get AI-generated friendly name and table_count, fallback to connection_name if not available
             summary_result = await conn.fetchrow(
                 """
-                SELECT friendly_name
+                SELECT friendly_name, table_count
                 FROM project_postgres_summary
                 WHERE connection_id = $1
                 ORDER BY generated_at DESC
@@ -382,27 +366,11 @@ async def get_project(
                 if summary_result and summary_result["friendly_name"]
                 else postgres_conn_result["connection_name"] or "Loading..."
             )
-            table_count = 0
-
-            try:
-                postgres_conn = await connection_manager.connect_to_postgres(
-                    connection_id
-                )
-                try:
-                    # Count tables in all schemas (excluding system schemas)
-                    table_count_result = await postgres_conn.fetchval("""
-                        SELECT COUNT(*)
-                        FROM information_schema.tables
-                        WHERE table_schema NOT IN ('information_schema', 'pg_catalog', 'pg_toast')
-                        AND table_type = 'BASE TABLE'
-                    """)
-                    table_count = table_count_result or 0
-                finally:
-                    await postgres_conn.close()
-            except Exception as e:
-                # If connection fails, just log and continue with 0 count
-                print(f"Failed to connect to PostgreSQL for table count: {e}")
-                table_count = 0
+            table_count = (
+                summary_result["table_count"]
+                if summary_result and summary_result["table_count"] is not None
+                else 0
+            )
 
             # Get error details from the database (they were stored during the connection attempt)
             connection_details = await connection_manager.get_connection(connection_id)
