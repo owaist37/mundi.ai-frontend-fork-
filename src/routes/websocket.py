@@ -286,6 +286,7 @@ async def kue_ephemeral_action(
     action_description: str,
     layer_id: str | None = None,
     update_style_json: bool = False,
+    bounds: list[float] | None = None,
 ):
     """
     Async context manager for ephemeral actions.
@@ -302,6 +303,7 @@ async def kue_ephemeral_action(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "completed_at": None,
         "status": "active",
+        "bounds": bounds,
         "updates": {
             "style_json": update_style_json,
         },

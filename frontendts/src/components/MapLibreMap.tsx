@@ -1564,8 +1564,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         if (update.ephemeral === true) {
           const action = update as EphemeralAction;
 
-          // Handle zoom actions
-          if (action.status === 'zoom_action' && action.action === 'zoom_to_bounds' && action.bounds && mapRef.current) {
+          // Handle bounds zooming for any ephemeral action that includes bounds
+          if (action.bounds && action.bounds.length === 4 && mapRef.current) {
             // Save current bounds to history before zooming
             const currentBounds = mapRef.current.getBounds();
             const currentBoundsArray: [number, number, number, number] = [
@@ -1589,7 +1589,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             mapRef.current.fitBounds([
               [west, south],
               [east, north]
-            ], { animate: true });
+            ], { animate: true, padding: 50 });
 
             // Add the new bounds to history as well
             setZoomHistory(prev => {
@@ -1599,8 +1599,6 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
             // Update index to point to the new bounds
             setZoomHistoryIndex(prev => prev + 1);
-
-            return; // Don't process as regular ephemeral action
           }
 
           if (action.status === 'active') {
