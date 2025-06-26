@@ -92,8 +92,6 @@ class ProjectResponse(BaseModel):
     id: str
     owner_uuid: str
     link_accessible: bool
-    name: Optional[str] = None
-    description: Optional[str] = None
     maps: Optional[List[str]] = None
     created_on: str
     most_recent_version: Optional[MostRecentVersion] = None
@@ -148,7 +146,7 @@ async def list_user_projects(
 
         projects_data = await conn.fetch(
             """
-            SELECT p.id, p.owner_uuid, p.link_accessible, p.name, p.description, p.maps, p.created_on
+            SELECT p.id, p.owner_uuid, p.link_accessible, p.maps, p.created_on
             FROM user_mundiai_projects p
             WHERE (
                 p.owner_uuid = $1 OR
@@ -256,8 +254,6 @@ async def list_user_projects(
                     id=project_data["id"],
                     owner_uuid=owner_uuid_str,
                     link_accessible=project_data["link_accessible"],
-                    name=project_data["name"],
-                    description=project_data["description"],
                     maps=project_data["maps"],
                     created_on=created_on_str,
                     most_recent_version=most_recent_map_details,
@@ -393,8 +389,6 @@ async def get_project(
             id=project_data["id"],
             owner_uuid=owner_uuid_str,
             link_accessible=project_data["link_accessible"],
-            name=project_data["name"],
-            description=project_data["description"],
             maps=project_data["maps"],
             created_on=created_on_str,
             most_recent_version=most_recent_map_details,
@@ -403,9 +397,7 @@ async def get_project(
 
 
 class ProjectUpdateRequest(BaseModel):
-    link_accessible: Optional[bool] = None
-    name: Optional[str] = None
-    description: Optional[str] = None
+    link_accessible: bool
 
 
 class ProjectUpdateResponse(BaseModel):
@@ -427,63 +419,39 @@ async def update_project(
     user_id = session.get_user_id()
 
     async with get_async_db_connection() as conn:
-        async with conn.transaction():
-            # First check if user is the owner
-            project_data = await conn.fetchrow(
-                """
-                SELECT owner_uuid
-                FROM user_mundiai_projects
-                WHERE id = $1 AND soft_deleted_at IS NULL
-                """,
-                project_id,
+        # First check if user is the owner
+        project_data = await conn.fetchrow(
+            """
+            SELECT owner_uuid
+            FROM user_mundiai_projects
+            WHERE id = $1 AND soft_deleted_at IS NULL
+            """,
+            project_id,
+        )
+
+        if project_data is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found.",
             )
 
-            if project_data is None:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail=f"Project {project_id} not found.",
-                )
+        # Verify ownership
+        if str(project_data["owner_uuid"]) != user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Only the project owner can update project settings.",
+            )
 
-            # Verify ownership
-            if str(project_data["owner_uuid"]) != user_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Only the project owner can update project settings.",
-                )
-
-            # Execute individual updates if fields are provided
-            if update_data.link_accessible is not None:
-                await conn.execute(
-                    """
-                    UPDATE user_mundiai_projects
-                    SET link_accessible = $1
-                    WHERE id = $2
-                    """,
-                    update_data.link_accessible,
-                    project_id,
-                )
-
-            if update_data.name is not None:
-                await conn.execute(
-                    """
-                    UPDATE user_mundiai_projects
-                    SET name = $1
-                    WHERE id = $2
-                    """,
-                    update_data.name,
-                    project_id,
-                )
-
-            if update_data.description is not None:
-                await conn.execute(
-                    """
-                    UPDATE user_mundiai_projects
-                    SET description = $1
-                    WHERE id = $2
-                    """,
-                    update_data.description,
-                    project_id,
-                )
+        # Update link_accessible
+        await conn.execute(
+            """
+            UPDATE user_mundiai_projects
+            SET link_accessible = $1
+            WHERE id = $2
+            """,
+            update_data.link_accessible,
+            project_id,
+        )
 
         return ProjectUpdateResponse(updated=True)
 
