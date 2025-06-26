@@ -83,7 +83,7 @@ class PostgresConnectionManager:
 
         try:
             conn = await asyncio.wait_for(
-                asyncpg.connect(pg_connection["connection_uri"]), timeout=timeout
+                asyncpg.connect(pg_connection["connection_uri"], ssl=True), timeout=timeout
             )
             await self.update_error_status(connection_id, error_text=None)
             return conn

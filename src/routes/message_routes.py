@@ -552,6 +552,7 @@ async def process_chat_interaction_task(
                                         conn_uri = connection_result["connection_uri"]
                                         pg = await asyncpg.connect(
                                             conn_uri,
+                                            ssl=True,
                                             server_settings={
                                                 "default_transaction_read_only": "on"
                                             },
@@ -581,6 +582,7 @@ async def process_chat_interaction_task(
                                         try:
                                             pg_stats = await asyncpg.connect(
                                                 conn_uri,
+                                                ssl=True,
                                                 server_settings={
                                                     "default_transaction_read_only": "on"
                                                 },
@@ -1184,6 +1186,7 @@ async def process_chat_interaction_task(
                                         ):
                                             postgres_conn = await asyncpg.connect(
                                                 connection_uri,
+                                                ssl=True,
                                                 server_settings={
                                                     "default_transaction_read_only": "on"
                                                 },

@@ -98,7 +98,7 @@ class DefaultLayerDescriber(LayerDescriber):
                     """
 
                     async with asyncpg.connect(
-                        connection_result["connection_uri"]
+                        connection_result["connection_uri"], ssl=True
                     ) as postgis_conn:
                         geom_results = await postgis_conn.fetch(geom_type_query)
 

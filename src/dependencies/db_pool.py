@@ -25,7 +25,7 @@ async def get_or_create_pool(connection_uri: str) -> asyncpg.Pool:
     """Get existing pool or create new one for the connection URI"""
     if connection_uri not in _connection_pools:
         _connection_pools[connection_uri] = await asyncpg.create_pool(
-            connection_uri, min_size=1, max_size=10, command_timeout=60
+            connection_uri, ssl=True, min_size=1, max_size=10, command_timeout=60
         )
     return _connection_pools[connection_uri]
 
