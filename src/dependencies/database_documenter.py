@@ -13,7 +13,6 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-import asyncpg
 from abc import ABC, abstractmethod
 from functools import lru_cache
 from typing import Tuple
