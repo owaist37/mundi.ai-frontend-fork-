@@ -410,7 +410,7 @@ async def process_chat_interaction_task(
                         "type": "function",
                         "function": {
                             "name": "zoom_to_bounds",
-                            "description": "Zoom the map to a specific bounding box in WGS84 coordinates. This will save the current zoom location to history and navigate to the new bounds.",
+                            "description": "Zoom the map to a specific bounding box in WGS84 coordinates. This will save the user's current zoom location to history and navigate to the new bounds.",
                             "strict": True,
                             "parameters": {
                                 "type": "object",
@@ -424,7 +424,7 @@ async def process_chat_interaction_task(
                                     },
                                     "zoom_description": {
                                         "type": "string",
-                                        "description": "Optional description of what this zoom operation shows (e.g. 'Downtown Seattle', 'Layer bounds')",
+                                        "description": 'Complete message to display to the user while zooming, e.g. "Zooming to 39 selected parcels near Ohio"',
                                     },
                                 },
                                 "required": ["bounds", "zoom_description"],
@@ -1327,41 +1327,14 @@ async def process_chat_interaction_task(
                                     # Send ephemeral action to trigger zoom on frontend
                                     async with kue_ephemeral_action(
                                         map_id,
-                                        f"Zooming to bounds{': ' + description if description else ''}",
+                                        description,
                                         update_style_json=False,
+                                        bounds=bounds,
                                     ):
-                                        # Send zoom action via WebSocket
-                                        zoom_action = {
-                                            "map_id": map_id,
-                                            "ephemeral": True,
-                                            "action_id": str(uuid.uuid4()),
-                                            "action": "zoom_to_bounds",
-                                            "bounds": bounds,
-                                            "description": description,
-                                            "timestamp": datetime.now(
-                                                timezone.utc
-                                            ).isoformat(),
-                                            "status": "zoom_action",
-                                        }
-
-                                        zoom_payload_str = json.dumps(zoom_action)
-
-                                        # Broadcast zoom action to WebSocket subscribers
-                                        from src.routes.websocket import (
-                                            subscribers_lock,
-                                            subscribers_by_map,
-                                        )
-
-                                        async with subscribers_lock:
-                                            queues = list(
-                                                subscribers_by_map.get(map_id, [])
-                                            )
-                                        for q in queues:
-                                            q.put_nowait(zoom_payload_str)
+                                        await asyncio.sleep(0.5)
 
                                     tool_result = {
                                         "status": "success",
-                                        "message": f"Zoomed to bounds {bounds}{': ' + description if description else ''}",
                                         "bounds": bounds,
                                     }
                                 except ValueError as e:
