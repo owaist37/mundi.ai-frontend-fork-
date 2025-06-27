@@ -77,12 +77,13 @@ async def test_zoom_integration_with_real_openai(auth_client, test_map_id):
             zoom_messages = [
                 msg
                 for msg in websocket_messages
-                if msg.get("action") == "zoom_to_bounds"
+                if "Zooming to" in msg.get("action", "")
+                and msg.get("bounds") is not None
             ]
             assert len(zoom_messages) > 0, (
                 f"Expected zoom message, got {len(websocket_messages)} messages: {websocket_messages}"
             )
 
             zoom_message = zoom_messages[0]
-            assert zoom_message.get("status") == "zoom_action"
+            assert zoom_message.get("ephemeral") is True
             assert "bounds" in zoom_message
