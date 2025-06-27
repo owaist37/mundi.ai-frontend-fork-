@@ -25,7 +25,6 @@ from sqlalchemy import (
     BIGINT,
     Float,
     ForeignKey,
-    UniqueConstraint,
 )
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
@@ -116,16 +115,6 @@ class ProjectPostgresConnection(Base):
     project = relationship("UserMundiaiProject", back_populates="postgres_connections")
     summaries = relationship("ProjectPostgresSummary", back_populates="connection")
     layers = relationship("MapLayer", back_populates="postgis_connection")
-
-    # Unique constraint
-    __table_args__ = (
-        UniqueConstraint(
-            "project_id",
-            "user_id",
-            "connection_uri",
-            name="unique_project_user_connection",
-        ),
-    )
 
 
 class ProjectPostgresSummary(Base):
