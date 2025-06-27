@@ -68,13 +68,9 @@ can you add a layer for the wellbores from my postgis database?
 
 ![Kue request to add new layer](../../../assets/postgis/request_add_layer.jpg)
 
+This creates a dynamic layer in Mundi that continuously pulls data from your PostGIS database:
 
-
-
-
-
-
-
+![Mundi dynamic PostGIS layer served from database](../../../assets/postgis/wellbores.jpg)
 
 
 ## Best practices and errors
