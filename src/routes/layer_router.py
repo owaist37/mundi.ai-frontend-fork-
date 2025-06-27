@@ -45,7 +45,7 @@ from src.utils import (
 import duckdb
 import subprocess
 from src.duckdb import execute_duckdb_query
-from ..structures import get_async_db_connection
+from src.structures import get_async_db_connection, async_conn
 from ..dependencies.layer_describer import LayerDescriber, get_layer_describer
 from ..dependencies.chat_completions import ChatArgsProvider, get_chat_args_provider
 from opentelemetry import trace
@@ -525,7 +525,7 @@ async def get_layer_mvt_tile(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tile coordinates"
         )
-    async with get_async_db_connection() as conn:
+    async with async_conn("mvt") as conn:
         # Get the layer by layer_id
         layer = await conn.fetchrow(
             """
