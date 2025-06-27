@@ -20,13 +20,12 @@ from pydantic import BaseModel
 import logging
 import os
 import json
+import re
 from fastapi import BackgroundTasks
 from opentelemetry import trace
 import pandas as pd
 import asyncio
-import uuid
 import traceback
-from datetime import datetime, timezone
 import asyncpg
 from typing import Callable
 from redis import Redis
@@ -41,7 +40,7 @@ from openai.types.chat.chat_completion_message_param import (
 from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
 
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
-from src.structures import get_async_db_connection, async_conn
+from src.structures import async_conn
 from src.symbology.verify import StyleValidationError, verify_style_json_str
 from src.routes.postgres_routes import generate_id, get_map_style_internal
 from src.dependencies.base_map import get_base_map_provider
@@ -129,7 +128,7 @@ async def get_all_map_messages(
     map_id: str,
     session: UserContext,
 ):
-    async with get_async_db_connection() as conn:
+    async with async_conn("get_all_map_messages") as conn:
         map_result = await conn.fetchrow(
             """
             SELECT id, owner_uuid
@@ -189,7 +188,7 @@ async def process_chat_interaction_task(
     # kick it off with a quick sleep, to detach from the event loop blocking /send
     await asyncio.sleep(0.1)
 
-    async with get_async_db_connection() as conn:
+    async with async_conn("process_chat_interaction_task") as conn:
 
         async def add_chat_completion_message(
             message: Union[ChatCompletionMessage, ChatCompletionMessageParam],
@@ -1533,7 +1532,7 @@ async def cancel_map_message(
     map_id: str,
     session: UserContext = Depends(verify_session_required),
 ):
-    async with get_async_db_connection() as conn:
+    async with async_conn("cancel_map_message") as conn:
         # Authenticate and check map
         map_result = await conn.fetchrow(
             "SELECT owner_uuid FROM user_mundiai_maps WHERE id = $1 AND soft_deleted_at IS NULL",

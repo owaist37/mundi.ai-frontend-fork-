@@ -102,4 +102,4 @@ def get_async_db_connection():
 
 
 def async_conn(span_name: Optional[str] = None):
-    return AsyncDatabaseConnection(span_name)
+    return AsyncDatabaseConnection(f"pg {span_name}")
