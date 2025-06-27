@@ -59,6 +59,10 @@ from src.dependencies.session import (
     verify_session_required,
     UserContext,
 )
+from src.dependencies.postgres_connection import (
+    PostgresConnectionManager,
+    get_postgres_connection_manager,
+)
 from src.utils import get_openai_client
 from src.openstreetmap import download_from_openstreetmap, has_openstreetmap_api_key
 from src.routes.websocket import kue_ephemeral_action
@@ -785,11 +789,15 @@ async def process_chat_interaction_task(
                                                 style_id,
                                             )
 
+                                        # layers may be NULL, not necessarily initialized to []
                                         await conn.execute(
                                             """
                                             UPDATE user_mundiai_maps
-                                            SET layers = array_append(layers, $1)
-                                            WHERE id = $2 AND NOT ($1 = ANY(layers))
+                                            SET layers = CASE
+                                                WHEN layers IS NULL THEN ARRAY[$1]
+                                                ELSE array_append(layers, $1)
+                                            END
+                                            WHERE id = $2 AND (layers IS NULL OR NOT ($1 = ANY(layers)))
                                             """,
                                             layer_id,
                                             map_id,
@@ -845,8 +853,11 @@ async def process_chat_interaction_task(
                                 await conn.execute(
                                     """
                                     UPDATE user_mundiai_maps
-                                    SET layers = array_append(layers, $1)
-                                    WHERE id = $2 AND NOT ($1 = ANY(layers))
+                                    SET layers = CASE
+                                        WHEN layers IS NULL THEN ARRAY[$1]
+                                        ELSE array_append(layers, $1)
+                                    END
+                                    WHERE id = $2 AND (layers IS NULL OR NOT ($1 = ANY(layers)))
                                     """,
                                     layer_id_to_add,
                                     map_id,
@@ -1402,6 +1413,9 @@ async def send_map_message(
     chat_args: ChatArgsProvider = Depends(get_chat_args_provider),
     map_state: MapStateProvider = Depends(get_map_state_provider),
     system_prompt_provider: SystemPromptProvider = Depends(get_system_prompt_provider),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     async with async_conn("send_map_message.authenticate") as conn:
         # Authenticate and check map
@@ -1443,6 +1457,7 @@ async def send_map_message(
         session,
         postgis_provider=postgis_provider,
         layer_describer=layer_describer,
+        connection_manager=connection_manager,
     )
     description_text = current_map_description.body.decode("utf-8")
 

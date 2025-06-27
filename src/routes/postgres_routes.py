@@ -229,6 +229,9 @@ async def save_and_fork_map(
     postgis_provider: Callable = Depends(get_postgis_provider),
     layer_describer: LayerDescriber = Depends(get_layer_describer),
     chat_args: ChatArgsProvider = Depends(get_chat_args_provider),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     """
     Create a fork of an existing map with a new map ID.
@@ -325,6 +328,7 @@ async def save_and_fork_map(
                 postgis_provider=postgis_provider,
                 layer_describer=layer_describer,
                 chat_args=chat_args,
+                connection_manager=connection_manager,
             )
 
         # Update project to include the new map
@@ -450,31 +454,29 @@ async def get_map(
         layer_ids = map_rec["layers"] if map_rec["layers"] else []
 
         # Load layers using the layer IDs
-        if layer_ids:
-            layers = await conn.fetch(
-                """
-                SELECT layer_id AS id,
-                       name,
-                       path,
-                       type,
-                       raster_cog_url,
-                       metadata,
-                       bounds,
-                       geometry_type,
-                       feature_count
-                FROM map_layers
-                WHERE layer_id = ANY($1)
-                ORDER BY id
-                """,
-                layer_ids,
-            )
-            # Convert Record objects to mutable dictionaries
-            layers = [dict(layer) for layer in layers]
-            for layer in layers:
-                if layer.get("metadata") and isinstance(layer["metadata"], str):
-                    layer["metadata"] = json.loads(layer["metadata"])
-        else:
-            layers = []
+        layers = await conn.fetch(
+            """
+            SELECT layer_id AS id,
+                    name,
+                    path,
+                    type,
+                    raster_cog_url,
+                    metadata,
+                    bounds,
+                    geometry_type,
+                    feature_count
+            FROM map_layers
+            WHERE layer_id = ANY($1)
+            ORDER BY id
+            """,
+            layer_ids,
+        )
+        # Convert Record objects to mutable dictionaries
+        layers = [dict(layer) for layer in layers]
+        for layer in layers:
+            if layer.get("metadata") and isinstance(layer["metadata"], str):
+                layer["metadata"] = json.loads(layer["metadata"])
+
         # Calculate diff if prev_map_id is provided
         layer_diffs = None
         if prev_map_id:
@@ -2004,6 +2006,9 @@ async def summarize_map_diff(
     postgis_provider: Callable = Depends(get_postgis_provider),
     layer_describer: LayerDescriber = Depends(get_layer_describer),
     chat_args: ChatArgsProvider = Depends(get_chat_args_provider),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
 ):
     """Summarize the difference between two map versions."""
     # Get descriptions for both maps
@@ -2013,6 +2018,7 @@ async def summarize_map_diff(
         session,
         postgis_provider=postgis_provider,
         layer_describer=layer_describer,
+        connection_manager=connection_manager,
     )
     new_map_description = await get_map_description(
         request,
@@ -2020,6 +2026,7 @@ async def summarize_map_diff(
         session,
         postgis_provider=postgis_provider,
         layer_describer=layer_describer,
+        connection_manager=connection_manager,
     )
 
     prev_text = prev_map_description.body.decode("utf-8")

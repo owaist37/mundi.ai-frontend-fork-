@@ -39,13 +39,9 @@ class DefaultPostGISProvider(PostGISProvider):
         self, connection_id: str, connection_manager: PostgresConnectionManager
     ) -> str:
         cache_key = f"postgis:{connection_id}:tables"
-
-        try:
-            cached_result = redis.get(cache_key)
-            if cached_result:
-                return cached_result
-        except Exception:
-            pass
+        cached_result = redis.get(cache_key)
+        if cached_result:
+            return cached_result
 
         postgres_conn = await connection_manager.connect_to_postgres(connection_id)
         try:
@@ -61,10 +57,7 @@ class DefaultPostGISProvider(PostGISProvider):
 
             result = str([dict(table) for table in tables])
 
-            try:
-                redis.setex(cache_key, 3600, result)
-            except Exception:
-                pass
+            redis.setex(cache_key, 3600, result)
 
             return result
         finally:

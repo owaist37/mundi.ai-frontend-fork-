@@ -51,6 +51,8 @@ from ..dependencies.database_documenter import (
 from ..dependencies.postgres_connection import (
     PostgresConnectionManager,
     get_postgres_connection_manager,
+    PostgresConnectionURIError,
+    PostgresConfigurationError,
 )
 from src.routes.postgres_routes import (
     generate_id,
@@ -521,12 +523,22 @@ async def add_postgis_connection(
                 detail="You don't have permission to modify this project.",
             )
 
-        # Validate the connection URI format
+        # Validate the connection URI format and accessibility
         connection_uri = connection_data.connection_uri.strip()
-        if not connection_uri.startswith("postgresql://"):
+        try:
+            processed_uri, was_rewritten = connection_manager.verify_postgresql_uri(
+                connection_uri
+            )
+            # Use the processed URI (which may have been rewritten for Docker)
+            connection_uri = processed_uri
+        except PostgresConnectionURIError as e:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Invalid PostgreSQL connection URI format. Must start with 'postgresql://'",
+                detail=e.message,
+            )
+        except PostgresConfigurationError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
 
         # Check if connection already exists

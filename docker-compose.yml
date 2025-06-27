@@ -45,6 +45,7 @@ services:
       - POSTGRES_PASSWORD=gdalpassword
       - PYTHONUNBUFFERED=1
       - PYTHONIOENCODING=utf-8
+      - POSTGIS_LOCALHOST_POLICY=docker_rewrite
       # - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
       # - OPENAI_API_KEY=ollama
       # - OPENAI_MODEL=orieg/gemma3-tools:1b

@@ -37,7 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow } from 'lucide-react';
+import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow, AlertTriangle, Loader2 } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -239,6 +239,8 @@ const LayerList: React.FC<LayerListProps> = ({
     password: '',
     schema: 'public'
   });
+  const [postgisLoading, setPostgisLoading] = useState(false);
+  const [postgisError, setPostgisError] = useState<string | null>(null);
 
   const handleDatabaseClick = (connection: PostgresConnectionDetails, projectId: string) => {
     setSelectedDatabase({ connection, projectId });
@@ -260,9 +262,12 @@ const LayerList: React.FC<LayerListProps> = ({
     }
 
     if (!connectionUri.trim()) {
-      toast.error('Please provide connection details');
+      setPostgisError('Please provide connection details');
       return;
     }
+
+    setPostgisLoading(true);
+    setPostgisError(null);
 
     try {
       const response = await fetch(`/api/projects/${currentMapData.project_id}/postgis-connections`, {
@@ -333,10 +338,12 @@ const LayerList: React.FC<LayerListProps> = ({
         pollForUpdatedConnection();
       } else {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-        toast.error(`Failed to save connection: ${errorData.detail || response.statusText}`);
+        setPostgisError(errorData.detail || response.statusText);
       }
     } catch (error) {
-      toast.error(`Network error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+      setPostgisError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setPostgisLoading(false);
     }
   };
 
@@ -785,7 +792,12 @@ const LayerList: React.FC<LayerListProps> = ({
         </div>
 
         {/* PostGIS Connection Dialog */}
-        <Dialog open={showPostgisDialog} onOpenChange={setShowPostgisDialog}>
+        <Dialog open={showPostgisDialog} onOpenChange={(open) => {
+          setShowPostgisDialog(open);
+          if (!open) {
+            setPostgisError(null);
+          }
+        }}>
           <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle>Add a PostGIS Database</DialogTitle>
@@ -834,7 +846,10 @@ const LayerList: React.FC<LayerListProps> = ({
                     id="uri"
                     placeholder="postgresql://username:password@host:port/database"
                     value={postgisForm.uri}
-                    onChange={(e) => setPostgisForm(prev => ({ ...prev, uri: e.target.value }))}
+                    onChange={(e) => {
+                      setPostgisForm(prev => ({ ...prev, uri: e.target.value }));
+                      setPostgisError(null);
+                    }}
                   />
                 </div>
               ) : (
@@ -848,7 +863,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         id="host"
                         placeholder="localhost"
                         value={postgisForm.host}
-                        onChange={(e) => setPostgisForm(prev => ({ ...prev, host: e.target.value }))}
+                        onChange={(e) => {
+                          setPostgisForm(prev => ({ ...prev, host: e.target.value }));
+                          setPostgisError(null);
+                        }}
                       />
                     </div>
                     <div className="space-y-2">
@@ -859,7 +877,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         id="port"
                         placeholder="5432"
                         value={postgisForm.port}
-                        onChange={(e) => setPostgisForm(prev => ({ ...prev, port: e.target.value }))}
+                        onChange={(e) => {
+                          setPostgisForm(prev => ({ ...prev, port: e.target.value }));
+                          setPostgisError(null);
+                        }}
                       />
                     </div>
                   </div>
@@ -872,7 +893,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         id="database"
                         placeholder="postgres"
                         value={postgisForm.database}
-                        onChange={(e) => setPostgisForm(prev => ({ ...prev, database: e.target.value }))}
+                        onChange={(e) => {
+                          setPostgisForm(prev => ({ ...prev, database: e.target.value }));
+                          setPostgisError(null);
+                        }}
                       />
                     </div>
                     <div className="space-y-2">
@@ -883,7 +907,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         id="schema"
                         placeholder="public"
                         value={postgisForm.schema}
-                        onChange={(e) => setPostgisForm(prev => ({ ...prev, schema: e.target.value }))}
+                        onChange={(e) => {
+                          setPostgisForm(prev => ({ ...prev, schema: e.target.value }));
+                          setPostgisError(null);
+                        }}
                       />
                     </div>
                   </div>
@@ -896,7 +923,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         id="username"
                         placeholder="postgres"
                         value={postgisForm.username}
-                        onChange={(e) => setPostgisForm(prev => ({ ...prev, username: e.target.value }))}
+                        onChange={(e) => {
+                          setPostgisForm(prev => ({ ...prev, username: e.target.value }));
+                          setPostgisError(null);
+                        }}
                       />
                     </div>
                     <div className="space-y-2">
@@ -908,11 +938,24 @@ const LayerList: React.FC<LayerListProps> = ({
                         type="password"
                         placeholder="password"
                         value={postgisForm.password}
-                        onChange={(e) => setPostgisForm(prev => ({ ...prev, password: e.target.value }))}
+                        onChange={(e) => {
+                          setPostgisForm(prev => ({ ...prev, password: e.target.value }));
+                          setPostgisError(null);
+                        }}
                       />
                     </div>
                   </div>
                 </>
+              )}
+
+              {/* Error Callout */}
+              {postgisError && (
+                <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-red-700">
+                    {postgisError} <a href="https://docs.mundi.ai/guides/connecting-to-postgis/#debugging-common-problems" target="_blank" className="text-blue-500 hover:text-blue-600 underline">Refer to our documentation on PostGIS errors.</a>
+                  </div>
+                </div>
               )}
             </div>
 
@@ -920,8 +963,15 @@ const LayerList: React.FC<LayerListProps> = ({
               <Button type="button" variant="outline" onClick={() => setShowPostgisDialog(false)} className="hover:cursor-pointer">
                 Cancel
               </Button>
-              <Button type="button" onClick={handlePostgisConnect} className="hover:cursor-pointer">
-                Add Connection
+              <Button type="button" onClick={handlePostgisConnect} className="hover:cursor-pointer" disabled={postgisLoading}>
+                {postgisLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Adding Connection...
+                  </>
+                ) : (
+                  'Add Connection'
+                )}
               </Button>
             </DialogFooter>
           </DialogContent>
