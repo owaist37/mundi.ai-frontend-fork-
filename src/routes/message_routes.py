@@ -544,270 +544,285 @@ async def process_chat_interaction_task(
                                         "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
                                     }
                                 else:
-                                    try:
-                                        # Validate the query before creating the layer
-                                        conn_uri = connection_result["connection_uri"]
-                                        pg = await asyncpg.connect(
-                                            conn_uri,
-                                            ssl=True,
-                                            server_settings={
-                                                "default_transaction_read_only": "on"
-                                            },
-                                        )
+                                    async with kue_ephemeral_action(
+                                        map_id,
+                                        "Adding layer from PostGIS...",
+                                        update_style_json=True,
+                                    ):
                                         try:
-                                            # 1. Make sure the SQL parsers and planners are happy
-                                            await pg.execute(
-                                                f"EXPLAIN {query}"
-                                            )  # catches typos & ambiguous refs
-
-                                            # 2. Make sure it returns a geometry column called geom
-                                            await pg.execute(
-                                                f"""
-                                                SELECT 1
-                                                FROM   ({query}) AS sub
-                                                WHERE  geom IS NOT NULL
-                                                LIMIT 1
-                                                """
-                                            )
-                                        finally:
-                                            await pg.close()
-
-                                        # Calculate feature count, bounds, and geometry type for the PostGIS layer
-                                        feature_count = None
-                                        bounds = None
-                                        geometry_type = None
-                                        try:
-                                            pg_stats = await asyncpg.connect(
+                                            # Validate the query before creating the layer
+                                            conn_uri = connection_result[
+                                                "connection_uri"
+                                            ]
+                                            pg = await asyncpg.connect(
                                                 conn_uri,
                                                 ssl=True,
                                                 server_settings={
                                                     "default_transaction_read_only": "on"
                                                 },
                                             )
-
                                             try:
-                                                # Calculate feature count
-                                                count_result = await pg_stats.fetchval(
-                                                    f"SELECT COUNT(*) FROM ({query}) AS sub"
+                                                # 1. Make sure the SQL parsers and planners are happy
+                                                await pg.execute(
+                                                    f"EXPLAIN {query}"
+                                                )  # catches typos & ambiguous refs
+
+                                                # 2. Make sure it returns a geometry column called geom
+                                                await pg.execute(
+                                                    f"""
+                                                    SELECT 1
+                                                    FROM   ({query}) AS sub
+                                                    WHERE  geom IS NOT NULL
+                                                    LIMIT 1
+                                                    """
                                                 )
-                                                feature_count = (
-                                                    int(count_result)
-                                                    if count_result is not None
-                                                    else None
-                                                )
-
-                                                # Find geometry column by trying common names
-                                                geometry_column = None
-                                                common_geom_names = [
-                                                    "geom",
-                                                    "geometry",
-                                                    "shape",
-                                                    "the_geom",
-                                                    "wkb_geometry",
-                                                ]
-
-                                                for geom_name in common_geom_names:
-                                                    try:
-                                                        await pg_stats.fetchval(
-                                                            f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
-                                                        )
-                                                        geometry_column = geom_name
-                                                        break
-                                                    except Exception:
-                                                        continue
-
-                                                if geometry_column:
-                                                    # Detect geometry type for styling
-                                                    geometry_type_result = await pg_stats.fetchrow(
-                                                        f"""
-                                                        SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
-                                                        FROM ({query}) AS sub
-                                                        WHERE {geometry_column} IS NOT NULL
-                                                        GROUP BY ST_GeometryType({geometry_column})
-                                                        ORDER BY count DESC
-                                                        LIMIT 1
-                                                        """
-                                                    )
-
-                                                    if (
-                                                        geometry_type_result
-                                                        and geometry_type_result[
-                                                            "geom_type"
-                                                        ]
-                                                    ):
-                                                        # Convert PostGIS geometry type to standard format
-                                                        geometry_type = (
-                                                            geometry_type_result[
-                                                                "geom_type"
-                                                            ]
-                                                            .replace("ST_", "")
-                                                            .lower()
-                                                        )
-
-                                                    # Calculate bounds with proper SRID handling
-                                                    # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
-                                                    bounds_result = await pg_stats.fetchrow(
-                                                        f"""
-                                                        WITH extent_data AS (
-                                                            SELECT
-                                                                ST_Extent({geometry_column}) as extent_geom,
-                                                                (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
-                                                            FROM ({query}) AS sub
-                                                            WHERE {geometry_column} IS NOT NULL
-                                                        )
-                                                        SELECT
-                                                            CASE
-                                                                WHEN original_srid = 4326 THEN
-                                                                    ST_XMin(extent_geom)
-                                                                ELSE
-                                                                    ST_XMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                            END as xmin,
-                                                            CASE
-                                                                WHEN original_srid = 4326 THEN
-                                                                    ST_YMin(extent_geom)
-                                                                ELSE
-                                                                    ST_YMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                            END as ymin,
-                                                            CASE
-                                                                WHEN original_srid = 4326 THEN
-                                                                    ST_XMax(extent_geom)
-                                                                ELSE
-                                                                    ST_XMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                            END as xmax,
-                                                            CASE
-                                                                WHEN original_srid = 4326 THEN
-                                                                    ST_YMax(extent_geom)
-                                                                ELSE
-                                                                    ST_YMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                            END as ymax
-                                                        FROM extent_data
-                                                        WHERE extent_geom IS NOT NULL
-                                                        """
-                                                    )
-
-                                                    if bounds_result and all(
-                                                        v is not None
-                                                        for v in bounds_result
-                                                    ):
-                                                        bounds = [
-                                                            float(
-                                                                bounds_result["xmin"]
-                                                            ),
-                                                            float(
-                                                                bounds_result["ymin"]
-                                                            ),
-                                                            float(
-                                                                bounds_result["xmax"]
-                                                            ),
-                                                            float(
-                                                                bounds_result["ymax"]
-                                                            ),
-                                                        ]
-                                                else:
-                                                    print(
-                                                        "Warning: No geometry column found in PostGIS query"
-                                                    )
                                             finally:
-                                                await pg_stats.close()
-                                        except Exception as e:
-                                            print(
-                                                f"Warning: Failed to calculate feature count/bounds for PostGIS layer: {str(e)}"
-                                            )
+                                                await pg.close()
+
+                                            # Calculate feature count, bounds, and geometry type for the PostGIS layer
                                             feature_count = None
                                             bounds = None
-
-                                        # Generate a new layer ID
-                                        layer_id = generate_id(prefix="L")
-
-                                        # Generate default style if geometry type was detected
-                                        maplibre_layers = None
-                                        if geometry_type:
+                                            geometry_type = None
                                             try:
-                                                maplibre_layers = generate_maplibre_layers_for_layer_id(
-                                                    layer_id, geometry_type
+                                                pg_stats = await asyncpg.connect(
+                                                    conn_uri,
+                                                    ssl=True,
+                                                    server_settings={
+                                                        "default_transaction_read_only": "on"
+                                                    },
                                                 )
-                                                # PostGIS layers use MVT tiles, so source-layer is 'reprojectedfgb'
-                                                # This matches the expectation in the style generation function
-                                                print(
-                                                    f"Generated default style for PostGIS layer {layer_id} with geometry type {geometry_type}"
-                                                )
+
+                                                try:
+                                                    # Calculate feature count
+                                                    count_result = await pg_stats.fetchval(
+                                                        f"SELECT COUNT(*) FROM ({query}) AS sub"
+                                                    )
+                                                    feature_count = (
+                                                        int(count_result)
+                                                        if count_result is not None
+                                                        else None
+                                                    )
+
+                                                    # Find geometry column by trying common names
+                                                    geometry_column = None
+                                                    common_geom_names = [
+                                                        "geom",
+                                                        "geometry",
+                                                        "shape",
+                                                        "the_geom",
+                                                        "wkb_geometry",
+                                                    ]
+
+                                                    for geom_name in common_geom_names:
+                                                        try:
+                                                            await pg_stats.fetchval(
+                                                                f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
+                                                            )
+                                                            geometry_column = geom_name
+                                                            break
+                                                        except Exception:
+                                                            continue
+
+                                                    if geometry_column:
+                                                        # Detect geometry type for styling
+                                                        geometry_type_result = await pg_stats.fetchrow(
+                                                            f"""
+                                                            SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
+                                                            FROM ({query}) AS sub
+                                                            WHERE {geometry_column} IS NOT NULL
+                                                            GROUP BY ST_GeometryType({geometry_column})
+                                                            ORDER BY count DESC
+                                                            LIMIT 1
+                                                            """
+                                                        )
+
+                                                        if (
+                                                            geometry_type_result
+                                                            and geometry_type_result[
+                                                                "geom_type"
+                                                            ]
+                                                        ):
+                                                            # Convert PostGIS geometry type to standard format
+                                                            geometry_type = (
+                                                                geometry_type_result[
+                                                                    "geom_type"
+                                                                ]
+                                                                .replace("ST_", "")
+                                                                .lower()
+                                                            )
+
+                                                        # Calculate bounds with proper SRID handling
+                                                        # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
+                                                        bounds_result = await pg_stats.fetchrow(
+                                                            f"""
+                                                            WITH extent_data AS (
+                                                                SELECT
+                                                                    ST_Extent({geometry_column}) as extent_geom,
+                                                                    (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
+                                                                FROM ({query}) AS sub
+                                                                WHERE {geometry_column} IS NOT NULL
+                                                            )
+                                                            SELECT
+                                                                CASE
+                                                                    WHEN original_srid = 4326 THEN
+                                                                        ST_XMin(extent_geom)
+                                                                    ELSE
+                                                                        ST_XMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                                END as xmin,
+                                                                CASE
+                                                                    WHEN original_srid = 4326 THEN
+                                                                        ST_YMin(extent_geom)
+                                                                    ELSE
+                                                                        ST_YMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                                END as ymin,
+                                                                CASE
+                                                                    WHEN original_srid = 4326 THEN
+                                                                        ST_XMax(extent_geom)
+                                                                    ELSE
+                                                                        ST_XMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                                END as xmax,
+                                                                CASE
+                                                                    WHEN original_srid = 4326 THEN
+                                                                        ST_YMax(extent_geom)
+                                                                    ELSE
+                                                                        ST_YMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                                END as ymax
+                                                            FROM extent_data
+                                                            WHERE extent_geom IS NOT NULL
+                                                            """
+                                                        )
+
+                                                        if bounds_result and all(
+                                                            v is not None
+                                                            for v in bounds_result
+                                                        ):
+                                                            bounds = [
+                                                                float(
+                                                                    bounds_result[
+                                                                        "xmin"
+                                                                    ]
+                                                                ),
+                                                                float(
+                                                                    bounds_result[
+                                                                        "ymin"
+                                                                    ]
+                                                                ),
+                                                                float(
+                                                                    bounds_result[
+                                                                        "xmax"
+                                                                    ]
+                                                                ),
+                                                                float(
+                                                                    bounds_result[
+                                                                        "ymax"
+                                                                    ]
+                                                                ),
+                                                            ]
+                                                    else:
+                                                        print(
+                                                            "Warning: No geometry column found in PostGIS query"
+                                                        )
+                                                finally:
+                                                    await pg_stats.close()
                                             except Exception as e:
                                                 print(
-                                                    f"Warning: Failed to generate default style for PostGIS layer: {str(e)}"
+                                                    f"Warning: Failed to calculate feature count/bounds for PostGIS layer: {str(e)}"
                                                 )
-                                                maplibre_layers = None
+                                                feature_count = None
+                                                bounds = None
 
-                                        # Create the layer in the database
-                                        await conn.execute(
-                                            """
-                                            INSERT INTO map_layers
-                                            (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, created_on, last_edited)
-                                            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
-                                            """,
-                                            layer_id,
-                                            user_id,
-                                            layer_name,
-                                            "",  # Empty path for PostGIS layers
-                                            "postgis",
-                                            postgis_connection_id,
-                                            query,
-                                            feature_count,
-                                            bounds,
-                                            geometry_type,
-                                        )
+                                            # Generate a new layer ID
+                                            layer_id = generate_id(prefix="L")
 
-                                        # Create default style in separate table if we have geometry type
-                                        if maplibre_layers:
-                                            style_id = generate_id(prefix="S")
+                                            # Generate default style if geometry type was detected
+                                            maplibre_layers = None
+                                            if geometry_type:
+                                                try:
+                                                    maplibre_layers = generate_maplibre_layers_for_layer_id(
+                                                        layer_id, geometry_type
+                                                    )
+                                                    # PostGIS layers use MVT tiles, so source-layer is 'reprojectedfgb'
+                                                    # This matches the expectation in the style generation function
+                                                    print(
+                                                        f"Generated default style for PostGIS layer {layer_id} with geometry type {geometry_type}"
+                                                    )
+                                                except Exception as e:
+                                                    print(
+                                                        f"Warning: Failed to generate default style for PostGIS layer: {str(e)}"
+                                                    )
+                                                    maplibre_layers = None
+
+                                            # Create the layer in the database
                                             await conn.execute(
                                                 """
-                                                INSERT INTO layer_styles
-                                                (style_id, layer_id, style_json, created_by, created_on)
-                                                VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                                                INSERT INTO map_layers
+                                                (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, created_on, last_edited)
+                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
                                                 """,
-                                                style_id,
                                                 layer_id,
-                                                json.dumps(maplibre_layers),
                                                 user_id,
+                                                layer_name,
+                                                "",  # Empty path for PostGIS layers
+                                                "postgis",
+                                                postgis_connection_id,
+                                                query,
+                                                feature_count,
+                                                bounds,
+                                                geometry_type,
                                             )
 
+                                            # Create default style in separate table if we have geometry type
+                                            if maplibre_layers:
+                                                style_id = generate_id(prefix="S")
+                                                await conn.execute(
+                                                    """
+                                                    INSERT INTO layer_styles
+                                                    (style_id, layer_id, style_json, created_by, created_on)
+                                                    VALUES ($1, $2, $3, $4, CURRENT_TIMESTAMP)
+                                                    """,
+                                                    style_id,
+                                                    layer_id,
+                                                    json.dumps(maplibre_layers),
+                                                    user_id,
+                                                )
+
+                                                await conn.execute(
+                                                    """
+                                                    INSERT INTO map_layer_styles
+                                                    (map_id, layer_id, style_id)
+                                                    VALUES ($1, $2, $3)
+                                                    """,
+                                                    map_id,
+                                                    layer_id,
+                                                    style_id,
+                                                )
+
+                                            # layers may be NULL, not necessarily initialized to []
                                             await conn.execute(
                                                 """
-                                                INSERT INTO map_layer_styles
-                                                (map_id, layer_id, style_id)
-                                                VALUES ($1, $2, $3)
+                                                UPDATE user_mundiai_maps
+                                                SET layers = CASE
+                                                    WHEN layers IS NULL THEN ARRAY[$1]
+                                                    ELSE array_append(layers, $1)
+                                                END
+                                                WHERE id = $2 AND (layers IS NULL OR NOT ($1 = ANY(layers)))
                                                 """,
-                                                map_id,
                                                 layer_id,
-                                                style_id,
+                                                map_id,
                                             )
 
-                                        # layers may be NULL, not necessarily initialized to []
-                                        await conn.execute(
-                                            """
-                                            UPDATE user_mundiai_maps
-                                            SET layers = CASE
-                                                WHEN layers IS NULL THEN ARRAY[$1]
-                                                ELSE array_append(layers, $1)
-                                            END
-                                            WHERE id = $2 AND (layers IS NULL OR NOT ($1 = ANY(layers)))
-                                            """,
-                                            layer_id,
-                                            map_id,
-                                        )
-
-                                        tool_result = {
-                                            "status": "success",
-                                            "message": f"PostGIS layer created successfully with ID: {layer_id} and added to map",
-                                            "layer_id": layer_id,
-                                            "query": query,
-                                            "added_to_map": True,
-                                        }
-                                    except Exception as e:
-                                        tool_result = {
-                                            "status": "error",
-                                            "error": f"Query validation failed: {str(e)}",
-                                        }
+                                            tool_result = {
+                                                "status": "success",
+                                                "message": f"PostGIS layer created successfully with ID: {layer_id} and added to map",
+                                                "layer_id": layer_id,
+                                                "query": query,
+                                                "added_to_map": True,
+                                            }
+                                        except Exception as e:
+                                            tool_result = {
+                                                "status": "error",
+                                                "error": f"Query validation failed: {str(e)}",
+                                            }
 
                             await add_chat_completion_message(
                                 ChatCompletionToolMessageParam(
@@ -820,54 +835,57 @@ async def process_chat_interaction_task(
                             layer_id_to_add = tool_args.get("layer_id")
                             new_name = tool_args.get("new_name")
 
-                            layer_exists = await conn.fetchrow(
-                                """
-                                SELECT layer_id FROM map_layers
-                                WHERE layer_id = $1 AND owner_uuid = $2
-                                """,
-                                layer_id_to_add,
-                                user_id,
-                            )
-
-                            if not layer_exists:
-                                tool_result = {
-                                    "status": "error",
-                                    "error": f"Layer ID '{layer_id_to_add}' not found or you do not have permission to use it.",
-                                }
-                            else:
-                                await conn.execute(
+                            async with kue_ephemeral_action(
+                                map_id, "Adding layer to map...", update_style_json=True
+                            ):
+                                layer_exists = await conn.fetchrow(
                                     """
-                                    UPDATE map_layers SET name = $1 WHERE layer_id = $2
-                                    """,
-                                    new_name,
-                                    layer_id_to_add,
-                                )
-
-                                await conn.execute(
-                                    """
-                                    UPDATE user_mundiai_maps
-                                    SET layers = CASE
-                                        WHEN layers IS NULL THEN ARRAY[$1]
-                                        ELSE array_append(layers, $1)
-                                    END
-                                    WHERE id = $2 AND (layers IS NULL OR NOT ($1 = ANY(layers)))
+                                    SELECT layer_id FROM map_layers
+                                    WHERE layer_id = $1 AND owner_uuid = $2
                                     """,
                                     layer_id_to_add,
-                                    map_id,
+                                    user_id,
                                 )
-                                tool_result = {
-                                    "status": f"Layer '{new_name}' (ID: {layer_id_to_add}) added to map '{map_id}'.",
-                                    "layer_id": layer_id_to_add,
-                                    "name": new_name,
-                                }
 
-                            await add_chat_completion_message(
-                                ChatCompletionToolMessageParam(
-                                    role="tool",
-                                    tool_call_id=tool_call.id,
-                                    content=json.dumps(tool_result),
+                                if not layer_exists:
+                                    tool_result = {
+                                        "status": "error",
+                                        "error": f"Layer ID '{layer_id_to_add}' not found or you do not have permission to use it.",
+                                    }
+                                else:
+                                    await conn.execute(
+                                        """
+                                        UPDATE map_layers SET name = $1 WHERE layer_id = $2
+                                        """,
+                                        new_name,
+                                        layer_id_to_add,
+                                    )
+
+                                    await conn.execute(
+                                        """
+                                        UPDATE user_mundiai_maps
+                                        SET layers = CASE
+                                            WHEN layers IS NULL THEN ARRAY[$1]
+                                            ELSE array_append(layers, $1)
+                                        END
+                                        WHERE id = $2 AND (layers IS NULL OR NOT ($1 = ANY(layers)))
+                                        """,
+                                        layer_id_to_add,
+                                        map_id,
+                                    )
+                                    tool_result = {
+                                        "status": f"Layer '{new_name}' (ID: {layer_id_to_add}) added to map '{map_id}'.",
+                                        "layer_id": layer_id_to_add,
+                                        "name": new_name,
+                                    }
+
+                                await add_chat_completion_message(
+                                    ChatCompletionToolMessageParam(
+                                        role="tool",
+                                        tool_call_id=tool_call.id,
+                                        content=json.dumps(tool_result),
+                                    )
                                 )
-                            )
                         elif function_name == "query_duckdb_sql":
                             layer_id = tool_args.get("layer_ids", [None])[
                                 0
