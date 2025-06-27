@@ -35,7 +35,7 @@ async def test_soft_delete_postgis_connection_as_owner(auth_client):
     add_response = await auth_client.post(
         f"/api/projects/{project_id}/postgis-connections",
         json={
-            "connection_uri": "postgresql://test:test@localhost:5432/testdb",
+            "connection_uri": "postgresql://test:test@example.com:5432/testdb",
             "connection_name": "Test Connection for Deletion",
         },
     )
@@ -124,7 +124,7 @@ async def test_soft_delete_already_deleted_connection(auth_client):
     add_response = await auth_client.post(
         f"/api/projects/{project_id}/postgis-connections",
         json={
-            "connection_uri": "postgresql://test:test@localhost:5432/testdb",
+            "connection_uri": "postgresql://test:test@example.com:5432/testdb",
             "connection_name": "Test Connection for Double Deletion",
         },
     )
@@ -194,7 +194,7 @@ async def test_soft_deleted_connection_not_listed(auth_client):
     add_response_1 = await auth_client.post(
         f"/api/projects/{project_id}/postgis-connections",
         json={
-            "connection_uri": "postgresql://test1:test@localhost:5432/testdb1",
+            "connection_uri": "postgresql://test1:test@example.com:5432/testdb1",
             "connection_name": "Connection 1",
         },
     )
@@ -203,7 +203,7 @@ async def test_soft_deleted_connection_not_listed(auth_client):
     add_response_2 = await auth_client.post(
         f"/api/projects/{project_id}/postgis-connections",
         json={
-            "connection_uri": "postgresql://test2:test@localhost:5432/testdb2",
+            "connection_uri": "postgresql://test2:test@example.com:5432/testdb2",
             "connection_name": "Connection 2",
         },
     )
