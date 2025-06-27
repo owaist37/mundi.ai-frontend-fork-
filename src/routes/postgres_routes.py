@@ -909,7 +909,8 @@ async def get_map_style_internal(
         postgis_layers = [layer for layer in all_layers if layer["type"] == "postgis"]
 
         def get_geometry_order(layer):
-            geom_type = layer.get("geometry_type", "").lower()
+            geom_type = layer.get("geometry_type") or ""
+            geom_type = geom_type.lower()
             if "polygon" in geom_type:
                 return 1
             elif "line" in geom_type:
