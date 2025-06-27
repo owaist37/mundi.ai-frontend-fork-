@@ -590,6 +590,8 @@ async def get_layer_mvt_tile(
     xmax = -20037508.34 + (x + 1) * tile_size
     ymax = 20037508.34 - y * tile_size
     try:
+        # some geometries just aren't valid, so make them valid.
+        # can't save the world
         async with get_pooled_connection(
             connection_details["connection_uri"]
         ) as postgis_conn:
@@ -600,10 +602,9 @@ async def get_layer_mvt_tile(
                        ST_MakeEnvelope($1, $2, $3, $4, 3857)::box2d AS b2d
             ),
             mvtgeom AS (
-                SELECT ST_AsMVTGeom(ST_Transform(t.geom, 3857), bounds.b2d) AS geom
+                SELECT ST_AsMVTGeom(ST_Transform(ST_MakeValid(t.geom), 3857), bounds.b2d) AS geom
                 FROM ({layer["postgis_query"]}) t, bounds
-                WHERE ST_IsValid(t.geom)
-                  AND ST_Intersects(ST_Transform(t.geom, 3857), bounds.bounds_geom)
+                WHERE ST_Intersects(ST_Transform(ST_MakeValid(t.geom), 3857), bounds.bounds_geom)
             )
             SELECT ST_AsMVT(mvtgeom.*, 'reprojectedfgb') FROM mvtgeom
             """
