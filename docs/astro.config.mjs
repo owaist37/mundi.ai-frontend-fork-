@@ -1,6 +1,7 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
+import starlightLlmsTxt from 'starlight-llms-txt';
 
 // https://astro.build/config
 export default defineConfig({
@@ -44,7 +45,33 @@ export default defineConfig({
 					lang: 'en',
 				},
 			},
+			plugins: [starlightLlmsTxt({
+				projectName: "Mundi",
+				description: "Mundi is an open source, AI-native web GIS for creating maps, analyzing geospatial data, and connecting to databases like PostGIS.",
+				details: `
+- Mundi open source is AGPLv3 and self-hostable. Mundi cloud is a hosted service and is also available for on-premise deployments using Kubernetes.
+- Supports data sources like PostGIS, OGR-compatible vector files and GDAL-compatible rasters.
+- Mundi was created by Bunting Labs, Inc. (https://buntinglabs.com)
 
+You can try Mundi free at https://app.mundi.ai or self-host using Docker Compose.`,
+				optionalLinks: [
+					{
+						label: "GitHub Repository",
+						url: "https://github.com/BuntingLabs/mundi.ai",
+						description: "Source code and contributions"
+					},
+					{
+						label: "Live Demo",
+						url: "https://app.mundi.ai",
+						description: "Hosted cloud service"
+					},
+					{
+						label: "Landing Page",
+						url: "https://mundi.ai",
+						description: "Mundi landing page with pricing links, features, and more information"
+					}
+				]
+			})]
 		}),
 	],
 });
