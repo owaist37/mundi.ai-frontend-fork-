@@ -525,6 +525,17 @@ async def add_postgis_connection(
 
         # Validate the connection URI format and accessibility
         connection_uri = connection_data.connection_uri.strip()
+
+        # Handle demo database
+        if connection_uri == "DEMO":
+            demo_uri = os.environ.get("DEMO_POSTGIS_URI")
+            if not demo_uri:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Demo database is not available",
+                )
+            connection_uri = demo_uri
+
         try:
             processed_uri, was_rewritten = connection_manager.verify_postgresql_uri(
                 connection_uri
@@ -566,7 +577,7 @@ async def add_postgis_connection(
                 connection_id,
                 project_id,
                 user_id,
-                connection_data.connection_uri,
+                connection_uri,
                 connection_data.connection_name,
             )
 
@@ -574,7 +585,7 @@ async def add_postgis_connection(
             background_tasks.add_task(
                 database_documenter.generate_documentation,
                 connection_id,
-                connection_data.connection_uri,
+                connection_uri,
                 connection_data.connection_name or "Database",
                 connection_manager,
             )
@@ -887,3 +898,21 @@ async def delete_project(
             "message": "Project successfully deleted",
             "project_id": project_id,
         }
+
+
+class DemoPostgisConfigResponse(BaseModel):
+    available: bool
+    description: str = ""
+
+
+@project_router.get(
+    "/config/demo-postgis-available", response_model=DemoPostgisConfigResponse
+)
+async def get_demo_postgis_config():
+    demo_uri = os.environ.get("DEMO_POSTGIS_URI")
+    demo_description = os.environ.get("DEMO_POSTGIS_DESCRIPTION", "")
+
+    if not demo_uri:
+        return DemoPostgisConfigResponse(available=False)
+
+    return DemoPostgisConfigResponse(available=True, description=demo_description)

@@ -186,6 +186,7 @@ interface LayerListProps {
   zoomHistoryIndex: number;
   setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
   uploadingFiles?: UploadingFile[];
+  demoConfig: { available: boolean; description: string };
 }
 
 function renderTree(tree: RenderElement | null): JSX.Element | null {
@@ -216,6 +217,7 @@ const LayerList: React.FC<LayerListProps> = ({
   zoomHistoryIndex,
   setZoomHistoryIndex,
   uploadingFiles,
+  demoConfig,
 }) => {
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
 
@@ -229,7 +231,7 @@ const LayerList: React.FC<LayerListProps> = ({
     connection: PostgresConnectionDetails;
     projectId: string;
   } | null>(null);
-  const [connectionMethod, setConnectionMethod] = useState<'uri' | 'fields'>('uri');
+  const [connectionMethod, setConnectionMethod] = useState<'demo' | 'uri' | 'fields'>('uri');
   const [postgisForm, setPostgisForm] = useState({
     uri: '',
     host: '',
@@ -254,14 +256,16 @@ const LayerList: React.FC<LayerListProps> = ({
     }
 
     let connectionUri = '';
-    if (connectionMethod === 'uri') {
+    if (connectionMethod === 'demo') {
+      connectionUri = 'DEMO'; // Special marker for backend to use DEMO_POSTGIS_URI
+    } else if (connectionMethod === 'uri') {
       connectionUri = postgisForm.uri;
     } else {
       // Build URI from form fields
       connectionUri = `postgresql://${postgisForm.username}:${postgisForm.password}@${postgisForm.host}:${postgisForm.port}/${postgisForm.database}`;
     }
 
-    if (!connectionUri.trim()) {
+    if (!connectionUri.trim() || (connectionMethod !== 'demo' && connectionUri === '')) {
       setPostgisError('Please provide connection details');
       return;
     }
@@ -817,6 +821,17 @@ const LayerList: React.FC<LayerListProps> = ({
             <div className="grid gap-4 py-4">
               {/* Connection Method Toggle */}
               <div className="flex space-x-2">
+                {demoConfig.available && (
+                  <Button
+                    type="button"
+                    variant={connectionMethod === 'demo' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setConnectionMethod('demo')}
+                    className="flex-1 hover:cursor-pointer"
+                  >
+                    Demo Database
+                  </Button>
+                )}
                 <Button
                   type="button"
                   variant={connectionMethod === 'uri' ? 'default' : 'outline'}
@@ -837,7 +852,13 @@ const LayerList: React.FC<LayerListProps> = ({
                 </Button>
               </div>
 
-              {connectionMethod === 'uri' ? (
+              {connectionMethod === 'demo' ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-300">
+                    {demoConfig.description} We provide it as a demo to preview Mundi's capabilities, especially for users with sensitive PostGIS databases who would rather self-host or use an on-premise deployment.
+                  </p>
+                </div>
+              ) : connectionMethod === 'uri' ? (
                 <div className="space-y-2">
                   <label htmlFor="uri" className="text-sm font-medium">
                     Database URI
@@ -1006,6 +1027,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
   const [currentBasemap, setCurrentBasemap] = useState<string>('');
   const [availableBasemaps, setAvailableBasemaps] = useState<string[]>([]);
+  const [demoConfig, setDemoConfig] = useState<{ available: boolean; description: string }>({ available: false, description: '' });
 
 
 
@@ -1713,6 +1735,23 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     fetchAvailableBasemaps();
   }, []);
 
+  // Fetch demo config on component mount
+  useEffect(() => {
+    const fetchDemoConfig = async () => {
+      try {
+        const response = await fetch('/api/projects/config/demo-postgis-available');
+        if (response.ok) {
+          const data = await response.json();
+          setDemoConfig(data);
+        }
+      } catch (error) {
+        console.error('Error fetching demo config:', error);
+      }
+    };
+
+    fetchDemoConfig();
+  }, []);
+
   // Add globe control when map and basemaps are available
   useEffect(() => {
     const map = mapRef.current;
@@ -1832,6 +1871,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             zoomHistoryIndex={zoomHistoryIndex}
             setZoomHistoryIndex={setZoomHistoryIndex}
             uploadingFiles={uploadingFiles}
+            demoConfig={demoConfig}
           />
         )}
         {/* Changelog */}
