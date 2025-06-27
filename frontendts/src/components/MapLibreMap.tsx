@@ -37,7 +37,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow, AlertTriangle, Loader2 } from 'lucide-react';
+import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow, AlertTriangle, Loader2, RotateCw } from 'lucide-react';
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
@@ -299,7 +299,7 @@ const LayerList: React.FC<LayerListProps> = ({
         // Poll for updated connection details and refresh when AI naming is complete
         const pollForUpdatedConnection = async () => {
           let attempts = 0;
-          const maxAttempts = 48; // 2 minutes max (48 * 2.5 seconds = 120 seconds)
+          const maxAttempts = 225; // 15 minutes max (225 * 4 seconds = 900 seconds)
 
           const pollInterval = setInterval(async () => {
             attempts++;
@@ -332,7 +332,7 @@ const LayerList: React.FC<LayerListProps> = ({
               updateProjectData(currentMapData.project_id);
               updateMapData(currentMapData.map_id);
             }
-          }, 2500); // Check every 2.5 seconds
+          }, 4000); // Check every 4 seconds
         };
 
         pollForUpdatedConnection();
@@ -777,7 +777,7 @@ const LayerList: React.FC<LayerListProps> = ({
                 <TooltipTrigger asChild>
                   <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={saveAndForkMap} disabled={isSaving}>
                     {isSaving ? (
-                      <Save className="h-4 w-4 animate-pulse" />
+                      <RotateCw className="h-4 w-4 animate-spin" />
                     ) : (
                       <Save className="h-4 w-4" />
                     )}

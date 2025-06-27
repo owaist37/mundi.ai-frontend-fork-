@@ -165,7 +165,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   }
 
   return (
-    <div className="flex flex-col gap-6 p-6">
+    <div className="flex flex-col gap-6 p-6 min-w-xl">
       <div className="flex items-center justify-end relative">
         <div className="absolute left-1/2 transform -translate-x-1/2">
           <h1 className="text-2xl font-bold">Your Maps <span className="text-gray-400">({totalItems} projects)</span></h1>

@@ -27,7 +27,7 @@ export default function ProjectView() {
 
   const [project, setProject] = useState<MapProject | null>(null);
 
-  const versionId = versionIdParam || project?.maps[project?.maps.length - 1] || null;
+  const versionId = versionIdParam || (project?.maps && project.maps.length > 0 ? project.maps[project.maps.length - 1] : null);
 
   const [mapData, setMapData] = useState<MapData | null>(null);
 
