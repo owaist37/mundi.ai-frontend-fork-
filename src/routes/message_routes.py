@@ -382,7 +382,7 @@ async def process_chat_interaction_task(
                         "type": "function",
                         "function": {
                             "name": "query_postgis_database",
-                            "description": "Execute SQL queries on connected PostgreSQL/PostGIS databases. Use for data analysis, spatial queries, and exploring database tables. The query should be safe and read-only.",
+                            "description": "Execute SQL queries on connected PostgreSQL/PostGIS databases. Use for data analysis, spatial queries, and exploring database tables. The query MUST include a LIMIT clause with a value less than 1000.",
                             "parameters": {
                                 "type": "object",
                                 "properties": {
@@ -393,12 +393,6 @@ async def process_chat_interaction_task(
                                     "sql_query": {
                                         "type": "string",
                                         "description": "SQL query to execute. Examples: 'SELECT COUNT(*) FROM table_name', 'SELECT * FROM spatial_table LIMIT 10', 'SELECT column_name FROM information_schema.columns WHERE table_name = \"my_table\"'. Use standard SQL syntax.",
-                                    },
-                                    "limit_rows": {
-                                        "type": "integer",
-                                        "description": "Maximum number of rows to return (default: 100, max: 1000)",
-                                        "default": 100,
-                                        "maximum": 1000,
                                     },
                                 },
                                 "required": ["postgis_connection_id", "sql_query"],
@@ -1152,7 +1146,6 @@ async def process_chat_interaction_task(
                                 "postgis_connection_id"
                             )
                             sql_query = tool_args.get("sql_query")
-                            limit_rows = tool_args.get("limit_rows", 100)
 
                             if not postgis_connection_id or not sql_query:
                                 tool_result = {
@@ -1180,16 +1173,43 @@ async def process_chat_interaction_task(
                                     connection_uri = connection_result["connection_uri"]
 
                                     try:
-                                        # Clamp limit_rows to be between 1 and 1000
-                                        limit_rows = max(1, min(limit_rows, 1000))
-
-                                        # Add LIMIT clause if not already present
+                                        # Check if LIMIT is already present and validate it
                                         limited_query = sql_query.strip()
-                                        if not limited_query.upper().endswith(
-                                            ("LIMIT", f"LIMIT {limit_rows}")
-                                        ):
-                                            if "LIMIT" not in limited_query.upper():
-                                                limited_query += f" LIMIT {limit_rows}"
+                                        limit_match = re.search(
+                                            r"\bLIMIT\s+(\d+)\b",
+                                            limited_query,
+                                            re.IGNORECASE,
+                                        )
+
+                                        if limit_match:
+                                            limit_value = int(limit_match.group(1))
+                                            if limit_value > 1000:
+                                                tool_result = {
+                                                    "status": "error",
+                                                    "error": f"LIMIT value {limit_value} exceeds maximum allowed limit of 1000",
+                                                }
+                                                await add_chat_completion_message(
+                                                    ChatCompletionToolMessageParam(
+                                                        role="tool",
+                                                        tool_call_id=tool_call.id,
+                                                        content=json.dumps(tool_result),
+                                                    ),
+                                                )
+                                                continue
+                                        else:
+                                            # No LIMIT found, require explicit LIMIT
+                                            tool_result = {
+                                                "status": "error",
+                                                "error": "Query must include a LIMIT clause with a value less than 1000",
+                                            }
+                                            await add_chat_completion_message(
+                                                ChatCompletionToolMessageParam(
+                                                    role="tool",
+                                                    tool_call_id=tool_call.id,
+                                                    content=json.dumps(tool_result),
+                                                ),
+                                            )
+                                            continue
 
                                         async with kue_ephemeral_action(
                                             map_id, "Querying PostgreSQL database..."
