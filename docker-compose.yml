@@ -26,6 +26,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      qgis-processing:
+        condition: service_healthy
     environment:
       - MUNDI_AUTH_MODE=edit # "edit" or "view_only"
       - S3_ACCESS_KEY_ID=s3user
@@ -125,3 +127,20 @@ services:
       interval: 5s
       timeout: 2s
       retries: 5
+
+  qgis-processing:
+    platform: linux/amd64
+    image: ${QGIS_PROCESSING_IMAGE:-qgis-processing:local}
+    build:
+      context: ./qgis-processing
+      dockerfile: Dockerfile
+      x-bake:
+        tags:
+          - qgis-processing:local
+    command: uvicorn server:app --host 0.0.0.0 --port 8000
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 30s
+      retries: 3
+      start_period: 10s

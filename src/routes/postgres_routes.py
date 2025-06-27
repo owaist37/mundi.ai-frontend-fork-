@@ -1137,8 +1137,31 @@ async def upload_layer(
                 status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
             )
 
-        bucket_name = get_bucket_name()
         project_id = map_result["project_id"]
+
+    return await internal_upload_layer(
+        map_id=map_id,
+        file=file,
+        layer_name=layer_name,
+        add_layer_to_map=add_layer_to_map,
+        user_id=session.get_user_id(),
+        project_id=project_id,
+    )
+
+
+async def internal_upload_layer(
+    map_id: str,
+    file: UploadFile,
+    layer_name: str,
+    add_layer_to_map: bool,
+    user_id: str,
+    project_id: str,
+):
+    """Internal function to upload a layer without auth checks."""
+
+    # Connect to database
+    async with get_async_db_connection() as conn:
+        bucket_name = get_bucket_name()
 
         # Generate a unique filename for the uploaded file
         filename = file.filename
@@ -1165,7 +1188,7 @@ async def upload_layer(
         layer_id = generate_id(prefix="L")
 
         # Generate S3 key using user UUID, project ID and layer ID
-        s3_key = f"uploads/{session.get_user_id()}/{project_id}/{layer_id}{file_ext}"
+        s3_key = f"uploads/{user_id}/{project_id}/{layer_id}{file_ext}"
 
         # Create S3 client
         s3_client = get_s3_client()
@@ -1389,7 +1412,7 @@ async def upload_layer(
                 RETURNING layer_id
                 """,
                 layer_id,
-                session.get_user_id(),
+                user_id,
                 layer_name,
                 presigned_url,
                 layer_type,
@@ -1454,7 +1477,7 @@ async def upload_layer(
                     style_id,
                     new_layer_id,
                     json.dumps(maplibre_layers),
-                    session.get_user_id(),
+                    user_id,
                 )
 
                 # Link the style to the map
@@ -1475,7 +1498,7 @@ async def upload_layer(
                         new_layer_id,
                         s3_key,
                         feature_count,
-                        session.get_user_id(),
+                        user_id,
                         project_id,
                     )
 

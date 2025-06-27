@@ -26,6 +26,10 @@ from opentelemetry import trace
 import pandas as pd
 import asyncio
 import traceback
+import tempfile
+from fastapi import UploadFile
+import io
+import httpx
 import asyncpg
 from typing import Callable
 from redis import Redis
@@ -42,10 +46,20 @@ from openai.types.chat.chat_completion_message_param import ChatCompletionMessag
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
 from src.structures import async_conn
 from src.symbology.verify import StyleValidationError, verify_style_json_str
-from src.routes.postgres_routes import generate_id, get_map_style_internal
+from src.routes.postgres_routes import (
+    generate_id,
+    get_map_style_internal,
+    get_map_description,
+    internal_upload_layer,
+)
+from src.geoprocessing.dispatch import (
+    UnsupportedAlgorithmError,
+    InvalidInputFormatError,
+    get_tools,
+)
 from src.dependencies.base_map import get_base_map_provider
-from src.routes.postgres_routes import get_map_description
 from src.duckdb import execute_duckdb_query
+from src.utils import get_async_s3_client, get_bucket_name
 from src.dependencies.postgis import get_postgis_provider
 from src.dependencies.layer_describer import LayerDescriber, get_layer_describer
 from src.dependencies.chat_completions import ChatArgsProvider, get_chat_args_provider
@@ -174,6 +188,229 @@ async def get_all_map_messages(
             "map_id": map_id,
             "messages": messages,
         }
+
+
+class RecoverableToolCallError(Exception):
+    def __init__(self, message: str, tool_call_id: str):
+        self.message = message
+        self.tool_call_id = tool_call_id
+        super().__init__(message)
+
+
+def is_layer_id(s: str) -> bool:
+    return isinstance(s, str) and s[0] == "L" and len(s) == 12
+
+
+async def run_geoprocessing_tool(
+    tool_call: ChatCompletionToolMessageParam,
+    conn,
+    user_id: str,
+    map_id: str,
+):
+    function_name = tool_call.function.name
+    tool_args = json.loads(tool_call.function.arguments)
+
+    all_tools = get_tools()
+    for tool in all_tools:
+        if function_name == tool["function"]["name"]:
+            tool_def = tool
+            break
+    assert tool_def is not None
+
+    algorithm_id = tool_def["function"]["name"].replace("_", ":")
+
+    mapped_args = tool_args.copy()
+    mapped_args["map_id"] = map_id
+    mapped_args["user_uuid"] = user_id
+
+    with tracer.start_as_current_span(f"geoprocessing.{algorithm_id}") as span:
+        try:
+            input_params = {}
+            input_urls = {}
+
+            for key, val in mapped_args.items():
+                if key == "OUTPUT":
+                    continue
+                elif is_layer_id(val):
+                    # This is a layer ID, get the S3 key from database and create presigned URL
+                    layer_data = await conn.fetchrow(
+                        """
+                        SELECT s3_key FROM map_layers
+                        WHERE layer_id = $1 AND owner_uuid = $2
+                        """,
+                        val,
+                        user_id,
+                    )
+
+                    if not layer_data or not layer_data["s3_key"]:
+                        raise RecoverableToolCallError(
+                            f"Layer {val} not found or has no S3 key",
+                            tool_call.id,
+                        )
+
+                    s3_client = await get_async_s3_client()
+                    bucket_name = get_bucket_name()
+                    presigned_url = await s3_client.generate_presigned_url(
+                        "get_object",
+                        Params={"Bucket": bucket_name, "Key": layer_data["s3_key"]},
+                        ExpiresIn=3600,
+                    )
+                    input_urls[key] = presigned_url
+                else:
+                    input_params[key] = str(val)
+
+            map_data = await conn.fetchrow(
+                """
+                SELECT project_id FROM user_mundiai_maps
+                WHERE id = $1
+                """,
+                map_id,
+            )
+            project_id = map_data["project_id"]
+
+            output_layer_mappings = {}
+
+            # Generate presigned PUT URLs for all output parameters
+            s3_client = await get_async_s3_client()
+            bucket_name = get_bucket_name()
+            output_presigned_put_urls = {}
+
+            # Generate output layer ID and S3 key for this output
+            output_layer_id = generate_id(prefix="L")
+            # Determine file extension based on tool description
+            tool_description = tool_def["function"]["description"].lower()
+            vector_count = tool_description.count("vector")
+            raster_count = tool_description.count("raster")
+
+            if vector_count > raster_count:
+                file_extension = ".fgb"
+                layer_type = "vector"
+            else:
+                file_extension = ".tif"
+                layer_type = "raster"
+
+            output_s3_key = (
+                f"uploads/{user_id}/{project_id}/{output_layer_id}{file_extension}"
+            )
+
+            # Generate presigned PUT URL for this output
+            output_presigned_url = await s3_client.generate_presigned_url(
+                "put_object",
+                Params={"Bucket": bucket_name, "Key": output_s3_key},
+                ExpiresIn=3600,  # 1 hour
+            )
+
+            output_presigned_put_urls["OUTPUT"] = output_presigned_url
+            output_layer_mappings["OUTPUT"] = {
+                "layer_id": output_layer_id,
+                "s3_key": output_s3_key,
+                "layer_type": layer_type,
+                "file_extension": file_extension,
+            }
+
+            qgis_request = {
+                "algorithm_id": algorithm_id,
+                "qgis_inputs": input_params,
+                "output_presigned_put_urls": output_presigned_put_urls,
+                "input_urls": input_urls,
+            }
+
+            async with kue_ephemeral_action(map_id, f"QGIS running {algorithm_id}..."):
+                # Call QGIS processing service
+                async with httpx.AsyncClient() as client:
+                    response = await client.post(
+                        "http://qgis-processing:8000/run_qgis_process",
+                        json=qgis_request,
+                        timeout=30.0,
+                    )
+
+                if response.status_code != 200:
+                    return {
+                        "status": "error",
+                        "error": f"QGIS processing failed: {response.status_code} - {response.text}",
+                        "algorithm_id": algorithm_id,
+                    }
+
+                qgis_result = response.json()
+
+                # Check if all layer outputs were successfully uploaded
+                upload_results = qgis_result.get("upload_results", {})
+
+                for param_name in output_layer_mappings.keys():
+                    if (
+                        param_name not in upload_results
+                        or not upload_results[param_name]["uploaded"]
+                    ):
+                        return {
+                            "status": "error",
+                            "error": f"QGIS processing completed but output file {param_name} was not uploaded successfully",
+                            "qgis_result": qgis_result,
+                        }
+
+                # Create new layers from the uploaded results
+                created_layers = []
+
+                for param_name, layer_info in output_layer_mappings.items():
+                    # Download the output file from S3
+                    downloaded_file = await s3_client.get_object(
+                        Bucket=bucket_name, Key=layer_info["s3_key"]
+                    )
+                    file_content = await downloaded_file["Body"].read()
+
+                    # Create an UploadFile-like object
+                    filename = f"{layer_info['layer_id']}{layer_info['file_extension']}"
+                    upload_file = UploadFile(
+                        filename=filename,
+                        file=io.BytesIO(file_content),
+                    )
+
+                    upload_result = await internal_upload_layer(
+                        map_id=map_id,
+                        file=upload_file,
+                        layer_name=filename,
+                        add_layer_to_map=True,
+                        user_id=user_id,
+                        project_id=project_id,
+                    )
+
+                    created_layers.append(
+                        {
+                            "param_name": param_name,
+                            "layer_id": upload_result.id,
+                            "layer_name": filename,
+                            "layer_type": layer_info["layer_type"],
+                        }
+                    )
+
+                # Prepare the response
+                result = {
+                    "status": "success",
+                    "message": f"{function_name} completed successfully",
+                    "algorithm_id": algorithm_id,
+                    "qgis_result": qgis_result,
+                    "created_layers": created_layers,
+                }
+
+                return result
+
+        except UnsupportedAlgorithmError as e:
+            return {
+                "status": "error",
+                "error": f"Unsupported algorithm parameter: {str(e)}",
+            }
+        except InvalidInputFormatError as e:
+            return {
+                "status": "error",
+                "error": f"Invalid input format: {str(e)}",
+            }
+        except Exception as e:
+            span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
+            span.set_attribute("error.traceback", traceback.format_exc())
+            return {
+                "status": "error",
+                "error": f'Unexpected error running geoprocessing: "{str(e)}", this is likely a Mundi bug.',
+                "algorithm_id": algorithm_id,
+            }
 
 
 async def process_chat_interaction_task(
@@ -465,6 +702,12 @@ async def process_chat_interaction_task(
                         }
                     )
 
+                all_tools = get_tools()
+                tools_payload.extend(all_tools)
+                geoprocessing_function_names = [
+                    tool["function"]["name"] for tool in all_tools
+                ]
+
                 if not layer_enum:
                     add_layer_tool = next(
                         tool
@@ -506,6 +749,9 @@ async def process_chat_interaction_task(
                             )
                             span.set_status(
                                 trace.Status(trace.StatusCode.ERROR, str(e))
+                            )
+                            span.set_attribute(
+                                "error.traceback", traceback.format_exc()
                             )
                             break
 
@@ -1399,6 +1645,20 @@ async def process_chat_interaction_task(
                                         "error": f"Error zooming to bounds: {str(e)}",
                                     }
 
+                            await add_chat_completion_message(
+                                ChatCompletionToolMessageParam(
+                                    role="tool",
+                                    tool_call_id=tool_call.id,
+                                    content=json.dumps(tool_result),
+                                ),
+                            )
+                        elif function_name in geoprocessing_function_names:
+                            tool_result = await run_geoprocessing_tool(
+                                tool_call,
+                                conn,
+                                user_id,
+                                map_id,
+                            )
                             await add_chat_completion_message(
                                 ChatCompletionToolMessageParam(
                                     role="tool",

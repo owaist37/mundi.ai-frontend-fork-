@@ -43,3 +43,7 @@ of GIS software is open source and AI-native, while enabling corporations to spo
 ## License
 
 Mundi is licensed as [AGPLv3](./LICENSE).
+
+Optionally, Mundi can use [QGIS](https://qgis.org/) for geoprocessing.
+[The code that links with QGIS](./qgis-processing) is licensed
+as [GPLv3](./qgis-processing/LICENSE).
