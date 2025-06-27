@@ -386,3 +386,53 @@ async def kue_ephemeral_action(
             queues = list(subscribers_by_map.get(map_id, []))
         for q in queues:
             q.put_nowait(payload_str)
+
+
+async def kue_notify_error(map_id: str, error_message: str):
+    """
+    Send an ephemeral error notification to the client.
+    Unlike kue_ephemeral_action, this is not a context manager and sends a single error message.
+    """
+    action_id = str(uuid.uuid4())
+    payload = {
+        "map_id": map_id,
+        "ephemeral": True,
+        "action_id": action_id,
+        "error_message": error_message,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "status": "error",
+    }
+
+    payload_str = json.dumps(payload)
+
+    # Store for recently disconnected users from this specific map
+    now = time.time()
+    users_to_remove = []
+    for (
+        user_id,
+        disconnected_map_id,
+    ), user_data in recently_disconnected_users.items():
+        # Clean up users who disconnected too long ago
+        if now - user_data["disconnect_time"] > DISCONNECT_TTL:
+            users_to_remove.append((user_id, disconnected_map_id))
+            continue
+
+        # Only store messages for users who were disconnected from this specific map
+        if disconnected_map_id == map_id:
+            # Add message to their missed messages buffer
+            missed_messages = user_data["missed_messages"]
+            missed_messages.append((now, payload_str))
+
+            # Limit buffer size
+            while len(missed_messages) > MAX_MISSED_MESSAGES:
+                missed_messages.popleft()
+
+    # Remove expired users
+    for user_key in users_to_remove:
+        del recently_disconnected_users[user_key]
+
+    # Broadcast to live subscribers
+    async with subscribers_lock:
+        queues = list(subscribers_by_map.get(map_id, []))
+    for q in queues:
+        q.put_nowait(payload_str)

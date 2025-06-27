@@ -92,8 +92,9 @@ export interface EphemeralAction {
   action: string;
   timestamp: string;
   completed_at: string | null;
-  status: "active" | "completed" | "zoom_action";
+  status: "active" | "completed" | "zoom_action" | "error";
   updates: EphemeralUpdates;
   bounds?: [number, number, number, number];
   description?: string;
+  error_message?: string;
 }

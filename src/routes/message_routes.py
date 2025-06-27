@@ -64,7 +64,7 @@ from src.dependencies.postgres_connection import (
 )
 from src.utils import get_openai_client
 from src.openstreetmap import download_from_openstreetmap, has_openstreetmap_api_key
-from src.routes.websocket import kue_ephemeral_action
+from src.routes.websocket import kue_ephemeral_action, kue_notify_error
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -483,18 +483,31 @@ async def process_chat_interaction_task(
                     with tracer.start_as_current_span(
                         "kue.openai.chat.completions.create"
                     ):
-                        response = await client.chat.completions.create(
-                            **chat_completions_args,
-                            messages=[
-                                {
-                                    "role": "system",
-                                    "content": system_prompt_provider.get_system_prompt(),
-                                }
-                            ]
-                            + openai_messages,
-                            tools=tools_payload if tools_payload else None,
-                            tool_choice="auto" if tools_payload else None,
-                        )
+                        # chat.completions.create fails for bad messages and tools, so
+                        # if we have orphaned tool calls then we'll get an error - but not
+                        # handling it properly makes for a horrible user experience
+                        try:
+                            response = await client.chat.completions.create(
+                                **chat_completions_args,
+                                messages=[
+                                    {
+                                        "role": "system",
+                                        "content": system_prompt_provider.get_system_prompt(),
+                                    }
+                                ]
+                                + openai_messages,
+                                tools=tools_payload if tools_payload else None,
+                                tool_choice="auto" if tools_payload else None,
+                            )
+                        except Exception as e:
+                            await kue_notify_error(
+                                map_id,
+                                "Error connecting to LLM. If trying again doesn't work, hit the save button in the bottom right of the layer list to reset the chat history.",
+                            )
+                            span.set_status(
+                                trace.Status(trace.StatusCode.ERROR, str(e))
+                            )
+                            break
 
                 assistant_message = response.choices[0].message
 

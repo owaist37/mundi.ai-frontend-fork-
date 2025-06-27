@@ -1640,6 +1640,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         if (update.ephemeral === true) {
           const action = update as EphemeralAction;
 
+          // Check if this is an error notification
+          if (action.error_message) {
+            // Don't add error notifications to active actions, instead treat as error
+            addError(action.error_message, true);
+            return; // Early return to skip normal ephemeral action handling
+          }
+
           // Handle bounds zooming for any ephemeral action that includes bounds
           if (action.bounds && action.bounds.length === 4 && mapRef.current) {
             // Save current bounds to history before zooming
