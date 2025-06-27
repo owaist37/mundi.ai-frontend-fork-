@@ -1040,11 +1040,15 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       shouldOverrideMessages,
     };
     setErrors(prev => [...prev, newError]);
+    console.error(message);
+    if (!shouldOverrideMessages) {
+      toast.error(message);
+    }
 
-    // Auto-dismiss after 5 seconds
+    // Auto-dismiss after 30 seconds
     setTimeout(() => {
       setErrors(prev => prev.filter(error => error.id !== newError.id));
-    }, 5000);
+    }, 30000);
   };
 
   // Helper function to dismiss a specific error
@@ -1769,14 +1773,6 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     }
   }, [currentBasemap]);
 
-  useEffect(() => {
-    if (errors.length > 0) {
-      const latestError = errors[errors.length - 1];
-      toast.error(latestError.message);
-      console.error(latestError.message);
-    }
-  }, [errors]);
-
   // Function to fork the current map
   const saveAndForkMap = async () => {
     setIsSaving(true);
@@ -1920,7 +1916,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
                       className="text-white cursor-pointer hover:underline shrink-0"
                       title="Dismiss error"
                     >
-                      Close
+                      Dismiss
                     </button>
                   </div>
                 ))}
