@@ -35,6 +35,12 @@ export default defineConfig({
 						{ label: 'Self-hosting Mundi', slug: 'guides/self-hosting-mundi' },
 					],
 				},
+				{
+					label: 'Advanced Configurations',
+					items: [
+						{ label: 'On-Premise/VPC Kubernetes', slug: 'advanced/on-premise-vpc-kubernetes-deployment' }
+					]
+				}
 			],
 			// Set English as the default language for this site.
 			defaultLocale: 'root',
