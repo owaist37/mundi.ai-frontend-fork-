@@ -15,6 +15,9 @@
 
 import pytest
 import json
+import os
+import random
+from pathlib import Path
 from unittest.mock import patch, AsyncMock
 from src.structures import get_async_db_connection
 from openai.types.chat import (
@@ -36,12 +39,56 @@ class MockResponse:
         self.choices = [MockChoice(content, tool_calls)]
 
 
+@pytest.fixture
+def sync_test_map_with_vector_layers(sync_auth_client):
+    map_payload = {
+        "title": "Geoprocessing Test Map",
+        "description": "Test map for geoprocessing operations with vector layers",
+    }
+    map_response = sync_auth_client.post("/api/maps/create", json=map_payload)
+    assert map_response.status_code == 200, f"Failed to create map: {map_response.text}"
+    map_id = map_response.json()["id"]
+    layer_ids = {}
+
+    def _upload_layer(file_name, layer_name_in_db):
+        file_path = str(
+            Path(__file__).parent.parent.parent / "test_fixtures" / file_name
+        )
+        if not os.path.exists(file_path):
+            pytest.skip(f"Test file {file_path} not found")
+        with open(file_path, "rb") as f:
+            layer_response = sync_auth_client.post(
+                f"/api/maps/{map_id}/layers",
+                files={"file": (file_name, f, "application/octet-stream")},
+                data={"layer_name": layer_name_in_db},
+            )
+            assert layer_response.status_code == 200, (
+                f"Failed to upload layer {file_name}: {layer_response.text}"
+            )
+            return layer_response.json()["id"]
+
+    random.seed(42)
+    layer_ids["beaches_layer_id"] = _upload_layer(
+        "barcelona_beaches.fgb", "Barcelona Beaches"
+    )
+    layer_ids["cafes_layer_id"] = _upload_layer(
+        "barcelona_cafes.fgb", "Barcelona Cafes"
+    )
+    layer_ids["idaho_stations_layer_id"] = _upload_layer(
+        "idaho_weatherstations.geojson", "Idaho Weather Stations"
+    )
+    return {"map_id": map_id, **layer_ids}
+
+
 @pytest.mark.anyio
 async def test_chat_completions(
-    test_map_with_vector_layers, auth_client, sync_auth_client, websocket_url_for_map
+    sync_test_map_with_vector_layers,
+    auth_client,
+    sync_auth_client,
+    websocket_url_for_map,
 ):
-    layer_id = test_map_with_vector_layers["beaches_layer_id"]
-    map_id = test_map_with_vector_layers["map_id"]
+    layer_id = sync_test_map_with_vector_layers["beaches_layer_id"]
+    map_id = sync_test_map_with_vector_layers["map_id"]
 
     def create_response_queue():
         return [
@@ -108,7 +155,7 @@ async def test_chat_completions(
         with sync_auth_client.websocket_connect(
             websocket_url_for_map(map_id)
         ) as websocket:
-            response = await auth_client.post(
+            response = sync_auth_client.post(
                 f"/api/maps/{map_id}/messages/send",
                 json={
                     "role": "user",
