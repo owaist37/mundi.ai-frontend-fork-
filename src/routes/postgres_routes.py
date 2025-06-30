@@ -134,6 +134,7 @@ class LayerResponse(BaseModel):
     )
     geometry_type: Optional[str] = None  # point, multipoint, line, polygon, etc.
     feature_count: Optional[int] = None  # number of features in the layer
+    original_srid: Optional[int] = None  # original projection EPSG code
 
 
 class LayersListResponse(BaseModel):
@@ -678,6 +679,14 @@ async def get_map_layers(
                 and "feature_count" in layer["metadata"]
             ):
                 layer["feature_count"] = layer["metadata"]["feature_count"]
+
+            # Set original_srid from metadata if it exists
+            if (
+                "metadata" in layer
+                and layer["metadata"]
+                and "original_srid" in layer["metadata"]
+            ):
+                layer["original_srid"] = layer["metadata"]["original_srid"]
 
         # Return the layers
         return LayersListResponse(map_id=map_id, layers=layers)
@@ -1298,6 +1307,14 @@ async def internal_upload_layer(
 
                     # Check if CRS is not EPSG:4326
                     src_crs = ds.GetProjection()
+                    if src_crs:
+                        # Store EPSG code if available
+                        src_srs = osr.SpatialReference()
+                        src_srs.ImportFromWkt(src_crs)
+                        epsg_code = src_srs.GetAuthorityCode(None)
+                        if epsg_code:
+                            metadata_dict["original_srid"] = int(epsg_code)
+
                     if (
                         src_crs
                         and "EPSG:4326" not in src_crs
@@ -1378,6 +1395,10 @@ async def internal_upload_layer(
                     # Check if we need to transform coordinates to EPSG:4326
                     src_crs = collection.crs
                     crs_string = src_crs.to_string()
+
+                    # Store EPSG code if available
+                    if src_crs and hasattr(src_crs, "to_epsg") and src_crs.to_epsg():
+                        metadata_dict["original_srid"] = src_crs.to_epsg()
 
                     # Check if CRS is not EPSG:4326
                     if (
