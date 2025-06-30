@@ -114,7 +114,28 @@ export default function ProjectView() {
             updateMapData(versionId);
           }, 2000);
         } else {
-          throw new Error(`Upload failed: ${xhr.statusText}`);
+          // Handle HTTP error status (like 400)
+          let errorMessage = `Upload failed: ${xhr.statusText}`;
+
+          // Try to parse error from response body
+          try {
+            const errorResponse = JSON.parse(xhr.responseText);
+            if (errorResponse.detail) {
+              errorMessage = errorResponse.detail;
+            }
+          } catch (parseError) {
+            // Keep the default error message if parsing fails
+          }
+
+          setUploadingFiles(prev =>
+            prev.map(f => f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)
+          );
+          toast.error(`Error uploading ${file.name}: ${errorMessage}`);
+
+          // Remove from uploading list after delay to show error state
+          setTimeout(() => {
+            setUploadingFiles(prev => prev.filter(f => f.id !== fileId));
+          }, 5000);
         }
       });
 
