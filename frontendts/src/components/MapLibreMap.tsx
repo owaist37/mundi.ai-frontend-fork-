@@ -457,15 +457,29 @@ const LayerList: React.FC<LayerListProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-slate-500 dark:text-gray-400">
                           {(() => {
-                            return num_highlighted > 0 ? (
+                            const sridDisplay = layerDetails.metadata?.original_srid ? `EPSG:${layerDetails.metadata.original_srid}` : 'N/A';
+                            if (layerDetails.type === 'raster') {
+                              return sridDisplay;
+                            }
+                            // For vector layers: show SRID on hover, feature count + highlighted when not hovering
+                            return (
                               <>
-                                <span className="text-gray-300 font-bold">
-                                  {num_highlighted} /
-                                </span>{' '}
-                                {layerDetails.feature_count ?? 'N/A'}
+                                <span className="group-hover:hidden">
+                                  {num_highlighted > 0 ? (
+                                    <>
+                                      <span className="text-gray-300 font-bold">
+                                        {num_highlighted} /
+                                      </span>{' '}
+                                      {layerDetails.feature_count ?? 'N/A'}
+                                    </>
+                                  ) : (
+                                    layerDetails.feature_count ?? 'N/A'
+                                  )}
+                                </span>
+                                <span className="hidden group-hover:inline">
+                                  {sridDisplay}
+                                </span>
                               </>
-                            ) : (
-                              layerDetails.feature_count ?? 'N/A'
                             );
                           })()}
                         </span>

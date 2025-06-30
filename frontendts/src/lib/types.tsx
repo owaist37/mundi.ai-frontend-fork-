@@ -29,6 +29,7 @@ export interface MapLayer {
   bounds?: number[];
   geometry_type?: string;
   feature_count?: number;
+  original_srid?: number;
 }
 
 export interface PostgresConnectionDetails {
