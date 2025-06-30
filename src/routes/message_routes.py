@@ -26,7 +26,6 @@ from opentelemetry import trace
 import pandas as pd
 import asyncio
 import traceback
-import tempfile
 from fastapi import UploadFile
 import io
 import httpx
