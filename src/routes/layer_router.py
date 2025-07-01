@@ -597,14 +597,23 @@ async def get_layer_mvt_tile(
         ) as postgis_conn:
             mvt_query = f"""
             WITH
-            bounds AS (
-                SELECT ST_MakeEnvelope($1, $2, $3, $4, 3857) AS bounds_geom,
-                       ST_MakeEnvelope($1, $2, $3, $4, 3857)::box2d AS b2d
+            bounds_webmerc AS (
+                SELECT ST_MakeEnvelope($1, $2, $3, $4, 3857) AS wm_geom
+            ),
+            bounds_native AS (
+                SELECT ST_Transform(wm_geom, (SELECT ST_SRID(geom) FROM ({layer["postgis_query"]}) LIMIT 1)) AS nat_geom,
+                       wm_geom::box2d AS b2d
+                FROM bounds_webmerc
+            ),
+            candidates AS (
+                SELECT ST_MakeValid(t.geom) AS geom
+                FROM ({layer["postgis_query"]}) t, bounds_native b
+                WHERE t.geom && b.nat_geom
+                  AND ST_Intersects(t.geom, b.nat_geom)
             ),
             mvtgeom AS (
-                SELECT ST_AsMVTGeom(ST_Transform(ST_MakeValid(t.geom), 3857), bounds.b2d) AS geom
-                FROM ({layer["postgis_query"]}) t, bounds
-                WHERE ST_Intersects(ST_Transform(ST_MakeValid(t.geom), 3857), bounds.bounds_geom)
+                SELECT ST_AsMVTGeom(ST_Transform(c.geom, 3857), b.b2d) AS geom
+                FROM candidates c, bounds_native b
             )
             SELECT ST_AsMVT(mvtgeom.*, 'reprojectedfgb') FROM mvtgeom
             """
