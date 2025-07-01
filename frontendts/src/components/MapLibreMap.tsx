@@ -5,6 +5,8 @@ import Session from "supertokens-auth-react/recipe/session";
 import { useConnectionStatus, usePresence } from 'driftdb-react';
 import useWebSocket, { ReadyState } from 'react-use-websocket';
 import React from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm'
 
 import legendSymbol, { RenderElement } from "legend-symbol-ts";
 
@@ -68,6 +70,15 @@ interface ChatCompletionMessageRow {
 }
 
 // Import styles in the parent component
+const KUE_MESSAGE_STYLE = `
+  text-sm leading-6
+  [&_table]:w-full [&_table]:border-collapse [&_table]:text-left
+  [&_thead]:border-b-1 [&_thead]:border-gray-600
+  [&_thead_th]:font-semibold
+  [&_tbody_tr]:border-b [&_tbody_tr]:border-gray-200 last:[&_tbody_tr]:border-b-0
+  [&_td]:align-top
+  [&_a]:text-blue-200 [&_a]:underline
+`;
 
 // Custom Globe Control class
 class GlobeControl implements IControl {
@@ -1959,7 +1970,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
                 )}
               </div>
             ) : lastAssistantMsg ? (
-              <span>{lastAssistantMsg}</span>
+              <div className={KUE_MESSAGE_STYLE}>
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{lastAssistantMsg}</ReactMarkdown>
+              </div>
             ) : null}
           </div>
         )}
@@ -2067,7 +2080,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
             return (
               <div key={`msg-${msg.id || index}-${index}`} className={`mb-3 ${messageClass ? `p-2 rounded ${messageClass}` : ''} text-sm`}>
-                {contentDisplay}
+                {messageJson.role === 'assistant' ? (
+                  <div className={KUE_MESSAGE_STYLE}>
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentDisplay}</ReactMarkdown>
+                  </div>
+                ) : (
+                  <span>{contentDisplay}</span>
+                )}
 
                 {/* Render images if present */}
                 {Array.isArray(messageJson.content) && messageJson.content
