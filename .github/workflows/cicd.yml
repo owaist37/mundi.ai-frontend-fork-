@@ -55,7 +55,7 @@ jobs:
       env:
         APP_IMAGE: ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
         DRIFTDB_IMAGE: driftdb-local
-      run: docker compose run app pytest -xvs
+      run: docker compose run app pytest -xvs -n auto
 
     - name: Push image
       run: |
