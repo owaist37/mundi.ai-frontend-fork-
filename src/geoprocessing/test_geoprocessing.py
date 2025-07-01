@@ -205,7 +205,8 @@ async def test_chat_completions(
 
             async with get_async_db_connection() as conn:
                 layers = await conn.fetch(
-                    "SELECT layer_id, metadata FROM map_layers ORDER by created_on desc limit 1"
+                    "SELECT layer_id, metadata FROM map_layers WHERE source_map_id = $1 ORDER by created_on desc limit 1",
+                    map_id,
                 )
                 layer_metadata = json.loads(layers[0]["metadata"])
                 created_layer_id = layers[0]["layer_id"]

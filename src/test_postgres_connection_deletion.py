@@ -42,7 +42,7 @@ async def test_soft_delete_postgis_connection_as_owner(auth_client):
     assert add_response.status_code == 200
 
     # Get connection ID from project details
-    projects_response = await auth_client.get("/api/projects/")
+    projects_response = await auth_client.get("/api/projects/?limit=10000")
     assert projects_response.status_code == 200
     projects_data = projects_response.json()
 
@@ -66,7 +66,7 @@ async def test_soft_delete_postgis_connection_as_owner(auth_client):
     assert "deleted successfully" in delete_data["message"]
 
     # Verify connection no longer appears in project connections
-    projects_response_after = await auth_client.get("/api/projects/")
+    projects_response_after = await auth_client.get("/api/projects/?limit=10000")
     assert projects_response_after.status_code == 200
     projects_data_after = projects_response_after.json()
 
@@ -131,7 +131,7 @@ async def test_soft_delete_already_deleted_connection(auth_client):
     assert add_response.status_code == 200
 
     # Get connection ID
-    projects_response = await auth_client.get("/api/projects/")
+    projects_response = await auth_client.get("/api/projects/?limit=10000")
     assert projects_response.status_code == 200
     projects_data = projects_response.json()
 
@@ -210,7 +210,7 @@ async def test_soft_deleted_connection_not_listed(auth_client):
     assert add_response_2.status_code == 200
 
     # Verify both connections are listed
-    projects_response = await auth_client.get("/api/projects/")
+    projects_response = await auth_client.get("/api/projects/?limit=10000")
     assert projects_response.status_code == 200
     projects_data = projects_response.json()
 
@@ -231,7 +231,7 @@ async def test_soft_deleted_connection_not_listed(auth_client):
     assert delete_response.status_code == 200
 
     # Verify only one connection is now listed
-    projects_response_after = await auth_client.get("/api/projects/")
+    projects_response_after = await auth_client.get("/api/projects/?limit=10000")
     assert projects_response_after.status_code == 200
     projects_data_after = projects_response_after.json()
 
