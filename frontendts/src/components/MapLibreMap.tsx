@@ -1058,22 +1058,30 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
   // Helper function to add a new error
   const addError = (message: string, shouldOverrideMessages: boolean = false) => {
-    const newError: ErrorEntry = {
-      id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-      message,
-      timestamp: new Date(),
-      shouldOverrideMessages,
-    };
-    setErrors(prev => [...prev, newError]);
-    console.error(message);
-    if (!shouldOverrideMessages) {
-      toast.error(message);
-    }
+    setErrors(prevErrors => {
+      // if it already exists, bail out
+      if (prevErrors.some(err => err.message === message)) {
+        return prevErrors;
+      }
 
-    // Auto-dismiss after 30 seconds
-    setTimeout(() => {
-      setErrors(prev => prev.filter(error => error.id !== newError.id));
-    }, 30000);
+      // otherwise create & push
+      const newError: ErrorEntry = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        message,
+        timestamp: new Date(),
+        shouldOverrideMessages,
+      };
+
+      console.error(message);
+      if (!shouldOverrideMessages) toast.error(message);
+
+      // schedule the auto-dismiss
+      setTimeout(() => {
+        setErrors(current => current.filter(e => e.id !== newError.id));
+      }, 30000);
+
+      return [...prevErrors, newError];
+    });
   };
 
   // Helper function to dismiss a specific error
@@ -1423,7 +1431,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
       newMap.on('error', (e) => {
         console.error('MapLibre GL error:', e);
-        addError('Error loading map: ' + (e.error?.message || 'Unknown error'), true);
+        const message = e.error?.message || 'Unknown error';
+        if (message.indexOf('AJAXError') !== -1 && message.indexOf('(502)') !== -1 && message.indexOf('.mvt') !== -1) {
+          // This just means database is slow
+          addError('PostGIS query took 60+ seconds, database might be overloaded', true);
+        } else {
+          addError('Error loading map: ' + message, true);
+        }
         setLoading(false);
       });
 
@@ -1646,8 +1660,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   // WebSocket using react-use-websocket
   const shouldConnect = !sessionContext.loading && (isTabVisible || !hiddenTimeoutExpired);
   const { lastMessage, readyState } = useWebSocket(wsUrl, {
-    onError: (event) => {
-      console.error('WebSocket error for map:', mapId, event);
+    onError: () => {
       addError('Chat connection error.', false);
     },
     shouldReconnect: () => true,
