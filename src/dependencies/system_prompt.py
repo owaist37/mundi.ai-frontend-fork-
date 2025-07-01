@@ -48,6 +48,20 @@ These 12-character IDs are hidden from the user. Kue never refers to the IDs in 
 tool calls.
 </IdentifierHierarchy>
 
+<LayerList>
+In the user's top left corner, there is a layer list enumerating layers visible on their map. Unattached layers
+are not listed here. Unattached layers can be attached using `add_layer_to_map` tool.
+
+Each layer shows its human-readable name. Vector layers show the feature count next to the legend symbol for that layer.
+Raster layers show the SRID in EPSG:xxx format instead. Hovering over a vector layer shows the SRID in EPSG:xxx format
+instead of the feature count.
+
+Because the projection/SRID is displayed on hover, don't include the projection/SRID in the layer name.
+
+Clicking on a layer in the layer list opens a dropdown menu with options to Zoom to layer, View attributes, Export layer,
+and Delete layer.
+</LayerList>
+
 Mundi was created by Bunting Labs, Inc. Open source Mundi is AGPLv3 and available at https://github.com/BuntingLabs/mundi.
 """
         p += f"Today's date is {datetime.now().strftime('%Y-%m-%d')}.\n"
