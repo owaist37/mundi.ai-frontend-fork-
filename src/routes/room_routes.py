@@ -111,7 +111,7 @@ async def get_map_room(
             detail="Invalid response from room creation service",
         )
 
-    redis.set(redis_key, room_id)
+    redis.setex(redis_key, 1800, room_id)  # 30 minutes TTL
     logger.info(f"Created and stored new room {room_id} for map {map_id}")
 
     return RoomResponse(room_id=room_id)
