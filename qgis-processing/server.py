@@ -53,149 +53,135 @@ def run_qgis_process(request: QGISProcessRequest) -> Dict[str, Any]:
     with tempfile.TemporaryDirectory() as temp_dir:
         start_time = time.time()
 
-        try:
-            xvfb_process = subprocess.Popen(
-                ["Xvfb", ":99", "-screen", "0", "1024x768x24", "-ac"]
-            )
+        if request.input_urls:
+            for param_name, url in request.input_urls.items():
+                parsed = urlparse(url)
+                filename = os.path.basename(parsed.path)
+                if "." not in filename:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "Invalid Input URL",
+                            "message": f"Input URL {url} basename must have a file extension",
+                        },
+                    )
 
-            if request.input_urls:
-                for param_name, url in request.input_urls.items():
-                    parsed = urlparse(url)
-                    filename = os.path.basename(parsed.path)
-                    if "." not in filename:
-                        raise HTTPException(
-                            status_code=400,
-                            detail={
-                                "error": "Invalid Input URL",
-                                "message": f"Input URL {url} basename must have a file extension",
-                            },
-                        )
+                local_path = os.path.join(temp_dir, filename)
 
-                    local_path = os.path.join(temp_dir, filename)
+                with httpx.stream("GET", url) as response:
+                    response.raise_for_status()
+                    with open(local_path, "wb") as f:
+                        for chunk in response.iter_bytes():
+                            f.write(chunk)
 
-                    with httpx.stream("GET", url) as response:
-                        response.raise_for_status()
-                        with open(local_path, "wb") as f:
-                            for chunk in response.iter_bytes():
-                                f.write(chunk)
+                # Update qgis_inputs to use local path
+                request.qgis_inputs[param_name] = local_path
 
-                    # Update qgis_inputs to use local path
-                    request.qgis_inputs[param_name] = local_path
+        # Also add OUTPUT parameters that are only specified in output_presigned_put_urls
+        if request.output_presigned_put_urls:
+            for param_name, put_url in request.output_presigned_put_urls.items():
+                if param_name not in request.qgis_inputs:
+                    parsed_url = urlparse(put_url)
+                    url_path = parsed_url.path
 
-            # Also add OUTPUT parameters that are only specified in output_presigned_put_urls
-            if request.output_presigned_put_urls:
-                for param_name, put_url in request.output_presigned_put_urls.items():
-                    if param_name not in request.qgis_inputs:
-                        parsed_url = urlparse(put_url)
-                        url_path = parsed_url.path
+                    request.qgis_inputs[param_name] = os.path.join(
+                        temp_dir, os.path.basename(url_path)
+                    )
 
-                        request.qgis_inputs[param_name] = os.path.join(
-                            temp_dir, os.path.basename(url_path)
-                        )
+        qgis_start_time = time.time()
+        result = subprocess.run(
+            ["qgis_process", "run", request.algorithm_id, "-"],
+            input=json.dumps({"inputs": request.qgis_inputs}),
+            capture_output=True,
+            text=True,
+            env={
+                "QT_QPA_PLATFORM": "offscreen",
+                "QGIS_PREFIX_PATH": "/usr",
+                "XDG_RUNTIME_DIR": "/tmp/xdg-runtime",
+                "GDAL_DATA": "/usr/share/gdal",
+                "PROJ_LIB": "/usr/share/proj",
+                "GDAL_DRIVER_PATH": "/usr/lib/gdalplugins",
+                "GEOTIFF_CSV": "/usr/share/gdal",
+                "LD_LIBRARY_PATH": "/usr/lib",
+                "PATH": "/usr/bin:/bin:/usr/local/bin",
+            },
+        )
+        qgis_end_time = time.time()
+        qgis_execution_time_ms = (qgis_end_time - qgis_start_time) * 1000
 
-            qgis_start_time = time.time()
-            result = subprocess.run(
-                ["qgis_process", "run", request.algorithm_id, "-"],
-                input=json.dumps({"inputs": request.qgis_inputs}),
-                capture_output=True,
-                text=True,
-                env={
-                    "DISPLAY": ":99",
-                    "QT_QPA_PLATFORM": "offscreen",
-                    "QGIS_PREFIX_PATH": "/usr",
-                    "XDG_RUNTIME_DIR": "/tmp/xdg-runtime",
-                    "GDAL_DATA": "/usr/share/gdal",
-                    "PROJ_LIB": "/usr/share/proj",
-                    "GDAL_DRIVER_PATH": "/usr/lib/gdalplugins",
-                    "GEOTIFF_CSV": "/usr/share/gdal",
-                    "LD_LIBRARY_PATH": "/usr/lib",
-                    "PATH": "/usr/bin:/bin:/usr/local/bin",
-                },
-            )
-            qgis_end_time = time.time()
-            qgis_execution_time_ms = (qgis_end_time - qgis_start_time) * 1000
-
-            xvfb_process.terminate()
-
-            if result.returncode != 0:
-                end_time = time.time()
-                total_execution_time_ms = (end_time - start_time) * 1000
-
-                error_info = {
-                    "error": "qgis_process failed",
-                    "stderr": result.stderr,
-                    "stdout": result.stdout,
-                    "returncode": result.returncode,
-                    "algorithm_id": request.algorithm_id,
-                    "execution_metadata": {
-                        "total_execution_time_ms": total_execution_time_ms,
-                        "qgis_execution_time_ms": qgis_execution_time_ms,
-                        "start_time": start_time,
-                        "end_time": end_time,
-                    },
-                }
-                raise HTTPException(status_code=500, detail=error_info)
-
-            # Parse successful result
-            qgis_result = json.loads(result.stdout.lstrip("'"))
-
-            # Upload output files if presigned URLs provided
-            upload_results = {}
-            if request.output_presigned_put_urls:
-                for param_name, put_url in request.output_presigned_put_urls.items():
-                    output_path = None
-
-                    if param_name in qgis_result.get("outputs", {}):
-                        output_path = qgis_result["outputs"][param_name]
-                    elif param_name in request.qgis_inputs:
-                        output_path = request.qgis_inputs[param_name]
-
-                    if output_path and os.path.exists(output_path):
-                        try:
-                            with open(output_path, "rb") as f:
-                                upload_response = httpx.put(put_url, content=f.read())
-                                upload_response.raise_for_status()
-
-                            upload_results[param_name] = {
-                                "uploaded": True,
-                                "url": put_url,
-                                "file_size": os.path.getsize(output_path),
-                            }
-                        except Exception as e:
-                            upload_results[param_name] = {
-                                "uploaded": False,
-                                "error": str(e),
-                                "url": put_url,
-                            }
-                    else:
-                        upload_results[param_name] = {
-                            "uploaded": False,
-                            "error": f"Output file not found: {output_path}",
-                            "url": put_url,
-                        }
-
+        if result.returncode != 0:
             end_time = time.time()
             total_execution_time_ms = (end_time - start_time) * 1000
 
-            enhanced_result = {
-                **qgis_result,
+            error_info = {
+                "error": "qgis_process failed",
+                "stderr": result.stderr,
+                "stdout": result.stdout,
+                "returncode": result.returncode,
+                "algorithm_id": request.algorithm_id,
                 "execution_metadata": {
                     "total_execution_time_ms": total_execution_time_ms,
                     "qgis_execution_time_ms": qgis_execution_time_ms,
                     "start_time": start_time,
                     "end_time": end_time,
-                    "algorithm_id": request.algorithm_id,
                 },
-                "upload_results": upload_results,
             }
+            raise HTTPException(status_code=500, detail=error_info)
 
-            return enhanced_result
+        # Parse successful result
+        qgis_result = json.loads(result.stdout.lstrip("'"))
 
-        finally:
-            try:
-                xvfb_process.terminate()
-            except Exception:
-                pass
+        # Upload output files if presigned URLs provided
+        upload_results = {}
+        if request.output_presigned_put_urls:
+            for param_name, put_url in request.output_presigned_put_urls.items():
+                output_path = None
+
+                if param_name in qgis_result.get("outputs", {}):
+                    output_path = qgis_result["outputs"][param_name]
+                elif param_name in request.qgis_inputs:
+                    output_path = request.qgis_inputs[param_name]
+
+                if output_path and os.path.exists(output_path):
+                    try:
+                        with open(output_path, "rb") as f:
+                            upload_response = httpx.put(put_url, content=f.read())
+                            upload_response.raise_for_status()
+
+                        upload_results[param_name] = {
+                            "uploaded": True,
+                            "url": put_url,
+                            "file_size": os.path.getsize(output_path),
+                        }
+                    except Exception as e:
+                        upload_results[param_name] = {
+                            "uploaded": False,
+                            "error": str(e),
+                            "url": put_url,
+                        }
+                else:
+                    upload_results[param_name] = {
+                        "uploaded": False,
+                        "error": f"Output file not found: {output_path}",
+                        "url": put_url,
+                    }
+
+        end_time = time.time()
+        total_execution_time_ms = (end_time - start_time) * 1000
+
+        enhanced_result = {
+            **qgis_result,
+            "execution_metadata": {
+                "total_execution_time_ms": total_execution_time_ms,
+                "qgis_execution_time_ms": qgis_execution_time_ms,
+                "start_time": start_time,
+                "end_time": end_time,
+                "algorithm_id": request.algorithm_id,
+            },
+            "upload_results": upload_results,
+        }
+
+        return enhanced_result
 
 
 @app.get("/health")
