@@ -34,15 +34,20 @@ async def run_migrations():
         command.upgrade(alembic_cfg, "head")
 
     try:
-        # Run synchronous Alembic command in a thread pool
+        # Run synchronous Alembic command in a thread pool with timeout
         loop = asyncio.get_event_loop()
         with ThreadPoolExecutor() as executor:
-            await loop.run_in_executor(executor, run_upgrade)
+            await asyncio.wait_for(
+                loop.run_in_executor(executor, run_upgrade), timeout=30.0
+            )
         print("✅ Database migrations completed successfully")
         return True
+    except asyncio.TimeoutError:
+        print("❌ Migration failed: Timeout after 30 seconds")
+        raise Exception("Migration timeout")
     except Exception as e:
         print(f"❌ Migration failed: {e}")
-        return False
+        raise
 
 
 # For running standalone

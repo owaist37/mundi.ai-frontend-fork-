@@ -42,11 +42,7 @@ async def lifespan(app: FastAPI):
     """Run database migrations on startup"""
     from src.database.migrate import run_migrations
 
-    try:
-        await run_migrations()
-    except Exception as e:
-        print(f"Warning: Database initialization failed: {e}")
-        print("Application will continue, but database operations may fail.")
+    await run_migrations()
     yield
     # Cleanup code here if needed
 
