@@ -1428,8 +1428,8 @@ async def internal_upload_layer(
             new_layer_result = await conn.fetchrow(
                 """
                 INSERT INTO map_layers
-                (layer_id, owner_uuid, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count, s3_key, size_bytes)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+                (layer_id, owner_uuid, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count, s3_key, size_bytes, source_map_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
                 RETURNING layer_id
                 """,
                 layer_id,
@@ -1444,6 +1444,7 @@ async def internal_upload_layer(
                 feature_count,
                 s3_key,
                 file_size_bytes,
+                map_id,
             )
 
             new_layer_id = new_layer_result["layer_id"]

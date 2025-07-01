@@ -165,6 +165,7 @@ class MapLayer(Base):
     )  # 'point', 'multipoint', 'linestring', 'polygon', etc.
     feature_count = Column(Integer)  # Number of features in vector layers
     size_bytes = Column(BIGINT)  # Size of uploaded layer in bytes
+    source_map_id = Column(String)  # Optional map ID that this layer was created from
     created_on = Column(
         TIMESTAMP(timezone=True),
         nullable=False,
