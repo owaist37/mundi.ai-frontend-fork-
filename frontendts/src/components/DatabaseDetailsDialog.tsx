@@ -133,8 +133,8 @@ If documentation generation fails, this indicates the database connection detail
 
                         if (language === 'mermaid') {
                           return (
-                            <div className="border rounded-lg p-4 bg-muted/20 my-6 max-w-2xl mx-auto">
-                              <MermaidComponent chart={String(children).replace(/\n$/, '')} />
+                            <div className="bg-muted/20 mx-auto">
+                              <MermaidComponent chart={String(children)} />
                             </div>
                           );
                         }
