@@ -2,7 +2,7 @@
 
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Database, Loader2, Trash2 } from "lucide-react";
+import { Database, Loader2, Trash2, RefreshCw } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import MermaidComponent from "./MermaidComponent";
 import { useEffect, useState } from "react";
@@ -21,6 +21,7 @@ const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, pr
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isRegenerating, setIsRegenerating] = useState(false);
 
   useEffect(() => {
     if (isOpen && connectionId && projectId) {
@@ -71,6 +72,51 @@ const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, pr
     }
   };
 
+  const handleRegenerate = async () => {
+    if (!connectionId || !projectId) return;
+
+    setIsRegenerating(true);
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}/postgis-connections/${connectionId}/regenerate-documentation`, {
+        method: 'POST',
+      });
+
+      if (!response.ok) {
+        throw new Error(`Failed to regenerate documentation: ${response.statusText}`);
+      }
+
+      // Wait a moment and then refetch the documentation
+      setTimeout(() => {
+        setLoading(true);
+        fetch(`/api/projects/${projectId}/postgis-connections/${connectionId}/documentation`)
+          .then(response => {
+            if (!response.ok) {
+              throw new Error(`Failed to fetch documentation: ${response.statusText}`);
+            }
+            return response.json();
+          })
+          .then(data => {
+            setDocumentation(data.documentation);
+          })
+          .catch(err => {
+            console.error('Error fetching database documentation:', err);
+            setError(err.message);
+            setDocumentation(null);
+          })
+          .finally(() => {
+            setLoading(false);
+            setIsRegenerating(false);
+          });
+      }, 2000); // Wait 2 seconds before refetching
+    } catch (err) {
+      console.error('Error regenerating database documentation:', err);
+      setError(err instanceof Error ? err.message : 'Failed to regenerate documentation');
+      setIsRegenerating(false);
+    }
+  };
+
   // Fallback content for when documentation is not available
   const fallbackContent = `
 Documentation is being generated for this database. Please check back in a few moments.
@@ -87,22 +133,38 @@ If documentation generation fails, this indicates the database connection detail
               <Database className="h-5 w-5" />
               {databaseName}
             </div>
-            {onDelete && (
+            <div className="flex items-center gap-2">
               <Button
-                variant="destructive"
+                variant="outline"
                 size="sm"
-                onClick={handleDelete}
-                disabled={isDeleting}
-                className="cursor-pointer mr-8"
+                onClick={handleRegenerate}
+                disabled={isRegenerating || loading}
+                className="cursor-pointer"
               >
-                {isDeleting ? (
+                {isRegenerating ? (
                   <Loader2 className="h-4 w-4 animate-spin" />
                 ) : (
-                  <Trash2 className="h-4 w-4" />
+                  <RefreshCw className="h-4 w-4" />
                 )}
-                {isDeleting ? 'Deleting...' : 'Delete'}
+                {isRegenerating ? 'Regenerating...' : 'Regenerate'}
               </Button>
-            )}
+              {onDelete && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="cursor-pointer mr-8"
+                >
+                  {isDeleting ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  {isDeleting ? 'Deleting...' : 'Delete'}
+                </Button>
+              )}
+            </div>
           </DialogTitle>
         </DialogHeader>
 

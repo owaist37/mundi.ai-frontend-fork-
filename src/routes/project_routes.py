@@ -757,6 +757,84 @@ async def get_database_documentation(
         )
 
 
+@project_router.post(
+    "/{project_id}/postgis-connections/{connection_id}/regenerate-documentation",
+    response_model=PostgresConnectionResponse,
+    operation_id="regenerate_database_documentation",
+)
+async def regenerate_database_documentation(
+    project_id: str,
+    connection_id: str,
+    background_tasks: BackgroundTasks,
+    session: UserContext = Depends(verify_session_required),
+    database_documenter: DatabaseDocumenter = Depends(get_database_documenter),
+    connection_manager: PostgresConnectionManager = Depends(
+        get_postgres_connection_manager
+    ),
+):
+    """
+    Regenerate the database documentation for a specific PostgreSQL connection.
+    Only the project owner or editors can regenerate documentation.
+    """
+    user_id = session.get_user_id()
+
+    async with get_async_db_connection() as conn:
+        # Check if user has access to the project
+        project = await conn.fetchrow(
+            """
+            SELECT owner_uuid, editor_uuids
+            FROM user_mundiai_projects
+            WHERE id = $1 AND soft_deleted_at IS NULL
+            """,
+            project_id,
+        )
+
+        if not project:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found.",
+            )
+
+        # Check if user is owner or editor
+        if str(project["owner_uuid"]) != user_id and user_id not in (
+            project["editor_uuids"] or []
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You don't have permission to modify this project.",
+            )
+
+        # Get the database connection
+        connection = await conn.fetchrow(
+            """
+            SELECT id, connection_uri, connection_name
+            FROM project_postgres_connections
+            WHERE id = $1 AND project_id = $2 AND soft_deleted_at IS NULL
+            """,
+            connection_id,
+            project_id,
+        )
+
+        if not connection:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Database connection {connection_id} not found.",
+            )
+
+        # Start background task to regenerate database documentation
+        background_tasks.add_task(
+            database_documenter.generate_documentation,
+            connection_id,
+            connection["connection_uri"],
+            connection["connection_name"] or "Database",
+            connection_manager,
+        )
+
+        return PostgresConnectionResponse(
+            success=True, message="Database documentation regeneration started"
+        )
+
+
 class SocialImageCacheBustedError(Exception):
     pass
 
