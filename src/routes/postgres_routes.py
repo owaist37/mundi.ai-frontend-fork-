@@ -727,48 +727,59 @@ async def get_map_description(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You must own this map to access map description",
             )
-
         content = []
-
-        # Get PostgreSQL connections for this map's project
+        # Get PostgreSQL connections for this map's project with documentation
         postgres_connections = await conn.fetch(
             """
-            SELECT ppc.id, ppc.connection_uri, ppc.connection_name,
-                   pps.friendly_name
+            SELECT
+                ppc.id,
+                ppc.connection_uri,
+                ppc.connection_name,
+                pps.friendly_name,
+                pps.summary_md,
+                pps.generated_at
             FROM project_postgres_connections ppc
             JOIN user_mundiai_maps m ON ppc.project_id = m.project_id
-            LEFT JOIN project_postgres_summary pps ON pps.connection_id = ppc.id
+            LEFT JOIN project_postgres_summary pps ON ppc.id = pps.connection_id
             WHERE m.id = $1 AND ppc.soft_deleted_at IS NULL
-            ORDER BY ppc.connection_name
+            ORDER BY ppc.connection_name, pps.generated_at DESC
             """,
             map_id,
         )
 
-        # Add PostgreSQL connection data to content
+        # Add PostgreSQL connection documentation and tables to content
+        seen_connections = set()
         for connection in postgres_connections:
+            # Only show the most recent documentation for each connection
+            if connection["id"] in seen_connections:
+                continue
+            seen_connections.add(connection["id"])
+
+            connection_name = (
+                connection["friendly_name"]
+                or connection["connection_name"]
+                or "Loading..."
+            )
+            content.append(
+                f'\n## PostGIS "{connection_name}" (ID {connection["id"]})\n'
+            )
+
+            # Add documentation if available
+            if connection["summary_md"]:
+                content.append(connection["summary_md"])
+            else:
+                content.append(
+                    "No documentation available for this database connection."
+                )
+
+            # Also add live table information
             try:
-                # Get tables from this PostgreSQL connection using error tracking
                 tables = await postgis_provider.get_tables_by_connection_id(
                     connection["id"], connection_manager
                 )
-
-                # Use AI-generated friendly name if available, otherwise fallback to connection_name or "Loading..."
-                connection_name = (
-                    connection["friendly_name"]
-                    or connection["connection_name"]
-                    or "Loading..."
-                )
-                content.append(
-                    f'\n## PostGIS "{connection_name}" (ID {connection["id"]})\n'
-                )
-                content.append("**Available Tables:** " + tables)
-
+                content.append("\n**Available Tables:** " + tables)
             except Exception:
-                content.append(
-                    f'\n## PostGIS "{connection["connection_name"]}" (ID {connection["id"]})\n'
-                )
-
-                content.append("Exception while connecting to database.")
+                content.append("\nException while connecting to database.")
 
         # Get all layers for this map
         layers = await conn.fetch(
