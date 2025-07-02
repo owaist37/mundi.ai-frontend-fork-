@@ -18,8 +18,9 @@ import os
 import subprocess
 import time
 from urllib.parse import urlparse
+from urllib.request import urlopen, Request
+from urllib.error import HTTPError, URLError
 from typing import Dict, Any, Optional
-import httpx
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 
@@ -68,11 +69,18 @@ def run_qgis_process(request: QGISProcessRequest) -> Dict[str, Any]:
 
                 local_path = os.path.join(temp_dir, filename)
 
-                with httpx.stream("GET", url) as response:
-                    response.raise_for_status()
-                    with open(local_path, "wb") as f:
-                        for chunk in response.iter_bytes():
-                            f.write(chunk)
+                try:
+                    with urlopen(url) as response:
+                        with open(local_path, "wb") as f:
+                            f.write(response.read())
+                except (HTTPError, URLError) as e:
+                    raise HTTPException(
+                        status_code=400,
+                        detail={
+                            "error": "Failed to download input file",
+                            "message": f"Could not download {url}: {str(e)}",
+                        },
+                    )
 
                 # Update qgis_inputs to use local path
                 request.qgis_inputs[param_name] = local_path
@@ -94,17 +102,6 @@ def run_qgis_process(request: QGISProcessRequest) -> Dict[str, Any]:
             input=json.dumps({"inputs": request.qgis_inputs}),
             capture_output=True,
             text=True,
-            env={
-                "QT_QPA_PLATFORM": "offscreen",
-                "QGIS_PREFIX_PATH": "/usr",
-                "XDG_RUNTIME_DIR": "/tmp/xdg-runtime",
-                "GDAL_DATA": "/usr/share/gdal",
-                "PROJ_LIB": "/usr/share/proj",
-                "GDAL_DRIVER_PATH": "/usr/lib/gdalplugins",
-                "GEOTIFF_CSV": "/usr/share/gdal",
-                "LD_LIBRARY_PATH": "/usr/lib",
-                "PATH": "/usr/bin:/bin:/usr/local/bin",
-            },
         )
         qgis_end_time = time.time()
         qgis_execution_time_ms = (qgis_end_time - qgis_start_time) * 1000
@@ -145,8 +142,11 @@ def run_qgis_process(request: QGISProcessRequest) -> Dict[str, Any]:
                 if output_path and os.path.exists(output_path):
                     try:
                         with open(output_path, "rb") as f:
-                            upload_response = httpx.put(put_url, content=f.read())
-                            upload_response.raise_for_status()
+                            data = f.read()
+
+                        req = Request(put_url, data=data, method="PUT")
+                        with urlopen(req) as response:
+                            pass  # Just ensure the request succeeds
 
                         upload_results[param_name] = {
                             "uploaded": True,

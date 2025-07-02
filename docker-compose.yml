@@ -138,7 +138,7 @@ services:
       x-bake:
         tags:
           - qgis-processing:local
-    command: uvicorn server:app --host 0.0.0.0 --port 8817
+    command: python -m uvicorn server:app --host 0.0.0.0 --port 8817
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8817/health"]
       interval: 30s
