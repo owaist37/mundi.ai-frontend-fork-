@@ -43,7 +43,6 @@ import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, Signal
 
 import { toast } from "sonner";
 import AttributeTable from "@/components/AttributeTable";
-import DatabaseDetailsDialog from "@/components/DatabaseDetailsDialog";
 import {
   Command,
   CommandEmpty,
@@ -230,6 +229,7 @@ const LayerList: React.FC<LayerListProps> = ({
   uploadingFiles,
   demoConfig,
 }) => {
+  const navigate = useNavigate();
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
 
   // Component to render legend symbol for a layer
@@ -237,11 +237,6 @@ const LayerList: React.FC<LayerListProps> = ({
     // Return cached symbol if available, otherwise null
     return layerSymbols[layerDetails.id] || null;
   };
-  const [showDatabaseDetails, setShowDatabaseDetails] = useState(false);
-  const [selectedDatabase, setSelectedDatabase] = useState<{
-    connection: PostgresConnectionDetails;
-    projectId: string;
-  } | null>(null);
   const [connectionMethod, setConnectionMethod] = useState<'demo' | 'uri' | 'fields'>('uri');
   const [postgisForm, setPostgisForm] = useState({
     uri: '',
@@ -254,11 +249,6 @@ const LayerList: React.FC<LayerListProps> = ({
   });
   const [postgisLoading, setPostgisLoading] = useState(false);
   const [postgisError, setPostgisError] = useState<string | null>(null);
-
-  const handleDatabaseClick = (connection: PostgresConnectionDetails, projectId: string) => {
-    setSelectedDatabase({ connection, projectId });
-    setShowDatabaseDetails(true);
-  };
 
   const handlePostgisConnect = async () => {
     if (!currentMapData?.project_id) {
@@ -692,7 +682,7 @@ const LayerList: React.FC<LayerListProps> = ({
                   <li
                     key={index}
                     className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
-                    onClick={() => handleDatabaseClick(connection, project.id)}
+                    onClick={() => navigate(`/postgis/${connection.connection_id}`)}
                   >
                     <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
                       <Database className="h-4 w-4" />
@@ -1023,18 +1013,6 @@ const LayerList: React.FC<LayerListProps> = ({
           </DialogContent>
         </Dialog>
 
-        {/* Database Details Dialog */}
-        <DatabaseDetailsDialog
-          isOpen={showDatabaseDetails && selectedDatabase !== null}
-          onClose={() => setShowDatabaseDetails(false)}
-          databaseName={selectedDatabase?.connection.friendly_name || ''}
-          connectionId={selectedDatabase?.connection.connection_id || ''}
-          projectId={selectedDatabase?.projectId || ''}
-          onDelete={() => {
-            setShowDatabaseDetails(false);
-            window.location.reload();
-          }}
-        />
       </CardFooter>
     </Card >
   );

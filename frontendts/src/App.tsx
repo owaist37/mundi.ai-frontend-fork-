@@ -21,6 +21,7 @@ import { cogProtocol } from '@geomatico/maplibre-cog-protocol';
 
 import MapsList from './components/MapsList';
 import ProjectView from './components/ProjectView';
+import PostGISDocumentation from './pages/PostGISDocumentation';
 import './App.css'
 
 const websiteDomain = import.meta.env.VITE_WEBSITE_DOMAIN;
@@ -119,6 +120,11 @@ function AppContent() {
           <Route path="/project/:projectId/:versionIdParam?" element={
             <SessionAuth>
               <ProjectView />
+            </SessionAuth>
+          } />
+          <Route path="/postgis/:connectionId" element={
+            <SessionAuth>
+              <PostGISDocumentation />
             </SessionAuth>
           } />
         </Routes>
