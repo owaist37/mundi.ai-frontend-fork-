@@ -753,6 +753,8 @@ async def get_map_description(
             # Only show the most recent documentation for each connection
             if connection["id"] in seen_connections:
                 continue
+
+            content.append(f"<PostGISConnection id={connection['id']}>")
             seen_connections.add(connection["id"])
 
             connection_name = (
@@ -766,7 +768,9 @@ async def get_map_description(
 
             # Add documentation if available
             if connection["summary_md"]:
+                content.append("<SchemaSummary>")
                 content.append(connection["summary_md"])
+                content.append("</SchemaSummary>")
             else:
                 content.append(
                     "No documentation available for this database connection."
@@ -780,6 +784,7 @@ async def get_map_description(
                 content.append("\n**Available Tables:** " + tables)
             except Exception:
                 content.append("\nException while connecting to database.")
+            content.append(f"</PostGISConnection id={connection['id']}>")
 
         # Get all layers for this map
         layers = await conn.fetch(

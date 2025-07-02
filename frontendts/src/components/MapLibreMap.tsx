@@ -70,7 +70,7 @@ interface ChatCompletionMessageRow {
 
 // Import styles in the parent component
 const KUE_MESSAGE_STYLE = `
-  text-sm leading-6
+  text-sm
   [&_table]:w-full [&_table]:border-collapse [&_table]:text-left
   [&_thead]:border-b-1 [&_thead]:border-gray-600
   [&_thead_th]:font-semibold
