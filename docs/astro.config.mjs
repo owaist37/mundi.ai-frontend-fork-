@@ -2,6 +2,7 @@
 import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
+import sitemap from '@astrojs/sitemap';
 
 // https://astro.build/config
 export default defineConfig({
@@ -80,5 +81,6 @@ You can try Mundi free at https://app.mundi.ai or self-host using Docker Compose
 				]
 			})]
 		}),
+		sitemap(),
 	],
 });
