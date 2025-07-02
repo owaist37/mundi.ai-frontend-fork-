@@ -318,7 +318,7 @@ async def run_geoprocessing_tool(
                 # Call QGIS processing service
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
-                        "http://qgis-processing:8817/run_qgis_process",
+                        os.environ["QGIS_PROCESSING_URL"] + "/run_qgis_process",
                         json=qgis_request,
                         timeout=30.0,
                     )

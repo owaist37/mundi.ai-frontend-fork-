@@ -37,6 +37,7 @@ services:
       - S3_BUCKET=test-bucket
       - WEBSITE_DOMAIN=http://localhost:8000
       - DRIFTDB_SERVER_URL=http://driftdb:8080
+      - QGIS_PROCESSING_URL=http://qgis-processing:8817
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - OPENAI_API_KEY=$OPENAI_API_KEY
