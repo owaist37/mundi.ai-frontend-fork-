@@ -21,17 +21,33 @@ import zipfile
 import shutil
 import aioboto3
 import asyncio
+import secrets
 from openai import AsyncOpenAI
 
 
+def generate_id(length=12, prefix=""):
+    """Generate a unique ID for the map or layer.
+
+    Using characters [1-9A-HJ-NP-Za-km-z] (excluding 0, O, I, l)
+    to avoid ambiguity in IDs.
+    """
+    assert len(prefix) in [0, 1], "Prefix must be at most 1 character"
+    valid_chars = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+    result = "".join(secrets.choice(valid_chars) for _ in range(length - len(prefix)))
+    return prefix + result
+
+
 def get_s3_client():
+    config = boto3.session.Config(
+        signature_version="s3",
+    )
     return boto3.client(
         "s3",
         endpoint_url=os.environ["S3_ENDPOINT_URL"],
         aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
         aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
         region_name=os.environ["S3_DEFAULT_REGION"],
-        config=boto3.session.Config(signature_version="s3v4"),
+        config=config,
     )
 
 
@@ -51,6 +67,9 @@ async def get_async_s3_client():
             except Exception:
                 pass
 
+        config = boto3.session.Config(
+            signature_version="s3",
+        )
         session = aioboto3.Session()
         client_coro = session.client(
             "s3",
@@ -58,7 +77,7 @@ async def get_async_s3_client():
             aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
             aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
             region_name=os.environ["S3_DEFAULT_REGION"],
-            config=boto3.session.Config(signature_version="s3v4"),
+            config=config,
         )
         _async_s3_client = await client_coro.__aenter__()
         _async_s3_client_loop = current_loop
