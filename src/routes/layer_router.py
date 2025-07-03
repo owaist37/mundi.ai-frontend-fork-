@@ -15,6 +15,7 @@
 
 import os
 import json
+import asyncpg
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -633,6 +634,19 @@ async def get_layer_mvt_tile(
             },
         )
 
+    except asyncpg.exceptions.InternalServerError as e:
+        # Gracefully handle the specific projection-domain error
+        if "transform: Point outside of projection domain" in str(e):
+            return Response(
+                content=b"",
+                media_type="application/vnd.mapbox-vector-tile",
+                headers={
+                    "Access-Control-Allow-Origin": "*",
+                    "Cache-Control": "public, max-age=3600",
+                },
+            )
+        else:
+            raise e
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
