@@ -5,7 +5,7 @@
     <img src="https://img.shields.io/github/actions/workflow/status/BuntingLabs/mundi.ai/cicd.yml?label=CI" alt="GitHub Actions Workflow Status" />
   </a>
   <a href="https://github.com/BuntingLabs/mundi.ai/actions/workflows/ruff.yml">
-    <img src="https://img.shields.io/github/actions/workflow/status/BuntingLabs/mundi.ai/ruff.yml?label=Lint" alt="GitHub Actions Lint Status" />
+    <img src="https://img.shields.io/github/actions/workflow/status/BuntingLabs/mundi.ai/ruff.yml?label=lint" alt="GitHub Actions Lint Status" />
   </a>
   <a href="https://discord.gg/V63VbgH8dT">
     <img src="https://dcbadge.limes.pink/api/server/V63VbgH8dT?style=plastic" alt="Discord" />
