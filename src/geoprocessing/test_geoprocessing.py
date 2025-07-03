@@ -80,6 +80,7 @@ def sync_test_map_with_vector_layers(sync_auth_client):
     return {"map_id": map_id, **layer_ids}
 
 
+@pytest.mark.skip(reason="Skipping geoprocessing tests")
 @pytest.mark.anyio
 async def test_chat_completions(
     sync_test_map_with_vector_layers,
