@@ -96,7 +96,7 @@ app.include_router(
 
 # Create a combined proxy router for DriftDB that handles both HTTP and WebSocket
 # Use a WebSocket-capable proxy for the /room routes
-room_ws_app = reverse_ws_app(base_url="http://driftdb:8080/room/")
+room_ws_app = reverse_ws_app(base_url="ws://driftdb:8080/room/")
 # Mount it as a sub-application
 app.mount("/room/", room_ws_app)
 
