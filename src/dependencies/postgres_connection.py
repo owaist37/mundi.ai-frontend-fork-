@@ -22,6 +22,7 @@ import ipaddress
 import asyncpg
 from fastapi import HTTPException, status
 import logging
+import ssl
 
 from ..structures import get_async_db_connection
 
@@ -170,8 +171,13 @@ class PostgresConnectionManager:
         pg_connection = await self.get_connection(connection_id)
 
         try:
+            # Create SSL context that accepts self-signed certificates
+            ssl_context = ssl.create_default_context()
+            ssl_context.check_hostname = False
+            ssl_context.verify_mode = ssl.CERT_NONE
+
             conn = await asyncio.wait_for(
-                asyncpg.connect(pg_connection["connection_uri"], ssl=True),
+                asyncpg.connect(pg_connection["connection_uri"], ssl=ssl_context),
                 timeout=timeout,
             )
             await self.update_error_status(connection_id, error_text=None)
