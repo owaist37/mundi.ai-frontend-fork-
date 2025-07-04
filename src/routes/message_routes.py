@@ -29,7 +29,6 @@ import traceback
 from fastapi import UploadFile
 import io
 import httpx
-import asyncpg
 from typing import Callable
 from redis import Redis
 from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -420,6 +419,7 @@ async def process_chat_interaction_task(
     chat_args: ChatArgsProvider,
     map_state: MapStateProvider,
     system_prompt_provider: SystemPromptProvider,
+    connection_manager: PostgresConnectionManager,
 ):
     # kick it off with a quick sleep, to detach from the event loop blocking /send
     await asyncio.sleep(0.1)
@@ -808,16 +808,9 @@ async def process_chat_interaction_task(
                                         update_style_json=True,
                                     ):
                                         try:
-                                            # Validate the query before creating the layer
-                                            conn_uri = connection_result[
-                                                "connection_uri"
-                                            ]
-                                            pg = await asyncpg.connect(
-                                                conn_uri,
-                                                ssl=True,
-                                                server_settings={
-                                                    "default_transaction_read_only": "on"
-                                                },
+                                            # Use connection manager for PostGIS operations
+                                            pg = await connection_manager.connect_to_postgres(
+                                                postgis_connection_id
                                             )
                                             try:
                                                 # 1. Make sure the SQL parsers and planners are happy
@@ -834,160 +827,135 @@ async def process_chat_interaction_task(
                                                     LIMIT 1
                                                     """
                                                 )
-                                            finally:
-                                                await pg.close()
 
-                                            # Calculate feature count, bounds, and geometry type for the PostGIS layer
-                                            feature_count = None
-                                            bounds = None
-                                            geometry_type = None
-                                            try:
-                                                pg_stats = await asyncpg.connect(
-                                                    conn_uri,
-                                                    ssl=True,
-                                                    server_settings={
-                                                        "default_transaction_read_only": "on"
-                                                    },
-                                                )
-
-                                                try:
-                                                    # Calculate feature count
-                                                    count_result = await pg_stats.fetchval(
-                                                        f"SELECT COUNT(*) FROM ({query}) AS sub"
-                                                    )
-                                                    feature_count = (
-                                                        int(count_result)
-                                                        if count_result is not None
-                                                        else None
-                                                    )
-
-                                                    # Find geometry column by trying common names
-                                                    geometry_column = None
-                                                    common_geom_names = [
-                                                        "geom",
-                                                        "geometry",
-                                                        "shape",
-                                                        "the_geom",
-                                                        "wkb_geometry",
-                                                    ]
-
-                                                    for geom_name in common_geom_names:
-                                                        try:
-                                                            await pg_stats.fetchval(
-                                                                f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
-                                                            )
-                                                            geometry_column = geom_name
-                                                            break
-                                                        except Exception:
-                                                            continue
-
-                                                    if geometry_column:
-                                                        # Detect geometry type for styling
-                                                        geometry_type_result = await pg_stats.fetchrow(
-                                                            f"""
-                                                            SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
-                                                            FROM ({query}) AS sub
-                                                            WHERE {geometry_column} IS NOT NULL
-                                                            GROUP BY ST_GeometryType({geometry_column})
-                                                            ORDER BY count DESC
-                                                            LIMIT 1
-                                                            """
-                                                        )
-
-                                                        if (
-                                                            geometry_type_result
-                                                            and geometry_type_result[
-                                                                "geom_type"
-                                                            ]
-                                                        ):
-                                                            # Convert PostGIS geometry type to standard format
-                                                            geometry_type = (
-                                                                geometry_type_result[
-                                                                    "geom_type"
-                                                                ]
-                                                                .replace("ST_", "")
-                                                                .lower()
-                                                            )
-
-                                                        # Calculate bounds with proper SRID handling
-                                                        # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
-                                                        bounds_result = await pg_stats.fetchrow(
-                                                            f"""
-                                                            WITH extent_data AS (
-                                                                SELECT
-                                                                    ST_Extent({geometry_column}) as extent_geom,
-                                                                    (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
-                                                                FROM ({query}) AS sub
-                                                                WHERE {geometry_column} IS NOT NULL
-                                                            )
-                                                            SELECT
-                                                                CASE
-                                                                    WHEN original_srid = 4326 THEN
-                                                                        ST_XMin(extent_geom)
-                                                                    ELSE
-                                                                        ST_XMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                                END as xmin,
-                                                                CASE
-                                                                    WHEN original_srid = 4326 THEN
-                                                                        ST_YMin(extent_geom)
-                                                                    ELSE
-                                                                        ST_YMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                                END as ymin,
-                                                                CASE
-                                                                    WHEN original_srid = 4326 THEN
-                                                                        ST_XMax(extent_geom)
-                                                                    ELSE
-                                                                        ST_XMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                                END as xmax,
-                                                                CASE
-                                                                    WHEN original_srid = 4326 THEN
-                                                                        ST_YMax(extent_geom)
-                                                                    ELSE
-                                                                        ST_YMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
-                                                                END as ymax
-                                                            FROM extent_data
-                                                            WHERE extent_geom IS NOT NULL
-                                                            """
-                                                        )
-
-                                                        if bounds_result and all(
-                                                            v is not None
-                                                            for v in bounds_result
-                                                        ):
-                                                            bounds = [
-                                                                float(
-                                                                    bounds_result[
-                                                                        "xmin"
-                                                                    ]
-                                                                ),
-                                                                float(
-                                                                    bounds_result[
-                                                                        "ymin"
-                                                                    ]
-                                                                ),
-                                                                float(
-                                                                    bounds_result[
-                                                                        "xmax"
-                                                                    ]
-                                                                ),
-                                                                float(
-                                                                    bounds_result[
-                                                                        "ymax"
-                                                                    ]
-                                                                ),
-                                                            ]
-                                                    else:
-                                                        print(
-                                                            "Warning: No geometry column found in PostGIS query"
-                                                        )
-                                                finally:
-                                                    await pg_stats.close()
-                                            except Exception as e:
-                                                print(
-                                                    f"Warning: Failed to calculate feature count/bounds for PostGIS layer: {str(e)}"
-                                                )
+                                                # Calculate feature count, bounds, and geometry type for the PostGIS layer
                                                 feature_count = None
                                                 bounds = None
+                                                geometry_type = None
+
+                                                # Calculate feature count
+                                                count_result = await pg.fetchval(
+                                                    f"SELECT COUNT(*) FROM ({query}) AS sub"
+                                                )
+                                                feature_count = (
+                                                    int(count_result)
+                                                    if count_result is not None
+                                                    else None
+                                                )
+
+                                                # Find geometry column by trying common names
+                                                geometry_column = None
+                                                common_geom_names = [
+                                                    "geom",
+                                                    "geometry",
+                                                    "shape",
+                                                    "the_geom",
+                                                    "wkb_geometry",
+                                                ]
+
+                                                for geom_name in common_geom_names:
+                                                    try:
+                                                        await pg.fetchval(
+                                                            f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
+                                                        )
+                                                        geometry_column = geom_name
+                                                        break
+                                                    except Exception:
+                                                        continue
+
+                                                if geometry_column:
+                                                    # Detect geometry type for styling
+                                                    geometry_type_result = await pg.fetchrow(
+                                                        f"""
+                                                        SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
+                                                        FROM ({query}) AS sub
+                                                        WHERE {geometry_column} IS NOT NULL
+                                                        GROUP BY ST_GeometryType({geometry_column})
+                                                        ORDER BY count DESC
+                                                        LIMIT 1
+                                                        """
+                                                    )
+
+                                                    if (
+                                                        geometry_type_result
+                                                        and geometry_type_result[
+                                                            "geom_type"
+                                                        ]
+                                                    ):
+                                                        # Convert PostGIS geometry type to standard format
+                                                        geometry_type = (
+                                                            geometry_type_result[
+                                                                "geom_type"
+                                                            ]
+                                                            .replace("ST_", "")
+                                                            .lower()
+                                                        )
+
+                                                    # Calculate bounds with proper SRID handling
+                                                    # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
+                                                    bounds_result = await pg.fetchrow(
+                                                        f"""
+                                                        WITH extent_data AS (
+                                                            SELECT
+                                                                ST_Extent({geometry_column}) as extent_geom,
+                                                                (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
+                                                            FROM ({query}) AS sub
+                                                            WHERE {geometry_column} IS NOT NULL
+                                                        )
+                                                        SELECT
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_XMin(extent_geom)
+                                                                ELSE
+                                                                    ST_XMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as xmin,
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_YMin(extent_geom)
+                                                                ELSE
+                                                                    ST_YMin(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as ymin,
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_XMax(extent_geom)
+                                                                ELSE
+                                                                    ST_XMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as xmax,
+                                                            CASE
+                                                                WHEN original_srid = 4326 THEN
+                                                                    ST_YMax(extent_geom)
+                                                                ELSE
+                                                                    ST_YMax(ST_Transform(ST_SetSRID(extent_geom, original_srid), 4326))
+                                                            END as ymax
+                                                        FROM extent_data
+                                                        WHERE extent_geom IS NOT NULL
+                                                        """
+                                                    )
+
+                                                    if bounds_result and all(
+                                                        v is not None
+                                                        for v in bounds_result
+                                                    ):
+                                                        bounds = [
+                                                            float(
+                                                                bounds_result["xmin"]
+                                                            ),
+                                                            float(
+                                                                bounds_result["ymin"]
+                                                            ),
+                                                            float(
+                                                                bounds_result["xmax"]
+                                                            ),
+                                                            float(
+                                                                bounds_result["ymax"]
+                                                            ),
+                                                        ]
+                                                else:
+                                                    print(
+                                                        "Warning: No geometry column found in PostGIS query"
+                                                    )
+                                            finally:
+                                                await pg.close()
 
                                             # Generate a new layer ID
                                             layer_id = generate_id(prefix="L")
@@ -1446,9 +1414,6 @@ async def process_chat_interaction_task(
                                         "error": f"PostGIS connection '{postgis_connection_id}' not found or you do not have access to it.",
                                     }
                                 else:
-                                    # Use the connection URI
-                                    connection_uri = connection_result["connection_uri"]
-
                                     try:
                                         # Check if LIMIT is already present and validate it
                                         limited_query = sql_query.strip()
@@ -1491,12 +1456,8 @@ async def process_chat_interaction_task(
                                         async with kue_ephemeral_action(
                                             map_id, "Querying PostgreSQL database..."
                                         ):
-                                            postgres_conn = await asyncpg.connect(
-                                                connection_uri,
-                                                ssl=True,
-                                                server_settings={
-                                                    "default_transaction_read_only": "on"
-                                                },
+                                            postgres_conn = await connection_manager.connect_to_postgres(
+                                                postgis_connection_id
                                             )
                                             try:
                                                 # Execute the query
@@ -1798,6 +1759,7 @@ async def send_map_message(
         chat_args,
         map_state,
         system_prompt_provider,
+        connection_manager,
     )
 
     return MessageSendResponse(
