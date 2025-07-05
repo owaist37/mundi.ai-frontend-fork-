@@ -21,12 +21,13 @@ import time
 import traceback
 import uuid
 from collections import defaultdict, deque
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from datetime import datetime, timezone
 from typing import Any, Dict, Tuple
 
 import asyncpg
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, Depends
+from anyio import EndOfStream
 
 from src.dependencies.session import UserContext, verify_websocket
 from src.structures import get_async_db_connection
@@ -174,13 +175,22 @@ async def ws_map_chat(
 
             # client closed
             if recv_task in done:
+                try:
+                    recv_task.result()
+                except (WebSocketDisconnect, EndOfStream):
+                    pass
+
                 for task in pending:
                     task.cancel()
+                    with suppress(asyncio.CancelledError):
+                        await task
                 break
 
             # got a payload
             payload = queue_task.result()
             recv_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await recv_task
 
             notification = json.loads(payload)
 
