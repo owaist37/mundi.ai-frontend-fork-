@@ -220,11 +220,25 @@ export default function ProjectView() {
       return;
     }
 
+    let roomTimer: NodeJS.Timeout | undefined;
+
     // Only fetch if we have a session and an ID
     if (!sessionContext.loading && versionId) {
       updateMapData(versionId);
       fetchRoomId(versionId);
+
+      // Set up timer to re-fetch room ID every 15 mins
+      roomTimer = setInterval(() => {
+        fetchRoomId(versionId);
+      }, 15 * 60 * 1000); // 15 mins in milliseconds
     }
+
+    // Cleanup timer on unmount or dependency change
+    return () => {
+      if (roomTimer) {
+        clearInterval(roomTimer);
+      }
+    };
   }, [versionId, sessionContext.loading, updateMapData, fetchRoomId]);
 
   if (sessionContext.loading) {
