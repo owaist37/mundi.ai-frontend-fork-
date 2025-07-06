@@ -140,7 +140,7 @@ def test_websocket_missed_messages(
     )
     assert response2.status_code == 200
 
-    time.sleep(4)
+    time.sleep(1)
 
     with sync_auth_client.websocket_connect(
         websocket_url_for_map(sync_test_map_id)
