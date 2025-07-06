@@ -51,6 +51,7 @@ def test_map_id(sync_auth_client):
 
 
 @pytest.mark.anyio
+@pytest.mark.timeout(10)
 async def test_zoom_integration_with_real_openai(
     auth_client, test_map_id, sync_auth_client, websocket_url_for_map
 ):
