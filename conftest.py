@@ -15,6 +15,9 @@
 
 import pytest
 import os
+
+# Set fast timeout for postgres connections in tests
+os.environ["MUNDI_POSTGIS_TIMEOUT_SEC"] = "0.1"
 from httpx_ws.transport import ASGIWebSocketTransport
 from httpx import AsyncClient
 from pathlib import Path

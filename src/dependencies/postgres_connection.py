@@ -165,9 +165,12 @@ class PostgresConnectionManager:
                 )
 
     async def connect_to_postgres(
-        self, connection_id: str, timeout: float = 10.0
+        self, connection_id: str, timeout: float = None
     ) -> asyncpg.Connection:
         """Connect to a PostgreSQL database using the stored connection details."""
+        if timeout is None:
+            timeout = float(os.environ.get("MUNDI_POSTGIS_TIMEOUT_SEC", "10"))
+
         pg_connection = await self.get_connection(connection_id)
 
         try:
