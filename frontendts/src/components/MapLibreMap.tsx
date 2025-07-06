@@ -145,6 +145,109 @@ class GlobeControl implements IControl {
   }
 }
 
+// Custom Export PDF Control class
+class ExportPDFControl implements IControl {
+  private _container: HTMLDivElement | undefined;
+  private _button: HTMLButtonElement | undefined;
+  private _map: Map | undefined;
+  private _mapId: string;
+
+  constructor(mapId: string) {
+    this._mapId = mapId;
+  }
+
+  onAdd(map: Map): HTMLElement {
+    this._map = map;
+    this._container = document.createElement('div');
+    this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
+
+    const button = document.createElement('button');
+    this._button = button;
+    button.className = 'maplibregl-ctrl-export-pdf';
+    button.type = 'button';
+    button.title = 'Export map screenshot';
+    button.setAttribute('aria-label', 'Export map screenshot');
+
+    // Create camera icon (SVG)
+    button.innerHTML = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="lucide lucide-camera-icon lucide-camera"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>
+    `;
+    button.style.border = 'none';
+    button.style.background = 'transparent';
+    button.style.cursor = 'pointer';
+    button.style.padding = '5px';
+    button.style.display = 'flex';
+    button.style.alignItems = 'center';
+    button.style.justifyContent = 'center';
+
+    button.addEventListener('click', this._onClickExportPDF.bind(this));
+
+    this._container.appendChild(button);
+    return this._container;
+  }
+
+  onRemove(): void {
+    if (this._container && this._container.parentNode) {
+      this._container.parentNode.removeChild(this._container);
+    }
+  }
+
+  private async _onClickExportPDF(): Promise<void> {
+    if (!this._map || !this._button) return;
+
+    // Store original content
+    const originalContent = this._button.innerHTML;
+    
+    // Replace with spinning loader
+    this._button.innerHTML = `
+      <svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2">
+        <circle cx="12" cy="12" r="10" stroke-opacity="0.25"/>
+        <path d="M12 2a10 10 0 0 1 10 10" stroke-opacity="1"/>
+      </svg>
+    `;
+    this._button.disabled = true;
+
+    try {
+      // Get current map bounds
+      const bounds = this._map.getBounds();
+      const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+
+      // Get map container dimensions and double resolution
+      const container = this._map.getContainer();
+      const width = container.offsetWidth * 2;
+      const height = container.offsetHeight * 2;
+
+      // Call the render API endpoint to get PNG
+      const response = await fetch(`/api/maps/${this._mapId}/render.png?bbox=${bbox}&width=${width}&height=${height}`);
+
+      if (!response.ok) {
+        throw new Error('Failed to render map');
+      }
+
+      // Get the PNG blob
+      const blob = await response.blob();
+
+      // For now, just download the PNG (PDF conversion can be added later)
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `map-${this._mapId}-${new Date().toISOString().split('T')[0]}.png`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+    } catch (error) {
+      console.error('Error exporting to PDF:', error);
+      alert('Failed to export map. Please try again.');
+    } finally {
+      // Restore original content
+      this._button.innerHTML = originalContent;
+      this._button.disabled = false;
+    }
+  }
+}
+
 interface ErrorEntry {
   id: string;
   message: string;
@@ -1023,6 +1126,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<Map | null>(null);
   const globeControlRef = useRef<GlobeControl | null>(null);
+  const exportPDFControlRef = useRef<ExportPDFControl | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
@@ -1383,8 +1487,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
       newMap.on('load', () => {
         // Add navigation controls
-        newMap.addControl(new NavigationControl());
-        newMap.addControl(new ScaleControl());
+        newMap.addControl(new NavigationControl(), 'top-right');
+        newMap.addControl(new ScaleControl(), 'bottom-left');
+
+        // Add export PDF control below the navigation controls
+        const exportPDFControl = new ExportPDFControl(mapId);
+        exportPDFControlRef.current = exportPDFControl;
+        newMap.addControl(exportPDFControl, 'top-right');
 
         // Load cursor image early (doesn't need to wait for style)
         const cursorImage = new Image();
