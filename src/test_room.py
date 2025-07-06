@@ -15,6 +15,7 @@
 
 import pytest
 import uuid
+from starlette.testclient import WebSocketDenialResponse
 
 
 @pytest.fixture
@@ -86,3 +87,13 @@ async def test_private_map_access_in_edit_mode(private_test_map_id, auth_client)
     room_data = response.json()
     assert "room_id" in room_data
     assert room_data["room_id"]
+
+
+@pytest.mark.anyio
+async def test_websocket_expired_room_connection(sync_auth_client):
+    # Test connecting to a websocket room
+    room_id = "3a03d05f-92a1-4df4-8dcb-2ea608233886"
+
+    with pytest.raises(WebSocketDenialResponse):
+        with sync_auth_client.websocket_connect(f"/room/{room_id}/connect"):
+            pytest.fail("WebSocket connection should not proxy connect to random room")

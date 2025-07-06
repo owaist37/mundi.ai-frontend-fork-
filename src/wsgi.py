@@ -25,6 +25,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from fastapi_mcp import FastApiMCP
 from fastapi_proxy_lib.fastapi.app import reverse_http_app, reverse_ws_app
+import httpx
 
 from src.routes import (
     postgres_routes,
@@ -55,6 +56,17 @@ app = FastAPI(
     openapi_url=None,
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(httpx.RemoteProtocolError)
+async def handle_driftdb_error(request: Request, exc: httpx.RemoteProtocolError):
+    if not request.url.path.startswith("/room/"):
+        raise exc
+
+    return JSONResponse(
+        status_code=404,
+        content={"detail": "Room not found, likely expired"},
+    )
 
 
 app.include_router(
