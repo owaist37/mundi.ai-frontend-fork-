@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import react from '@vitejs/plugin-react-swc'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
 
@@ -41,13 +41,5 @@ export default defineConfig(({ mode }) => ({
     sourcemap: mode === 'development',
     // Reduce memory usage during build
     chunkSizeWarningLimit: 1000,
-    rollupOptions: {
-      output: {
-        manualChunks: {
-          vendor: ['react', 'react-dom'],
-          ui: ['@radix-ui/react-dialog', '@radix-ui/react-dropdown-menu']
-        }
-      }
-    }
   }
 }))
