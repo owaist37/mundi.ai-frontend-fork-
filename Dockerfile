@@ -69,6 +69,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 FROM node:20-bookworm AS frontend-builder
 WORKDIR /app/frontendts
 COPY frontendts/package*.json ./
+COPY frontendts/.npmrc ./
 RUN --mount=type=cache,target=/root/.npm \
     npm ci
 ARG VITE_WEBSITE_DOMAIN
