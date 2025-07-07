@@ -34,13 +34,13 @@ export default defineConfig({
 						{ label: 'Connecting to PostGIS', slug: 'guides/connecting-to-postgis' },
 						{ label: 'Geoprocessing from QGIS', slug: 'guides/geoprocessing-from-qgis' },
 						{ label: 'Satellite basemaps', slug: 'guides/switching-basemaps-satellite-or-traditional-vector' },
-						{ label: 'Self-hosting Mundi', slug: 'guides/self-hosting-mundi' },
 					],
 				},
 				{
-					label: 'Advanced Configurations',
+					label: 'Deployment Configurations',
 					items: [
-						{ label: 'On-Premise/VPC Kubernetes', slug: 'advanced/on-premise-vpc-kubernetes-deployment' }
+						{ label: 'Self-hosting Mundi', slug: 'deployments/self-hosting-mundi' },
+						{ label: 'On-Premise/VPC Kubernetes', slug: 'deployments/on-premise-vpc-kubernetes-deployment' }
 					]
 				}
 			],
@@ -83,4 +83,9 @@ You can try Mundi free at https://app.mundi.ai or self-host using Docker Compose
 		}),
 		sitemap(),
 	],
+	// prevent old routes from 404'ing
+	redirects: {
+		'/advanced/on-premise-vpc-kubernetes-deployment': '/deployments/on-premise-vpc-kubernetes-deployment',
+		'/guides/self-hosting-mundi': '/deployments/self-hosting-mundi'
+	}
 });
