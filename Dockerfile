@@ -1,8 +1,8 @@
 # tippecanoe
-FROM node:20-bookworm AS tippecanoe-builder
+FROM node:20-bookworm-slim AS tippecanoe-builder
 ARG TIPPECANOE_TAG=2.77.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git build-essential libsqlite3-dev zlib1g-dev \
+        git build-essential libsqlite3-dev zlib1g-dev  ca-certificates \
     && git clone --depth 1 --branch ${TIPPECANOE_TAG} https://github.com/felt/tippecanoe /tmp/tippecanoe \
     && make -C /tmp/tippecanoe -j$(nproc) && make -C /tmp/tippecanoe install \
     && rm -rf /tmp/tippecanoe \
@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # maplibre
-FROM node:20-bookworm AS maplibre-builder
+FROM node:20-bookworm-slim AS maplibre-builder
 ARG MAPLIBRE_TAG=node-v6.1.0
 WORKDIR /opt
-RUN apt-get update && apt-get install -y --no-install-recommends git \
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates \
     && git clone --depth 1 --recursive --branch ${MAPLIBRE_TAG} \
         https://github.com/maplibre/maplibre-native.git \
     && apt-get purge -y git \
@@ -25,7 +25,7 @@ WORKDIR /opt/maplibre-native/platform/node
 RUN npm ci && npm pack --silent
 
 # base runtime
-FROM node:20-bookworm AS base
+FROM node:20-bookworm-slim AS base
 RUN apt-get update && apt-get install -y --no-install-recommends \
         gdal-bin python3-gdal \
         libcairo2-dev libgles2-mesa-dev libgbm-dev \
@@ -39,7 +39,7 @@ COPY --from=tippecanoe-builder /usr/local/bin/tippecanoe* /usr/local/bin/
 FROM base AS tools
 RUN --mount=type=cache,target=/var/cache/apt \
     --mount=type=cache,target=/var/lib/apt \
-    apt-get update && apt-get install -y --no-install-recommends wget libpng-dev \
+    apt-get update && apt-get install -y --no-install-recommends wget libpng-dev ca-certificates \
     && npm install -g @maplibre/maplibre-gl-style-spec \
     && wget -qO /tmp/pmtiles.tar.gz \
          https://github.com/protomaps/go-pmtiles/releases/download/v1.25.3/go-pmtiles_1.25.3_Linux_x86_64.tar.gz \
@@ -66,7 +66,7 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install hyperdx-opentelemetry
 
 # frontend app
-FROM node:20-bookworm AS frontend-builder
+FROM node:20-bookworm-slim AS frontend-builder
 WORKDIR /app/frontendts
 COPY frontendts/package*.json ./
 COPY frontendts/.npmrc ./
