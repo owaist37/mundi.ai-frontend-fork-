@@ -16,6 +16,22 @@
 import pytest
 import uuid
 import os
+from unittest.mock import patch, AsyncMock
+from openai.types.chat import (
+    ChatCompletionMessage,
+)
+
+
+class MockChoice:
+    def __init__(self, content: str, tool_calls=None):
+        self.message = ChatCompletionMessage(
+            content=content, tool_calls=tool_calls, role="assistant"
+        )
+
+
+class MockResponse:
+    def __init__(self, content: str, tool_calls=None):
+        self.choices = [MockChoice(content, tool_calls)]
 
 
 @pytest.fixture
@@ -53,48 +69,85 @@ async def test_vector_layer(auth_client, test_map_id):
 
 
 @pytest.mark.anyio
-@pytest.mark.skipif(
-    os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
-    reason="OPENAI_API_KEY is required for these tests",
-)
-async def test_message_simple_response(test_map_id, auth_client):
-    user_message = {
-        "role": "user",
-        "content": "Hello, can you tell me about this map?",
-    }
+async def test_message_simple_response(
+    test_map_id, sync_auth_client, websocket_url_for_map
+):
+    def create_response_queue():
+        return [
+            MockResponse(
+                "This is a test map without layers.",
+                None,
+            ),
+        ]
 
-    response = await auth_client.post(
-        f"/api/maps/{test_map_id}/messages/send",
-        json=user_message,
-    )
+    response_queue = create_response_queue()
 
-    assert response.status_code == 200
-    result = response.json()
-    assert result["status"] == "processing_started"
+    with patch("src.routes.message_routes.get_openai_client") as mock_get_client:
+        mock_client = AsyncMock()
 
-    messages_response = await auth_client.get(
-        f"/api/maps/{test_map_id}/messages",
-    )
+        async def mock_create(*args, **kwargs):
+            return response_queue.pop(0)
 
-    assert messages_response.status_code == 200
-    messages_data = messages_response.json()
+        mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+        mock_get_client.return_value = mock_client
 
-    user_messages = [
-        m["message_json"]
-        for m in messages_data["messages"]
-        if m["message_json"]["role"] == "user"
-    ]
-    assistant_messages = [
-        m["message_json"]
-        for m in messages_data["messages"]
-        if m["message_json"]["role"] == "assistant"
-    ]
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(test_map_id)
+        ) as websocket:
+            user_message = {
+                "role": "user",
+                "content": "Hello, can you tell me about this map?",
+            }
 
-    assert len(user_messages) >= 1
-    assert len(assistant_messages) >= 1
-    assert user_messages[0]["content"] == "Hello, can you tell me about this map?"
-    assert assistant_messages[0]["content"] is not None
-    assert len(assistant_messages[0]["content"]) > 0
+            response = sync_auth_client.post(
+                f"/api/maps/{test_map_id}/messages/send",
+                json=user_message,
+            )
+
+            assert response.status_code == 200
+            result = response.json()
+            assert result["status"] == "processing_started"
+
+            sent_msg = websocket.receive_json()
+            assert sent_msg["message_json"]["role"] == "user"
+            assert "tell me about this map" in sent_msg["message_json"]["content"]
+
+            msg = websocket.receive_json()
+            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
+            msg = websocket.receive_json()
+            assert (
+                msg["ephemeral"]
+                and msg["action"] == "Kue is thinking..."
+                and msg["status"] == "completed"
+            )
+
+            assistant_msg = websocket.receive_json()
+            assert assistant_msg["message_json"]["role"] == "assistant"
+            assert "test map without layers" in assistant_msg["message_json"]["content"]
+
+        messages_response = sync_auth_client.get(
+            f"/api/maps/{test_map_id}/messages",
+        )
+
+        assert messages_response.status_code == 200
+        messages_data = messages_response.json()
+
+        user_messages = [
+            m["message_json"]
+            for m in messages_data["messages"]
+            if m["message_json"]["role"] == "user"
+        ]
+        assistant_messages = [
+            m["message_json"]
+            for m in messages_data["messages"]
+            if m["message_json"]["role"] == "assistant"
+        ]
+
+        assert len(user_messages) >= 1
+        assert len(assistant_messages) >= 1
+        assert user_messages[0]["content"] == "Hello, can you tell me about this map?"
+        assert "test map without layers" in assistant_messages[0]["content"]
+        assert len(assistant_messages[0]["content"]) > 0
 
 
 @pytest.mark.anyio
@@ -156,71 +209,107 @@ async def test_error_recovery(test_map_id, auth_client):
 
 
 @pytest.mark.anyio
-@pytest.mark.skipif(
-    os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
-    reason="OPENAI_API_KEY is required for these tests",
-)
-async def test_sequential_response_handling(test_map_id, auth_client):
-    user_message = {
-        "role": "user",
-        "content": (
-            "First, describe what a GIS is. Second, explain what spatial analysis is. "
-            "Third, tell me about the relationship between them."
-        ),
-    }
+async def test_sequential_response_handling(
+    test_map_id, sync_auth_client, websocket_url_for_map
+):
+    def create_response_queue():
+        return [
+            MockResponse(
+                "First, GIS is a system for spatial data. Second, spatial analysis examines location relationships. Third, GIS enables spatial analysis.",
+                None,
+            ),
+        ]
 
-    response = await auth_client.post(
-        f"/api/maps/{test_map_id}/messages/send",
-        json=user_message,
-    )
+    response_queue = create_response_queue()
 
-    assert response.status_code == 200
+    with patch("src.routes.message_routes.get_openai_client") as mock_get_client:
+        mock_client = AsyncMock()
 
-    messages_response = await auth_client.get(
-        f"/api/maps/{test_map_id}/messages",
-    )
+        async def mock_create(*args, **kwargs):
+            return response_queue.pop(0)
 
-    assert messages_response.status_code == 200
-    messages_data = messages_response.json()
+        mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+        mock_get_client.return_value = mock_client
 
-    assistant_messages = [
-        m["message_json"]
-        for m in messages_data["messages"]
-        if m["message_json"]["role"] == "assistant"
-        and "content" in m["message_json"]
-        and m["message_json"]["content"]
-    ]
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(test_map_id)
+        ) as websocket:
+            user_message = {
+                "role": "user",
+                "content": (
+                    "First, describe what a GIS is. Second, explain what spatial analysis is. "
+                    "Third, tell me about the relationship between them."
+                ),
+            }
 
-    assert len(assistant_messages) >= 1
+            response = sync_auth_client.post(
+                f"/api/maps/{test_map_id}/messages/send",
+                json=user_message,
+            )
 
-    combined_response = " ".join([m["content"].lower() for m in assistant_messages])
+            assert response.status_code == 200
 
-    assert "gis" in combined_response, "Response should mention GIS"
-    assert "spatial analysis" in combined_response, (
-        "Response should mention spatial analysis"
-    )
-    assert "relationship" in combined_response or "connect" in combined_response, (
-        "Response should discuss the relationship"
-    )
+            sent_msg = websocket.receive_json()
+            assert sent_msg["message_json"]["role"] == "user"
 
-    structure_indicators = [
-        "first",
-        "second",
-        "third",
-        "1.",
-        "2.",
-        "3.",
-        "what is gis",
-        "spatial analysis is",
-        "relationship between",
-    ]
+            msg = websocket.receive_json()
+            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
+            msg = websocket.receive_json()
+            assert (
+                msg["ephemeral"]
+                and msg["action"] == "Kue is thinking..."
+                and msg["status"] == "completed"
+            )
 
-    has_structure = any(
-        indicator in combined_response for indicator in structure_indicators
-    )
-    assert has_structure, (
-        "Response should have a structured format addressing each part"
-    )
+            assistant_msg = websocket.receive_json()
+            assert assistant_msg["message_json"]["role"] == "assistant"
+            assert "GIS" in assistant_msg["message_json"]["content"]
+
+        messages_response = sync_auth_client.get(
+            f"/api/maps/{test_map_id}/messages",
+        )
+
+        assert messages_response.status_code == 200
+        messages_data = messages_response.json()
+
+        assistant_messages = [
+            m["message_json"]
+            for m in messages_data["messages"]
+            if m["message_json"]["role"] == "assistant"
+            and "content" in m["message_json"]
+            and m["message_json"]["content"]
+        ]
+
+        assert len(assistant_messages) >= 1
+
+        combined_response = " ".join([m["content"].lower() for m in assistant_messages])
+
+        assert "gis" in combined_response, "Response should mention GIS"
+        assert "spatial analysis" in combined_response, (
+            "Response should mention spatial analysis"
+        )
+        assert "relationship" in combined_response or "connect" in combined_response, (
+            "Response should discuss the relationship"
+        )
+
+        structure_indicators = [
+            "first",
+            "second",
+            "third",
+            "1.",
+            "2.",
+            "3.",
+            "what is gis",
+            "spatial analysis is",
+            "relationship between",
+        ]
+
+        has_structure = any(
+            indicator in combined_response for indicator in structure_indicators
+        )
+        assert has_structure, (
+            "Response should have a structured format addressing each part"
+        )
 
 
 @pytest.mark.anyio

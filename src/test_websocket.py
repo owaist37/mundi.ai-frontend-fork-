@@ -15,8 +15,23 @@
 
 import pytest
 import uuid
-import os
 import time
+from unittest.mock import patch, AsyncMock
+from openai.types.chat import (
+    ChatCompletionMessage,
+)
+
+
+class MockChoice:
+    def __init__(self, content: str, tool_calls=None):
+        self.message = ChatCompletionMessage(
+            content=content, tool_calls=tool_calls, role="assistant"
+        )
+
+
+class MockResponse:
+    def __init__(self, content: str, tool_calls=None):
+        self.choices = [MockChoice(content, tool_calls)]
 
 
 @pytest.fixture
@@ -54,112 +69,137 @@ def test_websocket_404(sync_auth_client):
             pytest.fail("WebSocket connection should have failed without token")
 
 
-@pytest.mark.skipif(
-    os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
-    reason="OPENAI_API_KEY is required for this test",
-)
 def test_websocket_receive_ephemeral_action(
     sync_test_map_id, sync_auth_client, websocket_url_for_map
 ):
-    with sync_auth_client.websocket_connect(
-        websocket_url_for_map(sync_test_map_id)
-    ) as websocket:
-        response = sync_auth_client.post(
-            f"/api/maps/{sync_test_map_id}/messages/send",
-            json={
-                "role": "user",
-                "content": "Hello",
-            },
-        )
-        assert response.status_code == 200
+    def create_response_queue():
+        return [
+            MockResponse("Hello! How can I help?", None),
+        ]
 
-        # Receive messages until we get the ephemeral action message
-        ephemeral_msg = None
-        max_attempts = 10
-        for _ in range(max_attempts):
-            recv_msg = websocket.receive_json()
-            if recv_msg.get("ephemeral") is True:
-                ephemeral_msg = recv_msg
-                break
+    response_queue = create_response_queue()
 
-        assert ephemeral_msg is not None, "Did not receive ephemeral action message"
-        assert "map_id" in ephemeral_msg
-        assert ephemeral_msg["map_id"] == sync_test_map_id
-        assert "ephemeral" in ephemeral_msg
-        assert ephemeral_msg["ephemeral"] is True
-        assert "action_id" in ephemeral_msg
-        assert "action" in ephemeral_msg
-        assert "timestamp" in ephemeral_msg
-        assert "status" in ephemeral_msg
+    with patch("src.routes.message_routes.get_openai_client") as mock_get_client:
+        mock_client = AsyncMock()
+
+        async def mock_create(*args, **kwargs):
+            return response_queue.pop(0)
+
+        mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+        mock_get_client.return_value = mock_client
+
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(sync_test_map_id)
+        ) as websocket:
+            response = sync_auth_client.post(
+                f"/api/maps/{sync_test_map_id}/messages/send",
+                json={
+                    "role": "user",
+                    "content": "Hello",
+                },
+            )
+            assert response.status_code == 200
+
+            # Receive messages until we get the ephemeral action message
+            ephemeral_msg = None
+            max_attempts = 10
+            for _ in range(max_attempts):
+                recv_msg = websocket.receive_json()
+                if recv_msg.get("ephemeral") is True:
+                    ephemeral_msg = recv_msg
+                    break
+
+            assert ephemeral_msg is not None, "Did not receive ephemeral action message"
+            assert "map_id" in ephemeral_msg
+            assert ephemeral_msg["map_id"] == sync_test_map_id
+            assert "ephemeral" in ephemeral_msg
+            assert ephemeral_msg["ephemeral"] is True
+            assert "action_id" in ephemeral_msg
+            assert "action" in ephemeral_msg
+            assert "timestamp" in ephemeral_msg
+            assert "status" in ephemeral_msg
 
 
-@pytest.mark.skipif(
-    os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
-    reason="OPENAI_API_KEY is required for this test",
-)
 def test_websocket_missed_messages(
     sync_test_map_id, sync_auth_client, websocket_url_for_map
 ):
-    with sync_auth_client.websocket_connect(
-        websocket_url_for_map(sync_test_map_id)
-    ) as websocket:
-        response = sync_auth_client.post(
+    def create_response_queue():
+        return [
+            MockResponse("Hello! How can I help?", None),
+            MockResponse("Hello again! How can I assist?", None),
+        ]
+
+    response_queue = create_response_queue()
+
+    with patch("src.routes.message_routes.get_openai_client") as mock_get_client:
+        mock_client = AsyncMock()
+
+        async def mock_create(*args, **kwargs):
+            return response_queue.pop(0)
+
+        mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
+        mock_get_client.return_value = mock_client
+
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(sync_test_map_id)
+        ) as websocket:
+            response = sync_auth_client.post(
+                f"/api/maps/{sync_test_map_id}/messages/send",
+                json={
+                    "role": "user",
+                    "content": "Hello",
+                },
+            )
+            assert response.status_code == 200
+
+            # Receive messages until we get the ephemeral action message
+            ephemeral_msg = None
+            max_attempts = 10
+            for _ in range(max_attempts):
+                recv_msg = websocket.receive_json()
+                if recv_msg.get("ephemeral") is True:
+                    ephemeral_msg = recv_msg
+                    break
+
+            assert ephemeral_msg is not None, "Did not receive ephemeral action message"
+            assert "map_id" in ephemeral_msg
+            assert ephemeral_msg["map_id"] == sync_test_map_id
+            assert "ephemeral" in ephemeral_msg
+            assert ephemeral_msg["ephemeral"] is True
+            assert "action_id" in ephemeral_msg
+            assert "action" in ephemeral_msg
+            assert "timestamp" in ephemeral_msg
+            assert "status" in ephemeral_msg
+
+        response2 = sync_auth_client.post(
             f"/api/maps/{sync_test_map_id}/messages/send",
             json={
                 "role": "user",
-                "content": "Hello",
+                "content": "Hello again",
             },
         )
-        assert response.status_code == 200
+        assert response2.status_code == 200
 
-        # Receive messages until we get the ephemeral action message
-        ephemeral_msg = None
-        max_attempts = 10
-        for _ in range(max_attempts):
-            recv_msg = websocket.receive_json()
-            if recv_msg.get("ephemeral") is True:
-                ephemeral_msg = recv_msg
-                break
+        time.sleep(1)
 
-        assert ephemeral_msg is not None, "Did not receive ephemeral action message"
-        assert "map_id" in ephemeral_msg
-        assert ephemeral_msg["map_id"] == sync_test_map_id
-        assert "ephemeral" in ephemeral_msg
-        assert ephemeral_msg["ephemeral"] is True
-        assert "action_id" in ephemeral_msg
-        assert "action" in ephemeral_msg
-        assert "timestamp" in ephemeral_msg
-        assert "status" in ephemeral_msg
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(sync_test_map_id)
+        ) as websocket2:
+            # Receive messages until we get the ephemeral action message
+            ephemeral_msg = None
+            max_attempts = 10
+            for _ in range(max_attempts):
+                recv_msg = websocket2.receive_json()
+                if recv_msg.get("ephemeral") is True:
+                    ephemeral_msg = recv_msg
+                    break
 
-    response2 = sync_auth_client.post(
-        f"/api/maps/{sync_test_map_id}/messages/send",
-        json={
-            "role": "user",
-            "content": "Hello again",
-        },
-    )
-    assert response2.status_code == 200
-
-    time.sleep(1)
-
-    with sync_auth_client.websocket_connect(
-        websocket_url_for_map(sync_test_map_id)
-    ) as websocket2:
-        # Receive messages until we get the ephemeral action message
-        ephemeral_msg = None
-        max_attempts = 10
-        for _ in range(max_attempts):
-            recv_msg = websocket2.receive_json()
-            if recv_msg.get("ephemeral") is True:
-                ephemeral_msg = recv_msg
-                break
-
-        assert ephemeral_msg is not None, "Did not receive ephemeral action message"
-        assert "map_id" in ephemeral_msg
-        assert ephemeral_msg["map_id"] == sync_test_map_id
-        assert "ephemeral" in ephemeral_msg
-        assert ephemeral_msg["ephemeral"] is True
-        assert "action_id" in ephemeral_msg
-        assert "action" in ephemeral_msg
-        assert "timestamp" in ephemeral_msg
-        assert "status" in ephemeral_msg
+            assert ephemeral_msg is not None, "Did not receive ephemeral action message"
+            assert "map_id" in ephemeral_msg
+            assert ephemeral_msg["map_id"] == sync_test_map_id
+            assert "ephemeral" in ephemeral_msg
+            assert ephemeral_msg["ephemeral"] is True
+            assert "action_id" in ephemeral_msg
+            assert "action" in ephemeral_msg
+            assert "timestamp" in ephemeral_msg
+            assert "status" in ephemeral_msg
