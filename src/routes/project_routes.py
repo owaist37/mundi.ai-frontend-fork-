@@ -43,7 +43,7 @@ from src.utils import (
 import io
 from opentelemetry import trace
 from ..structures import get_async_db_connection
-from ..dependencies.base_map import get_base_map_provider
+from ..dependencies.base_map import BaseMapProvider, get_base_map_provider
 from ..dependencies.database_documenter import (
     DatabaseDocumenter,
     get_database_documenter,
@@ -844,6 +844,7 @@ async def get_project_social_preview(
     request: Request,
     project_id: str,
     session: UserContext = Depends(verify_session_required),
+    base_map_provider: BaseMapProvider = Depends(get_base_map_provider),
 ):
     # Fetch the latest map_id for the project
     user_id = session.get_user_id()
@@ -882,7 +883,6 @@ async def get_project_social_preview(
                 f"Rendering social image for map {latest_map_id} (semaphore acquired)"
             )
 
-            base_map_provider = get_base_map_provider()
             style_json = await get_map_style_internal(
                 latest_map_id,
                 base_map_provider,
