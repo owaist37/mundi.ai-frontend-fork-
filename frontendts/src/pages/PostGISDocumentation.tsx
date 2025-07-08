@@ -196,86 +196,84 @@ If documentation generation fails, this indicates the database connection detail
           <div className="flex-1 overflow-y-auto">
             <ScrollArea className="h-full" ref={scrollAreaRef}>
               <div className="p-8">
-                <div className="max-w-4xl mx-auto">
-                  {loading && (
-                    <div className="flex items-center justify-center p-8">
-                      <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                      <span>Loading database documentation...</span>
-                    </div>
-                  )}
+                {loading && (
+                  <div className="flex items-center justify-center p-8">
+                    <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                    <span>Loading database documentation...</span>
+                  </div>
+                )}
 
-                  {error && (
-                    <div className="p-4 border border-red-500 rounded-lg mb-4">
-                      <p className="text-red-500">Error loading documentation: {error}</p>
-                    </div>
-                  )}
+                {error && (
+                  <div className="p-4 border border-red-500 rounded-lg mb-4">
+                    <p className="text-red-500">Error loading documentation: {error}</p>
+                  </div>
+                )}
 
-                  {!loading && !error && (
-                    <div className="prose prose-sm prose-invert max-w-none">
-                      <ReactMarkdown
-                        components={{
-                          code(props) {
-                            const { className, children, ...rest } = props;
-                            const match = /language-(\w+)/.exec(className || '');
-                            const language = match ? match[1] : '';
+                {!loading && !error && (
+                  <div className="prose prose-sm prose-invert max-w-none">
+                    <ReactMarkdown
+                      components={{
+                        code(props) {
+                          const { className, children, ...rest } = props;
+                          const match = /language-(\w+)/.exec(className || '');
+                          const language = match ? match[1] : '';
 
-                            if (language === 'mermaid') {
-                              return (
-                                <div className="bg-muted/20 mx-auto my-4">
-                                  <MermaidComponent chart={String(children)} />
-                                </div>
-                              );
-                            }
-
+                          if (language === 'mermaid') {
                             return (
-                              <code className={className} {...rest}>
-                                {children}
-                              </code>
+                              <div className="bg-muted/20 mx-auto my-4">
+                                <MermaidComponent chart={String(children)} />
+                              </div>
                             );
-                          },
-                          h1(props) {
-                            const { children, ...rest } = props;
-                            const text = String(children);
-                            const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                            return <h1 id={id} {...rest}>{children}</h1>;
-                          },
-                          h2(props) {
-                            const { children, ...rest } = props;
-                            const text = String(children);
-                            const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                            return <h2 id={id} {...rest}>{children}</h2>;
-                          },
-                          h3(props) {
-                            const { children, ...rest } = props;
-                            const text = String(children);
-                            const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                            return <h3 id={id} {...rest}>{children}</h3>;
-                          },
-                          h4(props) {
-                            const { children, ...rest } = props;
-                            const text = String(children);
-                            const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                            return <h4 id={id} {...rest}>{children}</h4>;
-                          },
-                          h5(props) {
-                            const { children, ...rest } = props;
-                            const text = String(children);
-                            const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                            return <h5 id={id} {...rest}>{children}</h5>;
-                          },
-                          h6(props) {
-                            const { children, ...rest } = props;
-                            const text = String(children);
-                            const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                            return <h6 id={id} {...rest}>{children}</h6>;
                           }
-                        }}
-                      >
-                        {documentation || fallbackContent}
-                      </ReactMarkdown>
-                    </div>
-                  )}
-                </div>
+
+                          return (
+                            <code className={className} {...rest}>
+                              {children}
+                            </code>
+                          );
+                        },
+                        h1(props) {
+                          const { children, ...rest } = props;
+                          const text = String(children);
+                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                          return <h1 id={id} {...rest}>{children}</h1>;
+                        },
+                        h2(props) {
+                          const { children, ...rest } = props;
+                          const text = String(children);
+                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                          return <h2 id={id} {...rest}>{children}</h2>;
+                        },
+                        h3(props) {
+                          const { children, ...rest } = props;
+                          const text = String(children);
+                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                          return <h3 id={id} {...rest}>{children}</h3>;
+                        },
+                        h4(props) {
+                          const { children, ...rest } = props;
+                          const text = String(children);
+                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                          return <h4 id={id} {...rest}>{children}</h4>;
+                        },
+                        h5(props) {
+                          const { children, ...rest } = props;
+                          const text = String(children);
+                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                          return <h5 id={id} {...rest}>{children}</h5>;
+                        },
+                        h6(props) {
+                          const { children, ...rest } = props;
+                          const text = String(children);
+                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+                          return <h6 id={id} {...rest}>{children}</h6>;
+                        }
+                      }}
+                    >
+                      {documentation || fallbackContent}
+                    </ReactMarkdown>
+                  </div>
+                )}
               </div>
 
               <div className="border-l-4 border-blue-500 bg-blue-50 dark:bg-blue-950 p-4 mb-6 mx-8">
