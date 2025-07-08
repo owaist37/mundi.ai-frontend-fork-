@@ -37,7 +37,7 @@ export default defineConfig({
 					],
 				},
 				{
-					label: 'Deployment Configurations',
+					label: 'Deployment configurations',
 					items: [
 						{ label: 'Self-hosting Mundi', slug: 'deployments/self-hosting-mundi' },
 						{ label: 'On-Premise/VPC Kubernetes', slug: 'deployments/on-premise-vpc-kubernetes-deployment' }
