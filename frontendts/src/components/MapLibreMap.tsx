@@ -24,7 +24,7 @@ import type {
   ChatCompletionMessageToolCall,
   ChatCompletionUserMessageParam,
 } from 'openai/resources/chat/completions';
-// Copyright Bunting Labs, Inc. 2025
+
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Save, Upload } from 'react-bootstrap-icons';
 import ReactMarkdown from 'react-markdown';
