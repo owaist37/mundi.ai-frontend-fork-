@@ -24,13 +24,6 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   const [loading, setLoading] = useState(false);
   const sessionContext = Session.useSessionContext();
 
-  // Fetch maps when component mounts or page changes
-  useEffect(() => {
-    if (!sessionContext.loading && sessionContext.doesSessionExist) {
-      fetchProjects(currentPage);
-    }
-  }, [sessionContext, currentPage, fetchProjects]);
-
   const fetchProjects = useCallback(async (page: number = 1) => {
     setLoading(true);
     try {
@@ -52,6 +45,13 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
       setLoading(false);
     }
   }, []);
+
+  // Fetch maps when component mounts or page changes
+  useEffect(() => {
+    if (!sessionContext.loading && sessionContext.doesSessionExist) {
+      fetchProjects(currentPage);
+    }
+  }, [sessionContext, currentPage, fetchProjects]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);

@@ -25,7 +25,7 @@ import type {
   ChatCompletionUserMessageParam,
 } from 'openai/resources/chat/completions';
 // Copyright Bunting Labs, Inc. 2025
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download, Save, Upload } from 'react-bootstrap-icons';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate } from 'react-router-dom';
@@ -2194,8 +2194,8 @@ export default function MapLibreMap({
                 } else if (Array.isArray(messageJson.content)) {
                   // Process array content (text + images)
                   const textParts = messageJson.content
-                    .filter((part) => part.type === 'text')
-                    .map((part) => part.text)
+                    .filter((part: any) => part.type === 'text')
+                    .map((part: any) => part.text)
                     .join('\n');
 
                   contentDisplay = textParts;
@@ -2229,7 +2229,7 @@ export default function MapLibreMap({
               }
 
               // Skip rendering if contentDisplay is falsy and there are no images
-              const hasImages = Array.isArray(messageJson.content) && messageJson.content.some((part) => part.type === 'image_url');
+              const hasImages = Array.isArray(messageJson.content) && messageJson.content.some((part: any) => part.type === 'image_url');
 
               if (!contentDisplay && !hasImages) {
                 return null;
@@ -2251,8 +2251,8 @@ export default function MapLibreMap({
                   {/* Render images if present */}
                   {Array.isArray(messageJson.content) &&
                     messageJson.content
-                      .filter((part) => part.type === 'image_url')
-                      .map((part, imgIndex) => (
+                      .filter((part: any) => part.type === 'image_url')
+                      .map((part: any, imgIndex: number) => (
                         <div key={`msg-${msg.id || index}-img-${imgIndex}`} className="mt-2">
                           <img
                             src={part.image_url.url}
