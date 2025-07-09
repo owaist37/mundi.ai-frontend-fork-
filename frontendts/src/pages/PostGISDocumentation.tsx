@@ -1,7 +1,7 @@
 // Copyright Bunting Labs, Inc. 2025
 
 import { ArrowLeft, Database, Loader2, RefreshCw } from 'lucide-react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import { useNavigate, useParams } from 'react-router-dom';
 import MermaidComponent from '@/components/MermaidComponent';
@@ -34,39 +34,7 @@ const PostGISDocumentation = () => {
   const [isRegenerating, setIsRegenerating] = useState(false);
   const [navigationItems, setNavigationItems] = useState<NavigationItem[]>([]);
 
-  useEffect(() => {
-    if (connectionId) {
-      fetchDocumentation();
-    }
-  }, [connectionId, fetchDocumentation]);
-
-  // Extract headings from markdown content
-  useEffect(() => {
-    if (documentation) {
-      const headingRegex = /^(#{1,6})\s+(.+)$/gm;
-      const headings: NavigationItem[] = [];
-      let match;
-
-      while ((match = headingRegex.exec(documentation)) !== null) {
-        const level = match[1].length;
-        const text = match[2].trim();
-        const id = text
-          .toLowerCase()
-          .replace(/[^a-z0-9]+/g, '-')
-          .replace(/^-+|-+$/g, '');
-
-        headings.push({
-          id,
-          label: text,
-          level,
-        });
-      }
-
-      setNavigationItems(headings);
-    }
-  }, [documentation]);
-
-  const fetchDocumentation = async () => {
+  const fetchDocumentation = useCallback(async () => {
     setLoading(true);
     setError(null);
 
@@ -120,7 +88,39 @@ const PostGISDocumentation = () => {
     } finally {
       setLoading(false);
     }
-  };
+  }, [connectionId]);
+
+  useEffect(() => {
+    if (connectionId) {
+      fetchDocumentation();
+    }
+  }, [connectionId, fetchDocumentation]);
+
+  // Extract headings from markdown content
+  useEffect(() => {
+    if (documentation) {
+      const headingRegex = /^(#{1,6})\s+(.+)$/gm;
+      const headings: NavigationItem[] = [];
+      let match;
+
+      while ((match = headingRegex.exec(documentation)) !== null) {
+        const level = match[1].length;
+        const text = match[2].trim();
+        const id = text
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
+
+        headings.push({
+          id,
+          label: text,
+          level,
+        });
+      }
+
+      setNavigationItems(headings);
+    }
+  }, [documentation]);
 
   const handleRegenerate = async () => {
     if (!connectionId || !projectId) return;
