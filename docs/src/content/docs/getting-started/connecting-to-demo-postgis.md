@@ -5,6 +5,11 @@ description: Learn how to connect to a demo database in Mundi and work with publ
 
 Mundi is built to help you make your spatial database easy to use. We've built a demo PostGIS database of Norweigan oil and gas data that you can connect to and experience the power of Mundi.
 
+:::note[Open Data License]
+The database is from the [Norwegian Offshore Directorate](https://www.sodir.no/en/) and is licensed under the [Norwegian Licence for Open Government Data](https://data.norge.no/nlod/en).
+:::
+
+
 This guide will walk you through how to connect to the demo PostGIS and see the database wiki.
 
 ## Connecting to the database
