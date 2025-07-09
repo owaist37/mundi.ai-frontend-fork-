@@ -51,9 +51,7 @@ export function Scrollspy({
     if (!anchorElementsRef.current || anchorElementsRef.current.length === 0) return;
     const scrollElement = targetRef?.current === document ? window : targetRef?.current;
     const scrollTop =
-      scrollElement === window
-        ? window.scrollY || document.documentElement.scrollTop
-        : (scrollElement as HTMLElement).scrollTop;
+      scrollElement === window ? window.scrollY || document.documentElement.scrollTop : (scrollElement as HTMLElement).scrollTop;
 
     // Find the anchor whose section is closest to but not past the top
     let activeIdx = 0;
@@ -74,8 +72,7 @@ export function Scrollspy({
 
     // If at bottom, force last anchor
     if (scrollElement) {
-      const scrollHeight =
-        scrollElement === window ? document.documentElement.scrollHeight : (scrollElement as HTMLElement).scrollHeight;
+      const scrollHeight = scrollElement === window ? document.documentElement.scrollHeight : (scrollElement as HTMLElement).scrollHeight;
       const clientHeight = scrollElement === window ? window.innerHeight : (scrollElement as HTMLElement).clientHeight;
       if (scrollTop + clientHeight >= scrollHeight - 2) {
         activeIdx = anchorElementsRef.current.length - 1;

@@ -1,3 +1,11 @@
+import { BookOpen, Cloud, KeyRound, Map as LMap, LogIn, LogOut, PanelRightClose, PanelRightOpen, UserPlus } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import Session, { signOut } from 'supertokens-auth-react/recipe/session';
+import MDarkSvg from '@/assets/M-dark.svg';
+import MLightSvg from '@/assets/M-light.svg';
+import MundiDarkSvg from '@/assets/Mundi-dark.svg';
+import MundiLightSvg from '@/assets/Mundi-light.svg';
+import { Button } from '@/components/ui/button';
 import {
   Sidebar,
   SidebarContent,
@@ -6,24 +14,14 @@ import {
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
-  SidebarMenuSub,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
   useSidebar,
-} from "@/components/ui/sidebar"
-import { LogOut, Map, LogIn, UserPlus, KeyRound, BookOpen, Cloud, PanelRightClose, PanelRightOpen } from "lucide-react"
-import { Button } from "@/components/ui/button"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
-
-import Session from "supertokens-auth-react/recipe/session";
-import { signOut } from "supertokens-auth-react/recipe/session";
-import { Link } from "react-router-dom"
-import MLightSvg from "@/assets/M-light.svg"
-import MDarkSvg from "@/assets/M-dark.svg"
-import MundiLightSvg from "@/assets/Mundi-light.svg"
-import MundiDarkSvg from "@/assets/Mundi-dark.svg"
-import { ProjectState } from "@/lib/types";
+} from '@/components/ui/sidebar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ProjectState } from '@/lib/types';
 
 export function AppSidebar({ projects }: { projects: ProjectState }) {
   const sessionContext = Session.useSessionContext();
@@ -31,13 +29,13 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
 
   async function onLogout() {
     await signOut();
-    window.location.href = "/auth"; // or redirect to wherever the login page is
+    window.location.href = '/auth'; // or redirect to wherever the login page is
   }
 
   return (
     <Sidebar collapsible="icon" data-theme="light">
       <SidebarHeader className="flex flex-col items-center p-4">
-        {state === "collapsed" ? (
+        {state === 'collapsed' ? (
           <>
             <a href="https://mundi.ai/" target="_blank" className="w-8 h-8">
               <img src={MLightSvg} alt="M" className="w-full h-full dark:hidden" />
@@ -45,12 +43,7 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
             </a>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleSidebar}
-                  className="w-8 h-8 mt-2 cursor-pointer"
-                >
+                <Button variant="ghost" size="icon" onClick={toggleSidebar} className="w-8 h-8 mt-2 cursor-pointer">
                   <PanelRightOpen className="w-4 h-4 scale-x-[-1]" />
                 </Button>
               </TooltipTrigger>
@@ -67,12 +60,7 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
             </a>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  onClick={toggleSidebar}
-                  className="w-8 h-8 cursor-pointer"
-                >
+                <Button variant="ghost" size="icon" onClick={toggleSidebar} className="w-8 h-8 cursor-pointer">
                   <PanelRightClose className="w-4 h-4 scale-x-[-1]" />
                 </Button>
               </TooltipTrigger>
@@ -93,7 +81,7 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
                   <SidebarMenuItem>
                     <SidebarMenuButton asChild tooltip="My Projects">
                       <Link to="/">
-                        <Map className="w-4 h-4 mr-2" />
+                        <LMap className="w-4 h-4 mr-2" />
                         <span className="text-sm">My Projects</span>
                       </Link>
                     </SidebarMenuButton>
@@ -104,27 +92,24 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
                         <SidebarMenuItem key={project.id}>
                           <SidebarMenuButton asChild>
                             <Link to={`/project/${project.id}`} className="flex items-center justify-between w-full">
-                              <span className="text-sm">
-                                {project.most_recent_version?.title || `Project ${project.id.slice(0, 8)}`}
-                              </span>
+                              <span className="text-sm">{project.most_recent_version?.title || `Project ${project.id.slice(0, 8)}`}</span>
                               <span className="text-xs text-muted-foreground ml-2">
                                 {project.most_recent_version?.last_edited
                                   ? (() => {
-                                    const now = new Date();
-                                    const edited = new Date(project.most_recent_version.last_edited);
-                                    const diffMs = now.getTime() - edited.getTime();
-                                    const diffSecs = Math.floor(diffMs / 1000);
-                                    const diffMins = Math.floor(diffSecs / 60);
-                                    const diffHours = Math.floor(diffMins / 60);
-                                    const diffDays = Math.floor(diffHours / 24);
+                                      const now = new Date();
+                                      const edited = new Date(project.most_recent_version.last_edited);
+                                      const diffMs = now.getTime() - edited.getTime();
+                                      const diffSecs = Math.floor(diffMs / 1000);
+                                      const diffMins = Math.floor(diffSecs / 60);
+                                      const diffHours = Math.floor(diffMins / 60);
+                                      const diffDays = Math.floor(diffHours / 24);
 
-                                    if (diffSecs < 60) return `${diffSecs} seconds ago`;
-                                    if (diffMins < 60) return `${diffMins} minutes ago`;
-                                    if (diffHours < 24) return `${diffHours} hours ago`;
-                                    return `${diffDays} days ago`;
-                                  })()
-                                  : 'No date'
-                                }
+                                      if (diffSecs < 60) return `${diffSecs} seconds ago`;
+                                      if (diffMins < 60) return `${diffMins} minutes ago`;
+                                      if (diffHours < 24) return `${diffHours} hours ago`;
+                                      return `${diffDays} days ago`;
+                                    })()
+                                  : 'No date'}
                               </span>
                             </Link>
                           </SidebarMenuButton>
@@ -142,8 +127,8 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
           <SidebarGroupLabel>Account</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {!sessionContext.loading && (
-                sessionContext.doesSessionExist ? (
+              {!sessionContext.loading &&
+                (sessionContext.doesSessionExist ? (
                   <>
                     <SidebarMenuItem>
                       <SidebarMenuButton onClick={onLogout} className="cursor-pointer" tooltip="Logout">
@@ -179,8 +164,7 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
                       </SidebarMenuButton>
                     </SidebarMenuItem>
                   </>
-                )
-              )}
+                ))}
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
@@ -211,14 +195,14 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
       <SidebarFooter className="p-1 border-t border-border border-gray-700">
         <div className="text-center">
           <a href="https://buntinglabs.com" target="_blank" className="text-muted-foreground text-xs hover:underline">
-            {state === "collapsed" ? (
+            {state === 'collapsed' ? (
               <img src="/public/bunting_bird.svg" alt="Bunting Labs" className="w-6 h-6 mx-auto my-2" />
             ) : (
-              "© Bunting Labs, Inc. 2025"
+              '© Bunting Labs, Inc. 2025'
             )}
           </a>
         </div>
       </SidebarFooter>
     </Sidebar>
-  )
+  );
 }

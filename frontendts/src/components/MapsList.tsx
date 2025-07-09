@@ -1,14 +1,14 @@
 // Copyright Bunting Labs, Inc. 2025
-import { useState, useEffect } from 'react';
-import { Link } from 'react-router-dom';
-import { Clock, Plus } from "lucide-react";
-import { Button } from './ui/button';
-import { Card } from "./ui/card";
-import { Tooltip, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "./ui/pagination";
-import Session from 'supertokens-auth-react/recipe/session';
 
+import { Clock, Plus } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
+import Session from 'supertokens-auth-react/recipe/session';
 import { MapProject } from '../lib/types';
+import { Button } from './ui/button';
+import { Card } from './ui/card';
+import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from './ui/pagination';
+import { Tooltip, TooltipProvider, TooltipTrigger } from './ui/tooltip';
 
 interface MapsListProps {
   hideNewButton?: boolean;
@@ -88,17 +88,13 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
           <PaginationItem>
             <PaginationPrevious
               onClick={() => currentPage > 1 && handlePageChange(currentPage - 1)}
-              className={currentPage <= 1 ? "pointer-events-none opacity-50" : "cursor-pointer"}
+              className={currentPage <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
             />
           </PaginationItem>
 
           {visiblePages.map((page) => (
             <PaginationItem key={page}>
-              <PaginationLink
-                onClick={() => handlePageChange(page)}
-                isActive={currentPage === page}
-                className="cursor-pointer"
-              >
+              <PaginationLink onClick={() => handlePageChange(page)} isActive={currentPage === page} className="cursor-pointer">
                 {page}
               </PaginationLink>
             </PaginationItem>
@@ -107,7 +103,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
           <PaginationItem>
             <PaginationNext
               onClick={() => currentPage < totalPages && handlePageChange(currentPage + 1)}
-              className={currentPage >= totalPages ? "pointer-events-none opacity-50" : "cursor-pointer"}
+              className={currentPage >= totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
             />
           </PaginationItem>
         </PaginationContent>
@@ -127,8 +123,8 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
           title: 'New Map',
           description: '',
           project: {
-            layers: []
-          }
+            layers: [],
+          },
         }),
       });
 
@@ -140,7 +136,6 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
       console.log('newMap', newMap);
       // Refresh map list
       fetchProjects(currentPage);
-
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create map');
     } finally {
@@ -168,7 +163,9 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
     <div className="flex flex-col gap-6 p-6 min-w-xl">
       <div className="flex items-center justify-end relative">
         <div className="absolute left-1/2 transform -translate-x-1/2">
-          <h1 className="text-2xl font-bold">Your Maps <span className="text-gray-400">({totalItems} projects)</span></h1>
+          <h1 className="text-2xl font-bold">
+            Your Maps <span className="text-gray-400">({totalItems} projects)</span>
+          </h1>
         </div>
         {!hideNewButton && (
           <TooltipProvider delayDuration={100}>
@@ -181,7 +178,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                     className="bg-[#C1FA3D] hover:bg-[#B8E92B] text-black hover:cursor-pointer"
                   >
                     <Plus className="mr-2 h-4 w-4" />
-                    {creating ? "Creating..." : "New Map"}
+                    {creating ? 'Creating...' : 'New Map'}
                   </Button>
                 </div>
               </TooltipTrigger>
@@ -201,9 +198,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
             </svg>
           </div>
           <h3 className="text-lg font-medium text-red-400">Error Loading Maps</h3>
-          <p className="text-sm text-gray-400 text-center mt-1">
-            {error}
-          </p>
+          <p className="text-sm text-gray-400 text-center mt-1">{error}</p>
           <Button
             onClick={() => fetchProjects(currentPage)}
             className="mt-4 bg-[#C1FA3D] hover:bg-[#B8E92B] text-black hover:cursor-pointer"
@@ -215,16 +210,14 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
         <Card className="border-dashed border-2 border-slate-500 text-white flex flex-col items-center justify-center p-6">
           <Plus className="h-8 w-8 mb-2 text-[#e2420d]" />
           <h3 className="text-lg font-medium">No Maps Found</h3>
-          <p className="text-sm text-gray-400 text-center mt-1">
-            Create your first map to get started
-          </p>
+          <p className="text-sm text-gray-400 text-center mt-1">Create your first map to get started</p>
           {!hideNewButton && (
             <Button
               onClick={handleCreateMap}
               disabled={creating}
               className="mt-4 bg-[#C1FA3D] hover:bg-[#B8E92B] text-black hover:cursor-pointer"
             >
-              {creating ? "Creating..." : "Create Your First Map"}
+              {creating ? 'Creating...' : 'Create Your First Map'}
             </Button>
           )}
         </Card>
@@ -247,7 +240,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                       backgroundImage: `url(/api/projects/${project.id}/social.webp)`,
                       backgroundSize: 'cover',
                       backgroundPosition: 'center',
-                      backgroundRepeat: 'no-repeat'
+                      backgroundRepeat: 'no-repeat',
                     }}
                   >
                     {/* Dark overlay for better text readability */}
@@ -257,12 +250,8 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                     <div className="relative h-full flex flex-col justify-between p-4 text-white">
                       {/* Header */}
                       <div>
-                        <h3 className="text-lg font-semibold line-clamp-2 mb-1">
-                          {project.most_recent_version?.title}
-                        </h3>
-                        <p className="text-sm text-gray-200 line-clamp-2">
-                          {project.most_recent_version?.description || "No description"}
-                        </p>
+                        <h3 className="text-lg font-semibold line-clamp-2 mb-1">{project.most_recent_version?.title}</h3>
+                        <p className="text-sm text-gray-200 line-clamp-2">{project.most_recent_version?.description || 'No description'}</p>
                       </div>
 
                       {/* Footer */}
@@ -281,19 +270,21 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                             let value, unit;
                             if (diffSec < 60) {
                               value = -diffSec;
-                              unit = "second";
+                              unit = 'second';
                             } else if (diffMin < 60) {
                               value = -diffMin;
-                              unit = "minute";
+                              unit = 'minute';
                             } else if (diffHour < 24) {
                               value = -diffHour;
-                              unit = "hour";
+                              unit = 'hour';
                             } else {
                               value = -diffDay;
-                              unit = "day";
+                              unit = 'day';
                             }
 
-                            const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: "auto" });
+                            const rtf = new Intl.RelativeTimeFormat(undefined, {
+                              numeric: 'auto',
+                            });
                             return `Last edited ${rtf.format(value, unit as Intl.RelativeTimeFormatUnit)}`;
                           })()}
                         </div>

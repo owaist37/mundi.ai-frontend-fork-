@@ -1,13 +1,13 @@
 // Copyright Bunting Labs, Inc. 2025
 
-import { useParams, useNavigate } from "react-router-dom";
-import { Button } from "@/components/ui/button";
-import { Database, Loader2, ArrowLeft, RefreshCw } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import MermaidComponent from "@/components/MermaidComponent";
-import { useEffect, useState, useRef } from "react";
-import { Scrollspy } from "@/components/ui/scrollspy";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { ArrowLeft, Database, Loader2, RefreshCw } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { useNavigate, useParams } from 'react-router-dom';
+import MermaidComponent from '@/components/MermaidComponent';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Scrollspy } from '@/components/ui/scrollspy';
 
 interface PostgresConnection {
   connection_id: string;
@@ -27,8 +27,8 @@ const PostGISDocumentation = () => {
   const scrollAreaRef = useRef<HTMLDivElement | null>(null);
 
   const [documentation, setDocumentation] = useState<string | null>(null);
-  const [connectionName, setConnectionName] = useState<string>("");
-  const [projectId, setProjectId] = useState<string>("");
+  const [connectionName, setConnectionName] = useState<string>('');
+  const [projectId, setProjectId] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isRegenerating, setIsRegenerating] = useState(false);
@@ -50,12 +50,15 @@ const PostGISDocumentation = () => {
       while ((match = headingRegex.exec(documentation)) !== null) {
         const level = match[1].length;
         const text = match[2].trim();
-        const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+        const id = text
+          .toLowerCase()
+          .replace(/[^a-z0-9]+/g, '-')
+          .replace(/^-+|-+$/g, '');
 
         headings.push({
           id,
           label: text,
-          level
+          level,
         });
       }
 
@@ -158,12 +161,7 @@ If documentation generation fails, this indicates the database connection detail
       <div className="border-b">
         <div className="flex items-center justify-between p-4">
           <div className="flex items-center gap-4">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => navigate(-1)}
-              className="flex items-center gap-2 hover:cursor-pointer"
-            >
+            <Button variant="ghost" size="sm" onClick={() => navigate(-1)} className="flex items-center gap-2 hover:cursor-pointer">
               <ArrowLeft className="h-4 w-4" />
               Back to Map
             </Button>
@@ -179,11 +177,7 @@ If documentation generation fails, this indicates the database connection detail
             disabled={isRegenerating || loading}
             className="flex items-center gap-2 hover:cursor-pointer"
           >
-            {isRegenerating ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
+            {isRegenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             {isRegenerating ? 'Regenerating...' : 'Regenerate'}
           </Button>
         </div>
@@ -235,39 +229,81 @@ If documentation generation fails, this indicates the database connection detail
                         h1(props) {
                           const { children, ...rest } = props;
                           const text = String(children);
-                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                          return <h1 id={id} {...rest}>{children}</h1>;
+                          const id = text
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                          return (
+                            <h1 id={id} {...rest}>
+                              {children}
+                            </h1>
+                          );
                         },
                         h2(props) {
                           const { children, ...rest } = props;
                           const text = String(children);
-                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                          return <h2 id={id} {...rest}>{children}</h2>;
+                          const id = text
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                          return (
+                            <h2 id={id} {...rest}>
+                              {children}
+                            </h2>
+                          );
                         },
                         h3(props) {
                           const { children, ...rest } = props;
                           const text = String(children);
-                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                          return <h3 id={id} {...rest}>{children}</h3>;
+                          const id = text
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                          return (
+                            <h3 id={id} {...rest}>
+                              {children}
+                            </h3>
+                          );
                         },
                         h4(props) {
                           const { children, ...rest } = props;
                           const text = String(children);
-                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                          return <h4 id={id} {...rest}>{children}</h4>;
+                          const id = text
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                          return (
+                            <h4 id={id} {...rest}>
+                              {children}
+                            </h4>
+                          );
                         },
                         h5(props) {
                           const { children, ...rest } = props;
                           const text = String(children);
-                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                          return <h5 id={id} {...rest}>{children}</h5>;
+                          const id = text
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                          return (
+                            <h5 id={id} {...rest}>
+                              {children}
+                            </h5>
+                          );
                         },
                         h6(props) {
                           const { children, ...rest } = props;
                           const text = String(children);
-                          const id = text.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
-                          return <h6 id={id} {...rest}>{children}</h6>;
-                        }
+                          const id = text
+                            .toLowerCase()
+                            .replace(/[^a-z0-9]+/g, '-')
+                            .replace(/^-+|-+$/g, '');
+                          return (
+                            <h6 id={id} {...rest}>
+                              {children}
+                            </h6>
+                          );
+                        },
                       }}
                     >
                       {documentation || fallbackContent}
@@ -280,12 +316,17 @@ If documentation generation fails, this indicates the database connection detail
                 <div className="flex">
                   <div className="flex-shrink-0">
                     <svg className="h-5 w-5 text-blue-400 dark:text-blue-300" viewBox="0 0 20 20" fill="currentColor">
-                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                      <path
+                        fillRule="evenodd"
+                        d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
+                        clipRule="evenodd"
+                      />
                     </svg>
                   </div>
                   <div className="ml-3">
                     <p className="text-sm text-blue-700 dark:text-blue-200">
-                      <strong>Have questions?</strong> Open any map that is connected to this PostGIS database, and Kue will be able to answer questions based on this article.
+                      <strong>Have questions?</strong> Open any map that is connected to this PostGIS database, and Kue will be able to
+                      answer questions based on this article.
                     </p>
                   </div>
                 </div>
@@ -296,9 +337,7 @@ If documentation generation fails, this indicates the database connection detail
           {/* Navigation Sidebar - only show if we have navigation items */}
           {navigationItems.length > 0 && !loading && !error && (
             <div className="w-64 border-l bg-muted/20 p-4 overflow-y-auto">
-              <h3 className="font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">
-                Table of Contents
-              </h3>
+              <h3 className="font-semibold mb-4 text-sm text-muted-foreground uppercase tracking-wide">Table of Contents</h3>
               <Scrollspy offset={50} targetRef={scrollAreaRef} className="flex flex-col gap-1">
                 {navigationItems.map((item) => (
                   <Button

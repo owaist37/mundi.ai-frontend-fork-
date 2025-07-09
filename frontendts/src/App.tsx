@@ -1,32 +1,30 @@
 // Copyright Bunting Labs, Inc. 2025
-import { useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from "react-router-dom";
 
-import SuperTokens, { SuperTokensWrapper } from "supertokens-auth-react";
-import { getSuperTokensRoutesForReactRouterDom } from "supertokens-auth-react/ui";
-import { EmailPasswordPreBuiltUI } from "supertokens-auth-react/recipe/emailpassword/prebuiltui";
-import EmailPassword from "supertokens-auth-react/recipe/emailpassword";
-import Session, { SessionAuth } from "supertokens-auth-react/recipe/session";
-import EmailVerification from "supertokens-auth-react/recipe/emailverification";
-import { EmailVerificationPreBuiltUI } from "supertokens-auth-react/recipe/emailverification/prebuiltui";
-import * as reactRouterDom from "react-router-dom";
-
-import { Toaster } from "@/components/ui/sonner"
-import { SidebarProvider } from "@/components/ui/sidebar"
-import { AppSidebar } from "@/components/app-sidebar"
-
+import { cogProtocol } from '@geomatico/maplibre-cog-protocol';
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
-import { cogProtocol } from '@geomatico/maplibre-cog-protocol';
+import { useEffect } from 'react';
+import * as reactRouterDom from 'react-router-dom';
+import { BrowserRouter, Route, Routes } from 'react-router-dom';
+import SuperTokens, { SuperTokensWrapper } from 'supertokens-auth-react';
+import EmailPassword from 'supertokens-auth-react/recipe/emailpassword';
+import { EmailPasswordPreBuiltUI } from 'supertokens-auth-react/recipe/emailpassword/prebuiltui';
+import EmailVerification from 'supertokens-auth-react/recipe/emailverification';
+import { EmailVerificationPreBuiltUI } from 'supertokens-auth-react/recipe/emailverification/prebuiltui';
+import Session, { SessionAuth } from 'supertokens-auth-react/recipe/session';
+import { getSuperTokensRoutesForReactRouterDom } from 'supertokens-auth-react/ui';
+import { AppSidebar } from '@/components/app-sidebar';
+import { SidebarProvider } from '@/components/ui/sidebar';
+import { Toaster } from '@/components/ui/sonner';
 
 import MapsList from './components/MapsList';
 import ProjectView from './components/ProjectView';
 import PostGISDocumentation from './pages/PostGISDocumentation';
-import './App.css'
+import './App.css';
 
 const websiteDomain = import.meta.env.VITE_WEBSITE_DOMAIN;
 if (!websiteDomain) {
-  throw new Error("VITE_WEBSITE_DOMAIN is not defined. Please set it in your .env file or build environment.");
+  throw new Error('VITE_WEBSITE_DOMAIN is not defined. Please set it in your .env file or build environment.');
 }
 
 const emailVerificationMode = import.meta.env.VITE_EMAIL_VERIFICATION;
@@ -38,38 +36,40 @@ const emailVerificationEnabled = emailVerificationMode === 'require';
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const recipeList: any[] = [EmailPassword.init(), Session.init()];
 if (emailVerificationEnabled) {
-  recipeList.push(EmailVerification.init({ mode: "REQUIRED" }));
+  recipeList.push(EmailVerification.init({ mode: 'REQUIRED' }));
 }
 
 SuperTokens.init({
   appInfo: {
-    appName: "Mundi",
+    appName: 'Mundi',
     apiDomain: websiteDomain,
     websiteDomain: websiteDomain,
-    apiBasePath: "/supertokens",
-    websiteBasePath: "/auth",
+    apiBasePath: '/supertokens',
+    websiteBasePath: '/auth',
   },
   recipeList,
   style: `
   [data-supertokens~="container"] {
     font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }`
+  }`,
 });
 
 import { useState } from 'react';
 import { ProjectState } from './lib/types';
 
 function AppContent() {
-  const [projectState, setProjectState] = useState<ProjectState>({ type: 'not_logged_in' });
+  const [projectState, setProjectState] = useState<ProjectState>({
+    type: 'not_logged_in',
+  });
   const sessionContext = Session.useSessionContext();
 
   useEffect(() => {
     const protocol = new Protocol();
-    maplibregl.addProtocol("pmtiles", protocol.tile);
+    maplibregl.addProtocol('pmtiles', protocol.tile);
     maplibregl.addProtocol('cog', cogProtocol);
     return () => {
-      maplibregl.removeProtocol("pmtiles");
-      maplibregl.removeProtocol("cog");
+      maplibregl.removeProtocol('pmtiles');
+      maplibregl.removeProtocol('cog');
     };
   }, []);
 
@@ -109,24 +109,36 @@ function AppContent() {
 
         <Routes>
           {/* SuperTokens Routes for authentication UI */}
-          {getSuperTokensRoutesForReactRouterDom(reactRouterDom, emailVerificationEnabled ? [EmailPasswordPreBuiltUI, EmailVerificationPreBuiltUI] : [EmailPasswordPreBuiltUI])}
+          {getSuperTokensRoutesForReactRouterDom(
+            reactRouterDom,
+            emailVerificationEnabled ? [EmailPasswordPreBuiltUI, EmailVerificationPreBuiltUI] : [EmailPasswordPreBuiltUI],
+          )}
 
           {/* App Routes */}
-          <Route path="/" element={
-            <SessionAuth>
-              <MapsList />
-            </SessionAuth>
-          } />
-          <Route path="/project/:projectId/:versionIdParam?" element={
-            <SessionAuth>
-              <ProjectView />
-            </SessionAuth>
-          } />
-          <Route path="/postgis/:connectionId" element={
-            <SessionAuth>
-              <PostGISDocumentation />
-            </SessionAuth>
-          } />
+          <Route
+            path="/"
+            element={
+              <SessionAuth>
+                <MapsList />
+              </SessionAuth>
+            }
+          />
+          <Route
+            path="/project/:projectId/:versionIdParam?"
+            element={
+              <SessionAuth>
+                <ProjectView />
+              </SessionAuth>
+            }
+          />
+          <Route
+            path="/postgis/:connectionId"
+            element={
+              <SessionAuth>
+                <PostGISDocumentation />
+              </SessionAuth>
+            }
+          />
         </Routes>
       </SidebarProvider>
     </BrowserRouter>
@@ -139,7 +151,7 @@ function App() {
       <AppContent />
       <Toaster />
     </SuperTokensWrapper>
-  )
+  );
 }
 
-export default App
+export default App;

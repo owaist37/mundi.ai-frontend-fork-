@@ -1,13 +1,13 @@
 // Copyright Bunting Labs, Inc. 2025
 
-import React, { useEffect, useRef } from "react";
-import mermaid from "mermaid";
+import mermaid from 'mermaid';
+import React, { useEffect, useRef } from 'react';
 
 mermaid.initialize({
   startOnLoad: false,
-  theme: "dark",
-  securityLevel: "loose",
-  fontFamily: "Fira Code"
+  theme: 'dark',
+  securityLevel: 'loose',
+  fontFamily: 'Fira Code',
 });
 
 interface MermaidProps {
@@ -16,7 +16,7 @@ interface MermaidProps {
 
 const MermaidComponent: React.FC<MermaidProps> = ({ chart }) => {
   const elementRef = useRef<HTMLDivElement>(null);
-  const renderIdRef = useRef<string>("");
+  const renderIdRef = useRef<string>('');
 
   useEffect(() => {
     const renderDiagram = async () => {
@@ -58,9 +58,7 @@ const MermaidComponent: React.FC<MermaidProps> = ({ chart }) => {
     };
   }, [chart]);
 
-  return (
-    <div ref={elementRef} className="mermaid" />
-  );
+  return <div ref={elementRef} className="mermaid" />;
 };
 
 export default MermaidComponent;

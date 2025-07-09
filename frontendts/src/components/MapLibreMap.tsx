@@ -1,23 +1,43 @@
 // Copyright Bunting Labs, Inc. 2025
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Map, NavigationControl, ScaleControl, MapOptions, IControl } from 'maplibre-gl';
-import Session from "supertokens-auth-react/recipe/session";
+
 import { useConnectionStatus, usePresence } from 'driftdb-react';
-import useWebSocket, { ReadyState } from 'react-use-websocket';
-import React from 'react';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm'
-
-import legendSymbol, { RenderElement } from "legend-symbol-ts";
-
+import legendSymbol, { type RenderElement } from 'legend-symbol-ts';
 import {
-  Card,
-  CardContent,
-  CardFooter,
-  CardHeader,
-  CardTitle,
-} from "@/components/ui/card";
-
+  Activity,
+  AlertTriangle,
+  Brain,
+  ChevronLeft,
+  ChevronRight,
+  Database,
+  Info,
+  Loader2,
+  MessagesSquare,
+  MoreHorizontal,
+  RotateCw,
+  Send,
+  SignalHigh,
+  SignalLow,
+} from 'lucide-react';
+import { type IControl, type MapOptions, Map as MLMap, NavigationControl, ScaleControl } from 'maplibre-gl';
+import type {
+  ChatCompletionMessageParam,
+  ChatCompletionMessageToolCall,
+  ChatCompletionUserMessageParam,
+} from 'openai/resources/chat/completions';
+// Copyright Bunting Labs, Inc. 2025
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { Download, Save, Upload } from 'react-bootstrap-icons';
+import ReactMarkdown from 'react-markdown';
+import { useNavigate } from 'react-router-dom';
+import useWebSocket, { ReadyState } from 'react-use-websocket';
+import remarkGfm from 'remark-gfm';
+import { toast } from 'sonner';
+import Session from 'supertokens-auth-react/recipe/session';
+import AttributeTable from '@/components/AttributeTable';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,37 +47,18 @@ import {
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Upload, Download, Save } from 'react-bootstrap-icons';
-import { Info, ChevronLeft, ChevronRight, MessagesSquare, MoreHorizontal, SignalHigh, SignalLow, AlertTriangle, Loader2, RotateCw } from 'lucide-react';
-
-import { toast } from "sonner";
-import AttributeTable from "@/components/AttributeTable";
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "@/components/ui/command"
-import { MapData, MapLayer, PointerPosition, PresenceData, EphemeralAction, MapProject, PostgresConnectionDetails } from '../lib/types';
-import { useNavigate } from 'react-router-dom';
-
-import type { ChatCompletionMessageParam, ChatCompletionUserMessageParam, ChatCompletionMessageToolCall } from "openai/resources/chat/completions";
-import { Activity, Brain, Database, Send } from 'lucide-react';
+} from '@/components/ui/dropdown-menu';
+import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
-
+import type {
+  EphemeralAction,
+  MapData,
+  MapLayer,
+  MapProject,
+  PointerPosition,
+  PostgresConnectionDetails,
+  PresenceData,
+} from '../lib/types';
 
 // Define the type for chat completion messages from the database
 interface ChatCompletionMessageRow {
@@ -92,7 +93,7 @@ class GlobeControl implements IControl {
     this._onBasemapChange = onBasemapChange;
   }
 
-  onAdd(_map: Map): HTMLElement {
+  onAdd(_map: MLMap): HTMLElement {
     this._container = document.createElement('div');
     this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
 
@@ -149,14 +150,14 @@ class GlobeControl implements IControl {
 class ExportPDFControl implements IControl {
   private _container: HTMLDivElement | undefined;
   private _button: HTMLButtonElement | undefined;
-  private _map: Map | undefined;
+  private _map: MLMap | undefined;
   private _mapId: string;
 
   constructor(mapId: string) {
     this._mapId = mapId;
   }
 
-  onAdd(map: Map): HTMLElement {
+  onAdd(map: MLMap): HTMLElement {
     this._map = map;
     this._container = document.createElement('div');
     this._container.className = 'maplibregl-ctrl maplibregl-ctrl-group';
@@ -197,7 +198,7 @@ class ExportPDFControl implements IControl {
 
     // Store original content
     const originalContent = this._button.innerHTML;
-    
+
     // Replace with spinning loader
     this._button.innerHTML = `
       <svg class="animate-spin" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#333" stroke-width="2">
@@ -236,7 +237,6 @@ class ExportPDFControl implements IControl {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
-
     } catch (error) {
       console.error('Error exporting to PDF:', error);
       alert('Failed to export map. Please try again.');
@@ -283,7 +283,7 @@ interface LayerWithStatus extends MapLayer {
 interface LayerListProps {
   project: MapProject;
   currentMapData: MapData;
-  mapRef: React.RefObject<Map | null>;
+  mapRef: React.RefObject<MLMap | null>;
   openDropzone: () => void;
   saveAndForkMap: () => void;
   isSaving: boolean;
@@ -295,7 +295,7 @@ interface LayerListProps {
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
-  zoomHistory: Array<{ bounds: [number, number, number, number]; }>;
+  zoomHistory: Array<{ bounds: [number, number, number, number] }>;
   zoomHistoryIndex: number;
   setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
   uploadingFiles?: UploadingFile[];
@@ -304,11 +304,7 @@ interface LayerListProps {
 
 function renderTree(tree: RenderElement | null): JSX.Element | null {
   if (!tree) return null;
-  return React.createElement(
-    tree.element,
-    tree.attributes,
-    tree.children?.map(renderTree)
-  );
+  return React.createElement(tree.element, tree.attributes, tree.children?.map(renderTree));
 }
 
 const LayerList: React.FC<LayerListProps> = ({
@@ -348,7 +344,7 @@ const LayerList: React.FC<LayerListProps> = ({
     database: '',
     username: '',
     password: '',
-    schema: 'public'
+    schema: 'public',
   });
   const [postgisLoading, setPostgisLoading] = useState(false);
   const [postgisError, setPostgisError] = useState<string | null>(null);
@@ -397,7 +393,7 @@ const LayerList: React.FC<LayerListProps> = ({
           database: '',
           username: '',
           password: '',
-          schema: 'public'
+          schema: 'public',
         });
 
         // Refresh immediately to show "Loading into AI..." in the database list
@@ -420,7 +416,7 @@ const LayerList: React.FC<LayerListProps> = ({
 
                 // Check if any connections no longer have "Loading..." as the name
                 const hasUpdatedNames = projectData.postgres_connections?.some(
-                  (conn: PostgresConnectionDetails) => conn.friendly_name && conn.friendly_name !== "Loading..."
+                  (conn: PostgresConnectionDetails) => conn.friendly_name && conn.friendly_name !== 'Loading...',
                 );
 
                 if (hasUpdatedNames || attempts >= maxAttempts) {
@@ -460,35 +456,36 @@ const LayerList: React.FC<LayerListProps> = ({
 
     // Use diff from currentMapData to determine layer statuses
     if (currentMapData.diff && currentMapData.diff.layer_diffs) {
-      const layerDiffMap = new globalThis.Map<string, string>(
-        currentMapData.diff.layer_diffs.map(diff => [diff.layer_id, diff.status])
-      );
+      const layerDiffMap = new globalThis.Map<string, string>(currentMapData.diff.layer_diffs.map((diff) => [diff.layer_id, diff.status]));
 
       // Start with current layers
-      const layersWithStatus = currentLayersArray.map(layer => ({
+      const layersWithStatus = currentLayersArray.map((layer) => ({
         ...layer,
-        status: (layerDiffMap.get(layer.id) || 'existing') as 'added' | 'removed' | 'edited' | 'existing'
+        status: (layerDiffMap.get(layer.id) || 'existing') as 'added' | 'removed' | 'edited' | 'existing',
       }));
 
       // Add removed layers from diff
       const removedLayers = currentMapData.diff.layer_diffs
-        .filter(diff => diff.status === 'removed')
-        .filter(diff => !currentLayersArray.some(layer => layer.id === diff.layer_id))
-        .map(diff => ({
+        .filter((diff) => diff.status === 'removed')
+        .filter((diff) => !currentLayersArray.some((layer) => layer.id === diff.layer_id))
+        .map((diff) => ({
           id: diff.layer_id,
           name: diff.name,
           path: '',
           // geometry_type: null,
           type: 'removed',
           // feature_count: null,
-          status: 'removed' as const
+          status: 'removed' as const,
         }));
 
       return [...layersWithStatus, ...removedLayers];
     }
 
     // If no diff, all layers are existing
-    return currentLayersArray.map(l => ({ ...l, status: 'existing' as const }));
+    return currentLayersArray.map((l) => ({
+      ...l,
+      status: 'existing' as const,
+    }));
   }, [currentMapData]);
 
   return (
@@ -498,35 +495,45 @@ const LayerList: React.FC<LayerListProps> = ({
           <div className="flex items-center gap-2">
             <Tooltip>
               <TooltipTrigger>
-                {readyState === ReadyState.OPEN && driftDbConnected ?
-                  <span className="text-green-300 inline-block"><SignalHigh /></span> :
-                  <span className="text-red-300 inline-block"><SignalLow /></span>}
+                {readyState === ReadyState.OPEN && driftDbConnected ? (
+                  <span className="text-green-300 inline-block">
+                    <SignalHigh />
+                  </span>
+                ) : (
+                  <span className="text-red-300 inline-block">
+                    <SignalLow />
+                  </span>
+                )}
               </TooltipTrigger>
               <TooltipContent>
                 <div className="text-sm flex space-x-2">
                   <div className={readyState === ReadyState.OPEN ? 'text-green-300' : 'text-red-300'}>
-                    chat: {readyState === ReadyState.OPEN ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                    chat:{' '}
+                    {readyState === ReadyState.OPEN ? (
+                      <SignalHigh className="inline-block h-4 w-4" />
+                    ) : (
+                      <SignalLow className="inline-block h-4 w-4" />
+                    )}
                   </div>
                   <div className={driftDbConnected ? 'text-green-300' : 'text-red-300'}>
-                    cursors: {driftDbConnected ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                    cursors:{' '}
+                    {driftDbConnected ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
                   </div>
                 </div>
               </TooltipContent>
             </Tooltip>
-
             Map Layers
           </div>
-
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0">
         {processedLayers.length > 0 ? (
           <ul className="text-sm">
-            {processedLayers.map(layerWithStatus => {
+            {processedLayers.map((layerWithStatus) => {
               const { status, ...layerDetails } = layerWithStatus;
 
               // Check if this layer has an active action
-              const hasActiveAction = activeActions.some(action => action.layer_id === layerDetails.id);
+              const hasActiveAction = activeActions.some((action) => action.layer_id === layerDetails.id);
 
               let liClassName = '';
               if (currentMapData.display_as_diff) {
@@ -536,7 +543,8 @@ const LayerList: React.FC<LayerListProps> = ({
                   liClassName += ' bg-red-100 dark:bg-red-900 hover:bg-red-200 dark:hover:bg-red-800';
                 } else if (status === 'edited') {
                   liClassName += ' bg-yellow-100 dark:bg-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-700';
-                } else { // existing
+                } else {
+                  // existing
                   liClassName += ' hover:bg-slate-100 dark:hover:bg-gray-600 dark:focus:bg-gray-600';
                 }
               } else {
@@ -561,7 +569,9 @@ const LayerList: React.FC<LayerListProps> = ({
                       <div className="flex items-center gap-2">
                         <span className="text-xs text-slate-500 dark:text-gray-400">
                           {(() => {
-                            const sridDisplay = layerDetails.metadata?.original_srid ? `EPSG:${layerDetails.metadata.original_srid}` : 'N/A';
+                            const sridDisplay = layerDetails.metadata?.original_srid
+                              ? `EPSG:${layerDetails.metadata.original_srid}`
+                              : 'N/A';
                             if (layerDetails.type === 'raster') {
                               return sridDisplay;
                             }
@@ -571,18 +581,14 @@ const LayerList: React.FC<LayerListProps> = ({
                                 <span className="group-hover:hidden">
                                   {num_highlighted > 0 ? (
                                     <>
-                                      <span className="text-gray-300 font-bold">
-                                        {num_highlighted} /
-                                      </span>{' '}
+                                      <span className="text-gray-300 font-bold">{num_highlighted} /</span>{' '}
                                       {layerDetails.feature_count ?? 'N/A'}
                                     </>
                                   ) : (
-                                    layerDetails.feature_count ?? 'N/A'
+                                    (layerDetails.feature_count ?? 'N/A')
                                   )}
                                 </span>
-                                <span className="hidden group-hover:inline">
-                                  {sridDisplay}
-                                </span>
+                                <span className="hidden group-hover:inline">{sridDisplay}</span>
                               </>
                             );
                           })()}
@@ -604,10 +610,13 @@ const LayerList: React.FC<LayerListProps> = ({
                       onClick={() => {
                         if (status === 'removed') return;
                         if (layerDetails.bounds && layerDetails.bounds.length === 4 && mapRef.current) {
-                          mapRef.current.fitBounds([
-                            [layerDetails.bounds[0], layerDetails.bounds[1]],
-                            [layerDetails.bounds[2], layerDetails.bounds[3]]
-                          ], { padding: 50, animate: true });
+                          mapRef.current.fitBounds(
+                            [
+                              [layerDetails.bounds[0], layerDetails.bounds[1]],
+                              [layerDetails.bounds[2], layerDetails.bounds[3]],
+                            ],
+                            { padding: 50, animate: true },
+                          );
                           toast.success('Zoomed to layer');
                         } else {
                           toast.info('Layer bounds not available for zoom.');
@@ -628,9 +637,7 @@ const LayerList: React.FC<LayerListProps> = ({
                       View attributes
                     </DropdownMenuItem>
                     <DropdownMenuSub>
-                      <DropdownMenuSubTrigger disabled={status === 'removed'}>
-                        Export layer as
-                      </DropdownMenuSubTrigger>
+                      <DropdownMenuSubTrigger disabled={status === 'removed'}>Export layer as</DropdownMenuSubTrigger>
                       <DropdownMenuPortal>
                         <DropdownMenuSubContent>
                           <DropdownMenuItem>Shapefile</DropdownMenuItem>
@@ -648,16 +655,16 @@ const LayerList: React.FC<LayerListProps> = ({
                           method: 'DELETE',
                           headers: { 'Content-Type': 'application/json' },
                         })
-                          .then(response => {
+                          .then((response) => {
                             if (response.ok) {
                               toast.success(`Layer "${layerDetails.name}" deletion process started.`);
                               // Consider a state update mechanism instead of reload for better UX
                               window.location.reload();
                             } else {
-                              response.json().then(err => toast.error(`Failed to delete layer: ${err.detail || response.statusText}`));
+                              response.json().then((err) => toast.error(`Failed to delete layer: ${err.detail || response.statusText}`));
                             }
                           })
-                          .catch(err => {
+                          .catch((err) => {
                             console.error('Error deleting layer:', err);
                             toast.error(`Error deleting layer: ${err.message}`);
                           });
@@ -686,9 +693,7 @@ const LayerList: React.FC<LayerListProps> = ({
               {uploadingFiles.map((uploadingFile) => (
                 <li key={uploadingFile.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">
-                      {uploadingFile.file.name}
-                    </span>
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{uploadingFile.file.name}</span>
                     <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
                       {uploadingFile.status === 'uploading' && `${uploadingFile.progress}%`}
                       {uploadingFile.status === 'completed' && '✓'}
@@ -706,15 +711,11 @@ const LayerList: React.FC<LayerListProps> = ({
                   )}
 
                   {uploadingFile.status === 'completed' && (
-                    <div className="text-xs text-green-600 dark:text-green-400">
-                      Upload completed
-                    </div>
+                    <div className="text-xs text-green-600 dark:text-green-400">Upload completed</div>
                   )}
 
                   {uploadingFile.status === 'error' && (
-                    <div className="text-xs text-red-600 dark:text-red-400">
-                      {uploadingFile.error || 'Upload failed'}
-                    </div>
+                    <div className="text-xs text-red-600 dark:text-red-400">{uploadingFile.error || 'Upload failed'}</div>
                   )}
                 </li>
               ))}
@@ -731,7 +732,7 @@ const LayerList: React.FC<LayerListProps> = ({
               <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
             </div>
             <ul className="text-sm">
-              {project.postgres_connections.map((connection, index) => (
+              {project.postgres_connections.map((connection, index) =>
                 connection.last_error_text ? (
                   <TooltipProvider key={index}>
                     <Tooltip>
@@ -752,7 +753,9 @@ const LayerList: React.FC<LayerListProps> = ({
                                 updateProjectData(project.id);
                                 updateMapData(currentMapData.map_id);
                               } else {
-                                const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+                                const errorData = await response.json().catch(() => ({
+                                  detail: response.statusText,
+                                }));
                                 toast.error(`Failed to delete connection: ${errorData.detail || response.statusText}`);
                               }
                             } catch (error) {
@@ -770,7 +773,12 @@ const LayerList: React.FC<LayerListProps> = ({
                             </div>
                             <div className="hidden group-hover:block w-4 h-4">
                               <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                />
                               </svg>
                             </div>
                           </div>
@@ -793,17 +801,15 @@ const LayerList: React.FC<LayerListProps> = ({
                     </span>
                     <div className="flex-shrink-0">
                       <div className="group-hover:hidden">
-                        <span className="text-xs text-slate-500 dark:text-gray-400">
-                          {connection.table_count} tables
-                        </span>
+                        <span className="text-xs text-slate-500 dark:text-gray-400">{connection.table_count} tables</span>
                       </div>
                       <div className="hidden group-hover:block w-4 h-4">
                         <Info className="w-4 h-4" />
                       </div>
                     </div>
                   </li>
-                )
-              ))}
+                ),
+              )}
             </ul>
           </>
         )}
@@ -822,10 +828,13 @@ const LayerList: React.FC<LayerListProps> = ({
                     if (zoomHistoryIndex > 0 && mapRef.current) {
                       const newIndex = zoomHistoryIndex - 1;
                       const targetBounds = zoomHistory[newIndex].bounds;
-                      mapRef.current.fitBounds([
-                        [targetBounds[0], targetBounds[1]],
-                        [targetBounds[2], targetBounds[3]]
-                      ], { animate: true });
+                      mapRef.current.fitBounds(
+                        [
+                          [targetBounds[0], targetBounds[1]],
+                          [targetBounds[2], targetBounds[3]],
+                        ],
+                        { animate: true },
+                      );
                       setZoomHistoryIndex(newIndex);
                     }
                   }}
@@ -851,10 +860,13 @@ const LayerList: React.FC<LayerListProps> = ({
                     if (zoomHistoryIndex < zoomHistory.length - 1 && mapRef.current) {
                       const newIndex = zoomHistoryIndex + 1;
                       const targetBounds = zoomHistory[newIndex].bounds;
-                      mapRef.current.fitBounds([
-                        [targetBounds[0], targetBounds[1]],
-                        [targetBounds[2], targetBounds[3]]
-                      ], { animate: true });
+                      mapRef.current.fitBounds(
+                        [
+                          [targetBounds[0], targetBounds[1]],
+                          [targetBounds[2], targetBounds[3]],
+                        ],
+                        { animate: true },
+                      );
                       setZoomHistoryIndex(newIndex);
                     }
                   }}
@@ -872,7 +884,12 @@ const LayerList: React.FC<LayerListProps> = ({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={openDropzone}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  onClick={openDropzone}
+                >
                   <Upload className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -884,7 +901,12 @@ const LayerList: React.FC<LayerListProps> = ({
           <TooltipProvider>
             <Tooltip>
               <TooltipTrigger asChild>
-                <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={() => setShowPostgisDialog(true)}>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  onClick={() => setShowPostgisDialog(true)}
+                >
                   <Database className="h-4 w-4" />
                 </Button>
               </TooltipTrigger>
@@ -897,12 +919,14 @@ const LayerList: React.FC<LayerListProps> = ({
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600" onClick={saveAndForkMap} disabled={isSaving}>
-                    {isSaving ? (
-                      <RotateCw className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Save className="h-4 w-4" />
-                    )}
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                    onClick={saveAndForkMap}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? <RotateCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
                   </Button>
                 </TooltipTrigger>
                 <TooltipContent>
@@ -914,17 +938,20 @@ const LayerList: React.FC<LayerListProps> = ({
         </div>
 
         {/* PostGIS Connection Dialog */}
-        <Dialog open={showPostgisDialog} onOpenChange={(open) => {
-          setShowPostgisDialog(open);
-          if (!open) {
-            setPostgisError(null);
-          }
-        }}>
+        <Dialog
+          open={showPostgisDialog}
+          onOpenChange={(open) => {
+            setShowPostgisDialog(open);
+            if (!open) {
+              setPostgisError(null);
+            }
+          }}
+        >
           <DialogContent className="sm:max-w-[500px]">
             <DialogHeader>
               <DialogTitle>Add a PostGIS Database</DialogTitle>
               <DialogDescription>
-                Your database connection details will be stored on the server. Read-only access is best.{" "}
+                Your database connection details will be stored on the server. Read-only access is best.{' '}
                 <a
                   href="https://docs.mundi.ai/guides/connecting-to-postgis/"
                   target="_blank"
@@ -973,7 +1000,8 @@ const LayerList: React.FC<LayerListProps> = ({
               {connectionMethod === 'demo' ? (
                 <div className="space-y-2">
                   <p className="text-sm text-gray-300">
-                    {demoConfig.description} We provide it as a demo to preview Mundi's capabilities, especially for users with sensitive PostGIS databases who would rather self-host or use an on-premise deployment.
+                    {demoConfig.description} We provide it as a demo to preview Mundi's capabilities, especially for users with sensitive
+                    PostGIS databases who would rather self-host or use an on-premise deployment.
                   </p>
                 </div>
               ) : connectionMethod === 'uri' ? (
@@ -986,7 +1014,10 @@ const LayerList: React.FC<LayerListProps> = ({
                     placeholder="postgresql://username:password@host:port/database"
                     value={postgisForm.uri}
                     onChange={(e) => {
-                      setPostgisForm(prev => ({ ...prev, uri: e.target.value }));
+                      setPostgisForm((prev) => ({
+                        ...prev,
+                        uri: e.target.value,
+                      }));
                       setPostgisError(null);
                     }}
                   />
@@ -1003,7 +1034,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         placeholder="localhost"
                         value={postgisForm.host}
                         onChange={(e) => {
-                          setPostgisForm(prev => ({ ...prev, host: e.target.value }));
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            host: e.target.value,
+                          }));
                           setPostgisError(null);
                         }}
                       />
@@ -1017,7 +1051,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         placeholder="5432"
                         value={postgisForm.port}
                         onChange={(e) => {
-                          setPostgisForm(prev => ({ ...prev, port: e.target.value }));
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            port: e.target.value,
+                          }));
                           setPostgisError(null);
                         }}
                       />
@@ -1033,7 +1070,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         placeholder="postgres"
                         value={postgisForm.database}
                         onChange={(e) => {
-                          setPostgisForm(prev => ({ ...prev, database: e.target.value }));
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            database: e.target.value,
+                          }));
                           setPostgisError(null);
                         }}
                       />
@@ -1047,7 +1087,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         placeholder="public"
                         value={postgisForm.schema}
                         onChange={(e) => {
-                          setPostgisForm(prev => ({ ...prev, schema: e.target.value }));
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            schema: e.target.value,
+                          }));
                           setPostgisError(null);
                         }}
                       />
@@ -1063,7 +1106,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         placeholder="postgres"
                         value={postgisForm.username}
                         onChange={(e) => {
-                          setPostgisForm(prev => ({ ...prev, username: e.target.value }));
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            username: e.target.value,
+                          }));
                           setPostgisError(null);
                         }}
                       />
@@ -1078,7 +1124,10 @@ const LayerList: React.FC<LayerListProps> = ({
                         placeholder="password"
                         value={postgisForm.password}
                         onChange={(e) => {
-                          setPostgisForm(prev => ({ ...prev, password: e.target.value }));
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            password: e.target.value,
+                          }));
                           setPostgisError(null);
                         }}
                       />
@@ -1092,7 +1141,15 @@ const LayerList: React.FC<LayerListProps> = ({
                 <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-md">
                   <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
                   <div className="text-sm text-red-700">
-                    {postgisError} <a href="https://docs.mundi.ai/guides/connecting-to-postgis/#debugging-common-problems" target="_blank" className="text-blue-500 hover:text-blue-600 underline">Refer to our documentation on PostGIS errors.</a>
+                    {postgisError}{' '}
+                    <a
+                      href="https://docs.mundi.ai/guides/connecting-to-postgis/#debugging-common-problems"
+                      target="_blank"
+                      className="text-blue-500 hover:text-blue-600 underline"
+                      rel="noopener"
+                    >
+                      Refer to our documentation on PostGIS errors.
+                    </a>
                   </div>
                 </div>
               )}
@@ -1115,34 +1172,46 @@ const LayerList: React.FC<LayerListProps> = ({
             </DialogFooter>
           </DialogContent>
         </Dialog>
-
       </CardFooter>
-    </Card >
+    </Card>
   );
 };
 
-
-export default function MapLibreMap({ mapId, width = '100%', height = '500px', className = '', project, mapData, openDropzone, updateMapData, updateProjectData, uploadingFiles }: MapLibreMapProps) {
+export default function MapLibreMap({
+  mapId,
+  width = '100%',
+  height = '500px',
+  className = '',
+  project,
+  mapData,
+  openDropzone,
+  updateMapData,
+  updateProjectData,
+  uploadingFiles,
+}: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<Map | null>(null);
+  const mapRef = useRef<MLMap | null>(null);
   const globeControlRef = useRef<GlobeControl | null>(null);
   const exportPDFControlRef = useRef<ExportPDFControl | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
-  const [layerSymbols, setLayerSymbols] = useState<{ [layerId: string]: JSX.Element }>({});
-  const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number]; }>>([]);
+  const [layerSymbols, setLayerSymbols] = useState<{
+    [layerId: string]: JSX.Element;
+  }>({});
+  const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number] }>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
   const [currentBasemap, setCurrentBasemap] = useState<string>('');
   const [availableBasemaps, setAvailableBasemaps] = useState<string[]>([]);
-  const [demoConfig, setDemoConfig] = useState<{ available: boolean; description: string }>({ available: false, description: '' });
-
-
+  const [demoConfig, setDemoConfig] = useState<{
+    available: boolean;
+    description: string;
+  }>({ available: false, description: '' });
 
   // Helper function to add a new error
   const addError = (message: string, shouldOverrideMessages: boolean = false) => {
-    setErrors(prevErrors => {
+    setErrors((prevErrors) => {
       // if it already exists, bail out
-      if (prevErrors.some(err => err.message === message)) {
+      if (prevErrors.some((err) => err.message === message)) {
         return prevErrors;
       }
 
@@ -1159,7 +1228,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
       // schedule the auto-dismiss
       setTimeout(() => {
-        setErrors(current => current.filter(e => e.id !== newError.id));
+        setErrors((current) => current.filter((e) => e.id !== newError.id));
       }, 30000);
 
       return [...prevErrors, newError];
@@ -1168,11 +1237,11 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
   // Helper function to dismiss a specific error
   const dismissError = (errorId: string) => {
-    setErrors(prev => prev.filter(error => error.id !== errorId));
+    setErrors((prev) => prev.filter((error) => error.id !== errorId));
   };
   const [loading, setLoading] = useState(true);
   const [pointerPosition, setPointerPosition] = useState<PointerPosition | null>(null);
-  const otherClientPositions = usePresence<PointerPosition | null>("cursors", pointerPosition);
+  const otherClientPositions = usePresence<PointerPosition | null>('cursors', pointerPosition);
   const navigate = useNavigate();
   const [showAttributeTable, setShowAttributeTable] = useState(false);
   const [selectedLayer, setSelectedLayer] = useState<MapLayer | null>(null);
@@ -1185,18 +1254,18 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   const handleBasemapChange = async (newBasemap: string) => {
     setCurrentBasemap(newBasemap);
     // Trigger a style update with the new basemap
-    setToolResponseCount(prev => prev + 1);
+    setToolResponseCount((prev) => prev + 1);
   };
 
   // Function to get the appropriate icon for an action
   const getActionIcon = (action: string) => {
-    if (action.includes("thinking")) {
+    if (action.includes('thinking')) {
       return <Brain className="animate-pulse w-4 h-4 mr-2" />;
-    } else if (action.includes("Downloading data from OpenStreetMap")) {
+    } else if (action.includes('Downloading data from OpenStreetMap')) {
       return <Download className="animate-pulse w-4 h-4 mr-2" />;
-    } else if (action.includes("SQL")) {
+    } else if (action.includes('SQL')) {
       return <Database className="animate-pulse w-4 h-4 mr-2" />;
-    } else if (action.includes("Sending message")) {
+    } else if (action.includes('Sending message')) {
       return <Send className="animate-pulse w-4 h-4 mr-2" />;
     } else {
       return <Activity className="w-4 h-4 mr-2 animate-pulse" />;
@@ -1205,11 +1274,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
   // State for changelog entries
   // State for changelog entries from map data
-  const [changelog, setChangelog] = useState<Array<{
-    summary: string;
-    timestamp: string;
-    mapState: string;
-  }>>([]);
+  const [changelog, setChangelog] = useState<
+    Array<{
+      summary: string;
+      timestamp: string;
+      mapState: string;
+    }>
+  >([]);
   const [messages, setMessages] = useState<ChatCompletionMessageRow[]>([]);
   const [showMessages, setShowMessages] = useState(true);
   // Track the number of tool responses received from messages
@@ -1224,13 +1295,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   // Process changelog data when mapData changes
   useEffect(() => {
     if (mapData?.changelog) {
-      const formattedChangelog = mapData.changelog.map(entry => ({
+      const formattedChangelog = mapData.changelog.map((entry) => ({
         summary: entry.message,
         timestamp: new Date(entry.last_edited).toLocaleTimeString([], {
           hour: '2-digit',
-          minute: '2-digit'
+          minute: '2-digit',
         }),
-        mapState: entry.map_state
+        mapState: entry.map_state,
       }));
       setChangelog(formattedChangelog);
     }
@@ -1270,7 +1341,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     for (let i = 0; i < count; i++) {
       points.push({
         lng: minLng + Math.random() * (maxLng - minLng),
-        lat: minLat + Math.random() * (maxLat - minLat)
+        lat: minLat + Math.random() * (maxLat - minLat),
       });
     }
 
@@ -1282,53 +1353,47 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     p0: { lng: number; lat: number },
     p1: { lng: number; lat: number },
     p2: { lng: number; lat: number },
-    t: number
+    t: number,
   ) => {
     const invT = 1 - t;
     return {
       lng: invT * invT * p0.lng + 2 * invT * t * p1.lng + t * t * p2.lng,
-      lat: invT * invT * p0.lat + 2 * invT * t * p1.lat + t * t * p2.lat
+      lat: invT * invT * p0.lat + 2 * invT * t * p1.lat + t * t * p2.lat,
     };
   };
 
   // Update Kue's target points when active actions change
   useEffect(() => {
-    const activeLayerActions = activeActions.filter(action =>
-      action.status === 'active' && action.layer_id
-    );
+    const activeLayerActions = activeActions.filter((action) => action.status === 'active' && action.layer_id);
 
     // Get current action IDs
-    const currentActionIds = new Set(activeLayerActions.map(action => action.action_id));
+    const currentActionIds = new Set(activeLayerActions.map((action) => action.action_id));
 
     // Remove state for actions that are no longer active
-    setKuePositions(prev => {
-      const filtered = Object.fromEntries(
-        Object.entries(prev).filter(([actionId]) => currentActionIds.has(actionId))
-      );
+    setKuePositions((prev) => {
+      const filtered = Object.fromEntries(Object.entries(prev).filter(([actionId]) => currentActionIds.has(actionId)));
       return filtered;
     });
-    setKueTargetPoints(prev => {
-      const filtered = Object.fromEntries(
-        Object.entries(prev).filter(([actionId]) => currentActionIds.has(actionId))
-      );
+    setKueTargetPoints((prev) => {
+      const filtered = Object.fromEntries(Object.entries(prev).filter(([actionId]) => currentActionIds.has(actionId)));
       return filtered;
     });
 
     // Add state for new actions
     if (mapData?.layers) {
-      activeLayerActions.forEach(action => {
-        const layer = mapData.layers.find(l => l.id === action.layer_id);
+      activeLayerActions.forEach((action) => {
+        const layer = mapData.layers.find((l) => l.id === action.layer_id);
         if (layer?.bounds && layer.bounds.length >= 4) {
           const actionId = action.action_id;
 
           // Only initialize if not already present
-          setKueTargetPoints(prev => {
+          setKueTargetPoints((prev) => {
             if (prev[actionId]) return prev;
             const newTargetPoints = generateRandomPointsInBounds(layer.bounds!);
             return { ...prev, [actionId]: newTargetPoints };
           });
 
-          setKuePositions(prev => {
+          setKuePositions((prev) => {
             if (prev[actionId]) return prev;
             const newTargetPoints = generateRandomPointsInBounds(layer.bounds!);
             return { ...prev, [actionId]: newTargetPoints[0] };
@@ -1346,7 +1411,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     const interval = setInterval(() => {
       const now = Date.now();
 
-      activeActionIds.forEach(actionId => {
+      activeActionIds.forEach((actionId) => {
         const targetPoints = kueTargetPoints[actionId];
 
         if (targetPoints && targetPoints.length >= 2) {
@@ -1359,14 +1424,12 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
           if (currentCycle !== lastCycle) {
             // Generate new random points for the new curve
-            const layer = mapData?.layers?.find(l =>
-              activeActions.find(a => a.action_id === actionId)?.layer_id === l.id
-            );
+            const layer = mapData?.layers?.find((l) => activeActions.find((a) => a.action_id === actionId)?.layer_id === l.id);
             if (layer?.bounds) {
               const newTargetPoints = generateRandomPointsInBounds(layer.bounds);
-              setKueTargetPoints(prev => ({
+              setKueTargetPoints((prev) => ({
                 ...prev,
-                [actionId]: newTargetPoints
+                [actionId]: newTargetPoints,
               }));
               return; // Skip position update this frame to use new points next frame
             }
@@ -1378,9 +1441,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
           const interpolatedPosition = bezierInterpolate(startPoint, middlePoint, endPoint, progress);
 
-          setKuePositions(prev => ({
+          setKuePositions((prev) => ({
             ...prev,
-            [actionId]: interpolatedPosition
+            [actionId]: interpolatedPosition,
           }));
         }
       });
@@ -1395,16 +1458,20 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
     // Add real user pointer positions
     Object.entries(otherClientPositions)
-      .filter(([, data]) => data !== null && data.value !== null && "lng" in data.value && "lat" in data.value)
+      .filter(([, data]) => data !== null && data.value !== null && 'lng' in data.value && 'lat' in data.value)
       .forEach(([id, data]) => {
         const presenceData = data as unknown as PresenceData;
         features.push({
           type: 'Feature' as const,
           geometry: {
             type: 'Point' as const,
-            coordinates: [presenceData.value.lng, presenceData.value.lat]
+            coordinates: [presenceData.value.lng, presenceData.value.lat],
           },
-          properties: { user: id, abbrev: id.substring(0, 6), color: '#' + id.substring(0, 6) }
+          properties: {
+            user: id,
+            abbrev: id.substring(0, 6),
+            color: '#' + id.substring(0, 6),
+          },
         });
       });
 
@@ -1414,19 +1481,19 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         type: 'Feature' as const,
         geometry: {
           type: 'Point' as const,
-          coordinates: [position.lng, position.lat]
+          coordinates: [position.lng, position.lat],
         },
-        properties: { user: 'Kue', abbrev: 'Kue', color: '#ff69b4', actionId }
+        properties: { user: 'Kue', abbrev: 'Kue', color: '#ff69b4', actionId },
       });
     });
 
     return {
       type: 'FeatureCollection' as const,
-      features
+      features,
     };
   }, [otherClientPositions, kuePositions]);
 
-  const loadLegendSymbols = (map: Map) => {
+  const loadLegendSymbols = (map: MLMap) => {
     const style = map.getStyle();
 
     // Check if style and style.layers exist before proceeding
@@ -1435,19 +1502,17 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
     mapData?.layers.forEach((layer) => {
       const layerId = layer.id;
 
-      const mapLayer = style.layers.find(
-        (styleLayer) => "source" in styleLayer && (styleLayer as any).source === layerId
-      );
+      const mapLayer = style.layers.find((styleLayer) => 'source' in styleLayer && (styleLayer as any).source === layerId);
 
       if (mapLayer) {
         const tree: RenderElement | null = legendSymbol({
           sprite: style.sprite,
           zoom: map.getZoom(),
-          layer: mapLayer as any
+          layer: mapLayer as any,
         });
         // long lasting bug
-        if (tree?.attributes?.style?.backgroundImage === "url(null)") {
-          tree.attributes.style.backgroundImage = "none";
+        if (tree?.attributes?.style?.backgroundImage === 'url(null)') {
+          tree.attributes.style.backgroundImage = 'none';
           tree.attributes.style.width = '16px';
           tree.attributes.style.height = '16px';
           tree.attributes.style.opacity = '1.0';
@@ -1455,14 +1520,14 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
         const symbolElement = renderTree(tree);
         if (symbolElement) {
-          setLayerSymbols(prev => ({
+          setLayerSymbols((prev) => ({
             ...prev,
-            [layerId]: symbolElement as JSX.Element
+            [layerId]: symbolElement as JSX.Element,
           }));
         }
       }
     });
-  }
+  };
 
   // Separate effect for map initialization (only runs once)
   useEffect(() => {
@@ -1475,14 +1540,14 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         style: {
           version: 8,
           sources: {},
-          layers: []
+          layers: [],
         }, // Start with empty style so map loads
         attributionControl: {
-          compact: false
-        }
+          compact: false,
+        },
       };
 
-      const newMap = new Map(mapOptions);
+      const newMap = new MLMap(mapOptions);
       mapRef.current = newMap;
 
       newMap.on('load', () => {
@@ -1503,7 +1568,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
           }
           newMap.addImage('remote-cursor', cursorImage);
         };
-        cursorImage.src = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAIRSURBVHgB7dnNsdowFAXgQ5INO9OBt9m5BKUDOsAl0AHuIO4AUgF0YKgAOrCpwLDL7kbnPUHAETEY8yy98TejsWf8fnQsc3UBoNfr9WrkZoTwnMxmM8EnCCP0GcLIyXw+P4WJ4CG5tFwuZTQalfAwjFRtt1sJgoCrM4FHxCbPcwnDkGGm8ITcchFmBg/I//gURur4EkbuUZalRFHEMD/hKLkXw4zHY4aZw0HyqMlkwjBbPQI4RJowLQ3DhHCENOVafybPcCmMPMuVMNIGFzpnaUvXnbO0qcvOWdrWVecsr9BFfyav0iTMAM3xf+JZh8PhPIqieDvu93vsdjusVqu75/gNH2iz2SBN0/OEzTjoS6dRmOPeHHf4APIodsH8PT0U3jfB1prHL3gR3nXzaJzp8oo4jnmq8Pfud672xcpRlWUZV4SbnzOtvDXExcYW65Fx4lVKqdN1J1hDmFZjbH4m5qRvrEoGR1xNbrFY2PolPj4lA95YFQUHXIXA7Q42mU6nTq/K24SSJKl7TxFwpVh6q8zurdCCr2guGQwG0EEKff4D7+XU5rf2fTgcRvpxurpwPB6xXq9DffoLHXrkGyvFSlbFVTIV7p6/4QxrKTaPZgqPKFsp5qqYaufUZ111StuqsKrpawk8Yi3FbGngWNtS559SzBUym2MOz6R8gfNjIBOAm2IMD3H3591nAIVez21/ACUSSP4DF2G8AAAAAElFTkSuQmCC";
+        cursorImage.src =
+          'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAIRSURBVHgB7dnNsdowFAXgQ5INO9OBt9m5BKUDOsAl0AHuIO4AUgF0YKgAOrCpwLDL7kbnPUHAETEY8yy98TejsWf8fnQsc3UBoNfr9WrkZoTwnMxmM8EnCCP0GcLIyXw+P4WJ4CG5tFwuZTQalfAwjFRtt1sJgoCrM4FHxCbPcwnDkGGm8ITcchFmBg/I//gURur4EkbuUZalRFHEMD/hKLkXw4zHY4aZw0HyqMlkwjBbPQI4RJowLQ3DhHCENOVafybPcCmMPMuVMNIGFzpnaUvXnbO0qcvOWdrWVecsr9BFfyav0iTMAM3xf+JZh8PhPIqieDvu93vsdjusVqu75/gNH2iz2SBN0/OEzTjoS6dRmOPeHHf4APIodsH8PT0U3jfB1prHL3gR3nXzaJzp8oo4jnmq8Pfud672xcpRlWUZV4SbnzOtvDXExcYW65Fx4lVKqdN1J1hDmFZjbH4m5qRvrEoGR1xNbrFY2PolPj4lA95YFQUHXIXA7Q42mU6nTq/K24SSJKl7TxFwpVh6q8zurdCCr2guGQwG0EEKff4D7+XU5rf2fTgcRvpxurpwPB6xXq9DffoLHXrkGyvFSlbFVTIV7p6/4QxrKTaPZgqPKFsp5qqYaufUZ111StuqsKrpawk8Yi3FbGngWNtS559SzBUym2MOz6R8gfNjIBOAm2IMD3H3591nAIVez21/ACUSSP4DF2G8AAAAAElFTkSuQmCC';
 
         setLoading(false);
       });
@@ -1512,7 +1578,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         const wrapped = e.lngLat.wrap();
         setPointerPosition({
           lng: wrapped.lng,
-          lat: wrapped.lat
+          lat: wrapped.lat,
         });
       });
 
@@ -1585,14 +1651,13 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
               center: newStyle.center,
               zoom: newStyle.zoom,
               pitch: newStyle.pitch || 0,
-              bearing: newStyle.bearing || 0
+              bearing: newStyle.bearing || 0,
             });
           }
           setHasZoomed(true);
         }
 
         isUpdating = false; // Reset flag when done
-
       } catch (err) {
         console.error('Error updating style:', err);
         addError('Failed to update map style: ' + (err instanceof Error ? err.message : String(err)), true);
@@ -1626,7 +1691,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         const data = await response.json();
         // Ensure messages from fetch are sorted by message_index
         const fetchedMessages: ChatCompletionMessageRow[] = data.messages.sort(
-          (a: ChatCompletionMessageRow, b: ChatCompletionMessageRow) => (a.id) - (b.id)
+          (a: ChatCompletionMessageRow, b: ChatCompletionMessageRow) => a.id - b.id,
         );
 
         setMessages(fetchedMessages);
@@ -1654,16 +1719,16 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       map_id: mapId,
       ephemeral: true,
       action_id: actionId,
-      action: "Sending message to Kue...",
+      action: 'Sending message to Kue...',
       timestamp: new Date().toISOString(),
       completed_at: null,
       layer_id: null,
-      status: "active",
+      status: 'active',
       updates: {
         style_json: false,
       },
     };
-    setActiveActions(prev => [...prev, sendingAction]);
+    setActiveActions((prev) => [...prev, sendingAction]);
 
     try {
       const response = await fetch(`/api/maps/${mapId}/messages/send`, {
@@ -1684,9 +1749,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       addError(error instanceof Error ? error.message : 'Network error', true);
     } finally {
       // Remove the ephemeral action when done
-      setActiveActions(prev =>
-        prev.filter(a => a.action_id !== actionId)
-      );
+      setActiveActions((prev) => prev.filter((a) => a.action_id !== actionId));
     }
   };
   // WebSocket using react-use-websocket
@@ -1706,8 +1769,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   }, [sessionContext]);
 
   const wsUrl = useMemo(() => {
-    if (!mapId || !jwt)
-      return null;
+    if (!mapId || !jwt) return null;
 
     return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
   }, [mapId, wsProtocol, jwt]);
@@ -1746,14 +1808,18 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
 
   // WebSocket using react-use-websocket
   const shouldConnect = !sessionContext.loading && (isTabVisible || !hiddenTimeoutExpired);
-  const { lastMessage, readyState } = useWebSocket(wsUrl, {
-    onError: () => {
-      addError('Chat connection error.', false);
+  const { lastMessage, readyState } = useWebSocket(
+    wsUrl,
+    {
+      onError: () => {
+        addError('Chat connection error.', false);
+      },
+      shouldReconnect: () => true,
+      reconnectAttempts: 2880, // 24 hours of continuous work, at 30 seconds each = 2,880
+      reconnectInterval: 30, // interval *between* reconnects, 30 milliseconds
     },
-    shouldReconnect: () => true,
-    reconnectAttempts: 2880, // 24 hours of continuous work, at 30 seconds each = 2,880
-    reconnectInterval: 30, // interval *between* reconnects, 30 milliseconds
-  }, shouldConnect);
+    shouldConnect,
+  );
 
   // Process incoming messages
   useEffect(() => {
@@ -1780,58 +1846,59 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
               currentBounds.getWest(),
               currentBounds.getSouth(),
               currentBounds.getEast(),
-              currentBounds.getNorth()
+              currentBounds.getNorth(),
             ];
 
             // Add current bounds to history
-            setZoomHistory(prev => {
+            setZoomHistory((prev) => {
               const newHistory = [...prev.slice(0, zoomHistoryIndex + 1), { bounds: currentBoundsArray }];
               return newHistory;
             });
 
             // Update index to point to the newly added current position
-            setZoomHistoryIndex(prev => prev + 1);
+            setZoomHistoryIndex((prev) => prev + 1);
 
             // Zoom to new bounds
             const [west, south, east, north] = action.bounds;
-            mapRef.current.fitBounds([
-              [west, south],
-              [east, north]
-            ], { animate: true, padding: 50 });
+            mapRef.current.fitBounds(
+              [
+                [west, south],
+                [east, north],
+              ],
+              { animate: true, padding: 50 },
+            );
 
             // Add the new bounds to history as well
-            setZoomHistory(prev => {
+            setZoomHistory((prev) => {
               const newHistory = [...prev, { bounds: action.bounds as [number, number, number, number] }];
               return newHistory;
             });
 
             // Update index to point to the new bounds
-            setZoomHistoryIndex(prev => prev + 1);
+            setZoomHistoryIndex((prev) => prev + 1);
           }
 
           if (action.status === 'active') {
             // Add to active actions
-            setActiveActions(prev => [...prev, action]);
+            setActiveActions((prev) => [...prev, action]);
           } else if (action.status === 'completed') {
             // Remove from active actions
-            setActiveActions(prev =>
-              prev.filter(a => a.action_id !== action.action_id)
-            );
+            setActiveActions((prev) => prev.filter((a) => a.action_id !== action.action_id));
 
             if (action.updates.style_json) {
-              setToolResponseCount(prev => prev + 1);
+              setToolResponseCount((prev) => prev + 1);
             }
           }
         } else {
           // Regular message
-          setMessages(prevMessages => {
+          setMessages((prevMessages) => {
             const newMessages = [...prevMessages, update as ChatCompletionMessageRow];
             return newMessages;
           });
         }
       } catch (e) {
-        console.error("Error processing WebSocket message:", e);
-        addError("Failed to process update from server.", false);
+        console.error('Error processing WebSocket message:', e);
+        addError('Failed to process update from server.', false);
       }
     }
   }, [lastMessage]);
@@ -1912,8 +1979,8 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
       const response = await fetch(`/api/maps/${mapId}/save_fork`, {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json'
-        }
+          'Content-Type': 'application/json',
+        },
       });
 
       if (response.ok) {
@@ -1945,23 +2012,19 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
   // Determine the last assistant message to display. Only show if it's the very
   // last message in the conversation and has text content.
   const lastAssistantMsg: string | null =
-    lastMsg &&
-      lastMsg.message_json.role === "assistant" &&
-      typeof lastMsg.message_json.content === "string"
+    lastMsg && lastMsg.message_json.role === 'assistant' && typeof lastMsg.message_json.content === 'string'
       ? (lastMsg.message_json.content as string)
       : null;
 
   // Determine the last user message for the input placeholder.
   const lastUserMsg: string | null =
-    lastMsg &&
-      lastMsg.message_json.role === "user" &&
-      typeof lastMsg.message_json.content === "string"
+    lastMsg && lastMsg.message_json.role === 'user' && typeof lastMsg.message_json.content === 'string'
       ? (lastMsg.message_json.content as string)
       : null;
 
   // especially chat disconnected errors happen all the time and shouldn't
   // override the text box
-  const criticalErrors = errors.filter(e => e.shouldOverrideMessages);
+  const criticalErrors = errors.filter((e) => e.shouldOverrideMessages);
 
   return (
     <>
@@ -1971,11 +2034,7 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         {/* Render the attribute table if showAttributeTable is true */}
         {selectedLayer && (
           <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 z-50 w-4/5 max-w-4xl">
-            <AttributeTable
-              layer={selectedLayer}
-              isOpen={showAttributeTable}
-              onClose={() => setShowAttributeTable(false)}
-            />
+            <AttributeTable layer={selectedLayer} isOpen={showAttributeTable} onClose={() => setShowAttributeTable(false)} />
           </div>
         )}
 
@@ -2032,16 +2091,16 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
         </Command>
         {/* Message display component - always show parent div, animate height */}
         {(criticalErrors.length > 0 || activeActions.length > 0 || lastAssistantMsg) && (
-          <div className={`z-30 absolute bottom-12 mb-[34px] opacity-90 left-3/5 transform -translate-x-1/2 w-4/5 max-w-lg overflow-auto bg-white dark:bg-gray-800 rounded-t-md shadow-md p-2 text-sm transition-all duration-300 max-h-40 h-auto ${errors.length > 0 ? 'border-red-800' : ''}`}>
+          <div
+            className={`z-30 absolute bottom-12 mb-[34px] opacity-90 left-3/5 transform -translate-x-1/2 w-4/5 max-w-lg overflow-auto bg-white dark:bg-gray-800 rounded-t-md shadow-md p-2 text-sm transition-all duration-300 max-h-40 h-auto ${errors.length > 0 ? 'border-red-800' : ''}`}
+          >
             {criticalErrors.length > 0 ? (
               <div className="space-y-1 max-h-20">
                 {criticalErrors.map((error) => (
                   <div key={error.id} className="flex items-center justify-between">
                     <div className="flex flex-col flex-1 mr-2">
                       <span className="text-red-400">{error.message}</span>
-                      <span className="text-xs text-slate-500 dark:text-gray-400">
-                        {error.timestamp.toLocaleTimeString()}
-                      </span>
+                      <span className="text-xs text-slate-500 dark:text-gray-400">{error.timestamp.toLocaleTimeString()}</span>
                     </div>
                     <button
                       onClick={() => dismissError(error.id)}
@@ -2066,7 +2125,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
                 {isCancelling ? (
                   <span className="text-white ml-2 shrink-0">Cancelling...</span>
                 ) : (
-                  <button className="text-white cursor-pointer ml-2 shrink-0 hover:underline" onClick={() => setIsCancelling(true)}>Cancel</button>
+                  <button className="text-white cursor-pointer ml-2 shrink-0 hover:underline" onClick={() => setIsCancelling(true)}>
+                    Cancel
+                  </button>
                 )}
               </div>
             ) : lastAssistantMsg ? (
@@ -2076,7 +2137,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             ) : null}
           </div>
         )}
-        <div className={`z-30 absolute bottom-12 left-3/5 transform -translate-x-1/2 w-4/5 max-w-xl bg-white dark:bg-gray-800 shadow-md focus-within:ring-2 focus-within:ring-white/30 flex items-center border border-input bg-input rounded-md ${!showMessages ? 'rounded-l-md' : 'rounded-md'}`}>
+        <div
+          className={`z-30 absolute bottom-12 left-3/5 transform -translate-x-1/2 w-4/5 max-w-xl bg-white dark:bg-gray-800 shadow-md focus-within:ring-2 focus-within:ring-white/30 flex items-center border border-input bg-input rounded-md ${!showMessages ? 'rounded-l-md' : 'rounded-md'}`}
+        >
           <Input
             className={`flex-1 border-none shadow-none !bg-transparent focus:!ring-0 focus:!ring-offset-0 focus-visible:!ring-0 focus-visible:!ring-offset-0 focus-visible:!outline-none`}
             placeholder={lastUserMsg || 'Type in for Kue to do something...'}
@@ -2088,10 +2151,9 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             <TooltipTrigger asChild>
               <button
                 onClick={showMessages ? () => setShowMessages(false) : () => setShowMessages(true)}
-                className={`p-2 hover:cursor-pointer ${showMessages
-                  ? 'text-gray-600 hover:text-gray-500'
-                  : 'text-gray-400 hover:text-gray-200'
-                  }`}
+                className={`p-2 hover:cursor-pointer ${
+                  showMessages ? 'text-gray-600 hover:text-gray-500' : 'text-gray-400 hover:text-gray-200'
+                }`}
               >
                 <MessagesSquare className="h-4 w-4" />
               </button>
@@ -2107,106 +2169,110 @@ export default function MapLibreMap({ mapId, width = '100%', height = '500px', c
             <div className="text-gray-700">Loading map...</div>
           </div>
         )}
-
-
       </div>
 
       {/* Chat sidebar */}
-      {showMessages && <div className="z-30 max-h-screen h-full w-80 bg-white dark:bg-gray-800 shadow-md flex flex-col text-sm">
-        <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-          <h3 className="font-semibold">Chat with Kue</h3>
-          <button
-            onClick={() => setShowMessages(false)}
-            className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:cursor-pointer"
-          >
-            Hide
-          </button>
-        </div>
-        <div className="flex-1 overflow-auto p-2">
-          {messages.map((msg, index) => {
-            let messageClass = '';
-            let contentDisplay = '';
+      {showMessages && (
+        <div className="z-30 max-h-screen h-full w-80 bg-white dark:bg-gray-800 shadow-md flex flex-col text-sm">
+          <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
+            <h3 className="font-semibold">Chat with Kue</h3>
+            <button
+              onClick={() => setShowMessages(false)}
+              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:cursor-pointer"
+            >
+              Hide
+            </button>
+          </div>
+          <div className="flex-1 overflow-auto p-2">
+            {messages.map((msg, index) => {
+              let messageClass = '';
+              let contentDisplay = '';
 
-            const messageJson = msg.message_json;
+              const messageJson = msg.message_json;
 
-            if (messageJson.role === 'user') {
-              messageClass = 'bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600';
+              if (messageJson.role === 'user') {
+                messageClass = 'bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600';
 
-              // Handle content that could be string or array with image
-              if (typeof messageJson.content === 'string') {
-                contentDisplay = messageJson.content;
-              } else if (Array.isArray(messageJson.content)) {
-                // Process array content (text + images)
-                const textParts = messageJson.content
-                  .filter(part => part.type === 'text')
-                  .map(part => part.text)
-                  .join('\n');
+                // Handle content that could be string or array with image
+                if (typeof messageJson.content === 'string') {
+                  contentDisplay = messageJson.content;
+                } else if (Array.isArray(messageJson.content)) {
+                  // Process array content (text + images)
+                  const textParts = messageJson.content
+                    .filter((part) => part.type === 'text')
+                    .map((part) => part.text)
+                    .join('\n');
 
-                contentDisplay = textParts;
-              } else {
-                contentDisplay = '';
-              }
-            } else if (messageJson.role === 'assistant') {
-              messageClass = '';
-
-              // Merge assistant text content with any tool_calls
-              const parts: string[] = [];
-              // include text content if present
-              if (typeof messageJson.content === 'string' && messageJson.content) {
-                parts.push(messageJson.content);
-              }
-              // include any tool calls
-              if (messageJson.tool_calls && messageJson.tool_calls.length > 0) {
-                parts.push(...messageJson.tool_calls.map((tc: ChatCompletionMessageToolCall) =>
-                  `Using tool: ${tc.function.name}(${tc.function.arguments})`
-                ));
-              }
-              contentDisplay = parts.join('\n');
-            } else if (messageJson.role === 'tool') {
-              messageClass = 'bg-purple-100 dark:bg-purple-900';
-              contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
-            } else if (messageJson.role === 'system') {
-              messageClass = 'bg-yellow-100 dark:bg-yellow-900 italic whitespace-pre-wrap';
-              contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
-            }
-
-            // Skip rendering if contentDisplay is falsy and there are no images
-            const hasImages = Array.isArray(messageJson.content) &&
-              messageJson.content.some(part => part.type === 'image_url');
-
-            if (!contentDisplay && !hasImages) {
-              return null;
-            }
-
-            return (
-              <div key={`msg-${msg.id || index}-${index}`} className={`mb-3 ${messageClass ? `p-2 rounded ${messageClass}` : ''} text-sm`}>
-                {messageJson.role === 'assistant' ? (
-                  <div className={KUE_MESSAGE_STYLE}>
-                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentDisplay}</ReactMarkdown>
-                  </div>
-                ) : (
-                  <span>{contentDisplay}</span>
-                )}
-
-                {/* Render images if present */}
-                {Array.isArray(messageJson.content) && messageJson.content
-                  .filter(part => part.type === 'image_url')
-                  .map((part, imgIndex) => (
-                    <div key={`msg-${msg.id || index}-img-${imgIndex}`} className="mt-2">
-                      <img
-                        src={part.image_url.url}
-                        alt="Message attachment"
-                        className="max-w-full rounded-md"
-                        style={{ maxHeight: '200px' }}
-                      />
-                    </div>
-                  ))
+                  contentDisplay = textParts;
+                } else {
+                  contentDisplay = '';
                 }
-              </div>
-            );
-          })}
+              } else if (messageJson.role === 'assistant') {
+                messageClass = '';
+
+                // Merge assistant text content with any tool_calls
+                const parts: string[] = [];
+                // include text content if present
+                if (typeof messageJson.content === 'string' && messageJson.content) {
+                  parts.push(messageJson.content);
+                }
+                // include any tool calls
+                if (messageJson.tool_calls && messageJson.tool_calls.length > 0) {
+                  parts.push(
+                    ...messageJson.tool_calls.map(
+                      (tc: ChatCompletionMessageToolCall) => `Using tool: ${tc.function.name}(${tc.function.arguments})`,
+                    ),
+                  );
+                }
+                contentDisplay = parts.join('\n');
+              } else if (messageJson.role === 'tool') {
+                messageClass = 'bg-purple-100 dark:bg-purple-900';
+                contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
+              } else if (messageJson.role === 'system') {
+                messageClass = 'bg-yellow-100 dark:bg-yellow-900 italic whitespace-pre-wrap';
+                contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
+              }
+
+              // Skip rendering if contentDisplay is falsy and there are no images
+              const hasImages = Array.isArray(messageJson.content) && messageJson.content.some((part) => part.type === 'image_url');
+
+              if (!contentDisplay && !hasImages) {
+                return null;
+              }
+
+              return (
+                <div
+                  key={`msg-${msg.id || index}-${index}`}
+                  className={`mb-3 ${messageClass ? `p-2 rounded ${messageClass}` : ''} text-sm`}
+                >
+                  {messageJson.role === 'assistant' ? (
+                    <div className={KUE_MESSAGE_STYLE}>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentDisplay}</ReactMarkdown>
+                    </div>
+                  ) : (
+                    <span>{contentDisplay}</span>
+                  )}
+
+                  {/* Render images if present */}
+                  {Array.isArray(messageJson.content) &&
+                    messageJson.content
+                      .filter((part) => part.type === 'image_url')
+                      .map((part, imgIndex) => (
+                        <div key={`msg-${msg.id || index}-img-${imgIndex}`} className="mt-2">
+                          <img
+                            src={part.image_url.url}
+                            alt="Message attachment"
+                            className="max-w-full rounded-md"
+                            style={{ maxHeight: '200px' }}
+                          />
+                        </div>
+                      ))}
+                </div>
+              );
+            })}
+          </div>
         </div>
-      </div>}
+      )}
     </>
   );
 }

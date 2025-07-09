@@ -1,11 +1,11 @@
 // Copyright Bunting Labs, Inc. 2025
 
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Database, Loader2, Trash2, RefreshCw } from "lucide-react";
-import ReactMarkdown from "react-markdown";
-import MermaidComponent from "./MermaidComponent";
-import { useEffect, useState } from "react";
+import { Database, Loader2, RefreshCw, Trash2 } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import ReactMarkdown from 'react-markdown';
+import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import MermaidComponent from './MermaidComponent';
 
 interface DatabaseDetailsDialogProps {
   isOpen: boolean;
@@ -29,16 +29,16 @@ const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, pr
       setError(null);
 
       fetch(`/api/projects/${projectId}/postgis-connections/${connectionId}/documentation`)
-        .then(response => {
+        .then((response) => {
           if (!response.ok) {
             throw new Error(`Failed to fetch documentation: ${response.statusText}`);
           }
           return response.json();
         })
-        .then(data => {
+        .then((data) => {
           setDocumentation(data.documentation);
         })
-        .catch(err => {
+        .catch((err) => {
           console.error('Error fetching database documentation:', err);
           setError(err.message);
           setDocumentation(null);
@@ -91,16 +91,16 @@ const DatabaseDetailsDialog = ({ isOpen, onClose, databaseName, connectionId, pr
       setTimeout(() => {
         setLoading(true);
         fetch(`/api/projects/${projectId}/postgis-connections/${connectionId}/documentation`)
-          .then(response => {
+          .then((response) => {
             if (!response.ok) {
               throw new Error(`Failed to fetch documentation: ${response.statusText}`);
             }
             return response.json();
           })
-          .then(data => {
+          .then((data) => {
             setDocumentation(data.documentation);
           })
-          .catch(err => {
+          .catch((err) => {
             console.error('Error fetching database documentation:', err);
             setError(err.message);
             setDocumentation(null);
@@ -141,26 +141,12 @@ If documentation generation fails, this indicates the database connection detail
                 disabled={isRegenerating || loading}
                 className="cursor-pointer"
               >
-                {isRegenerating ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <RefreshCw className="h-4 w-4" />
-                )}
+                {isRegenerating ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
                 {isRegenerating ? 'Regenerating...' : 'Regenerate'}
               </Button>
               {onDelete && (
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={handleDelete}
-                  disabled={isDeleting}
-                  className="cursor-pointer mr-8"
-                >
-                  {isDeleting ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <Trash2 className="h-4 w-4" />
-                  )}
+                <Button variant="destructive" size="sm" onClick={handleDelete} disabled={isDeleting} className="cursor-pointer mr-8">
+                  {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   {isDeleting ? 'Deleting...' : 'Delete'}
                 </Button>
               )}
@@ -206,7 +192,7 @@ If documentation generation fails, this indicates the database connection detail
                             {children}
                           </code>
                         );
-                      }
+                      },
                     }}
                   >
                     {documentation || fallbackContent}

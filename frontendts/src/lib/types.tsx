@@ -14,10 +14,7 @@ export interface MapProject {
   postgres_connections?: PostgresConnectionDetails[];
 }
 
-export type ProjectState =
-  | { type: 'not_logged_in' }
-  | { type: 'loading' }
-  | { type: 'loaded'; projects: MapProject[] };
+export type ProjectState = { type: 'not_logged_in' } | { type: 'loading' } | { type: 'loaded'; projects: MapProject[] };
 
 export interface MapLayer {
   id: string;
@@ -93,7 +90,7 @@ export interface EphemeralAction {
   action: string;
   timestamp: string;
   completed_at: string | null;
-  status: "active" | "completed" | "zoom_action" | "error";
+  status: 'active' | 'completed' | 'zoom_action' | 'error';
   updates: EphemeralUpdates;
   bounds?: [number, number, number, number];
   description?: string;
