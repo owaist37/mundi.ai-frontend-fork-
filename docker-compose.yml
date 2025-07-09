@@ -115,7 +115,7 @@ services:
       - HOSTNAME_OVERRIDE=localhost:5173
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "cat /proc/net/tcp | grep '1F90' || exit 0"]
+      test: ["CMD-SHELL", "cat /proc/net/tcp | grep '1F90'"]
       interval: 5s
       timeout: 2s
       retries: 5
