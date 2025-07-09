@@ -40,7 +40,7 @@ export default function ProjectView() {
   }
   useEffect(() => {
     updateProjectData(projectId);
-  }, [projectId]);
+  }, [projectId, updateProjectData]);
 
   // loading current map with auto diff
   const updateMapData = useCallback(async (id: string) => {

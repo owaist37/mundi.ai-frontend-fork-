@@ -1253,8 +1253,6 @@ export default function MapLibreMap({
   // Function to handle basemap changes
   const handleBasemapChange = async (newBasemap: string) => {
     setCurrentBasemap(newBasemap);
-    // Trigger a style update with the new basemap
-    setToolResponseCount((prev) => prev + 1);
   };
 
   // Function to get the appropriate icon for an action
@@ -1283,14 +1281,12 @@ export default function MapLibreMap({
   >([]);
   const [messages, setMessages] = useState<ChatCompletionMessageRow[]>([]);
   const [showMessages, setShowMessages] = useState(true);
-  // Track the number of tool responses received from messages
-  const [toolResponseCount, setToolResponseCount] = useState(0);
 
   useEffect(() => {
     if (updateMapData) {
       updateMapData(mapId);
     }
-  }, [toolResponseCount, mapId, updateMapData]);
+  }, [mapId, updateMapData]);
 
   // Process changelog data when mapData changes
   useEffect(() => {
@@ -1334,7 +1330,7 @@ export default function MapLibreMap({
   const [kueTargetPoints, setKueTargetPoints] = useState<Record<string, Array<{ lng: number; lat: number }>>>({});
 
   // Generate random points within layer bounds
-  const generateRandomPointsInBounds = (bounds: number[], count: number = 3) => {
+  const generateRandomPointsInBounds = useCallback((bounds: number[], count: number = 3) => {
     const [minLng, minLat, maxLng, maxLat] = bounds;
     const points = [];
 
@@ -1346,10 +1342,10 @@ export default function MapLibreMap({
     }
 
     return points;
-  };
+  }, []);
 
   // Quadratic Bezier curve interpolation from p0 to p2 through p1
-  const bezierInterpolate = (
+  const bezierInterpolate = useCallback((
     p0: { lng: number; lat: number },
     p1: { lng: number; lat: number },
     p2: { lng: number; lat: number },
@@ -1360,7 +1356,7 @@ export default function MapLibreMap({
       lng: invT * invT * p0.lng + 2 * invT * t * p1.lng + t * t * p2.lng,
       lat: invT * invT * p0.lat + 2 * invT * t * p1.lat + t * t * p2.lat,
     };
-  };
+  }, []);
 
   // Update Kue's target points when active actions change
   useEffect(() => {
@@ -1401,7 +1397,7 @@ export default function MapLibreMap({
         }
       });
     }
-  }, [activeActions, mapData]);
+  }, [activeActions, mapData, generateRandomPointsInBounds]);
 
   // Animate Kue's positions based on timestamp
   useEffect(() => {
@@ -1450,7 +1446,7 @@ export default function MapLibreMap({
     }, UPDATE_KUE_POINTER_MSEC);
 
     return () => clearInterval(interval);
-  }, [kueTargetPoints, activeActions, mapData]);
+  }, [kueTargetPoints, activeActions, mapData, bezierInterpolate, generateRandomPointsInBounds]);
 
   // Generate GeoJSON from pointer positions
   const pointsGeoJSON = useMemo(() => {
@@ -1608,7 +1604,7 @@ export default function MapLibreMap({
       addError('Failed to initialize map: ' + (err instanceof Error ? err.message : String(err)), true);
       setLoading(false);
     }
-  }, []); // Only run once on mount
+  }, [addError, loadLegendSymbols, mapId]); // Only run once on mount
 
   // Separate effect for style updates
   useEffect(() => {
@@ -1667,7 +1663,7 @@ export default function MapLibreMap({
 
     // If map is already loaded, update immediately, otherwise wait for load
     updateStyle();
-  }, [mapId, toolResponseCount, mapData, currentBasemap]); // Update when these dependencies change
+  }, [mapId, currentBasemap, addError, loadLegendSymbols, hasZoomed]); // Update when these dependencies change
 
   // Update the points source when pointer positions change
   useEffect(() => {
@@ -1766,7 +1762,7 @@ export default function MapLibreMap({
       }
     };
     getSessionData();
-  }, [sessionContext]);
+  }, []);
 
   const wsUrl = useMemo(() => {
     if (!mapId || !jwt) return null;
@@ -1885,9 +1881,7 @@ export default function MapLibreMap({
             // Remove from active actions
             setActiveActions((prev) => prev.filter((a) => a.action_id !== action.action_id));
 
-            if (action.updates.style_json) {
-              setToolResponseCount((prev) => prev + 1);
-            }
+            // Style updates are handled by the currentBasemap dependency
           }
         } else {
           // Regular message
@@ -1901,7 +1895,7 @@ export default function MapLibreMap({
         addError('Failed to process update from server.', false);
       }
     }
-  }, [lastMessage]);
+  }, [lastMessage, addError, zoomHistoryIndex]);
 
   // Handle input submission
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1916,7 +1910,7 @@ export default function MapLibreMap({
     if (mapId) {
       fetchMessages();
     }
-  }, [mapId]);
+  }, [mapId, fetchMessages]);
 
   // Fetch available basemaps on component mount
   useEffect(() => {
@@ -1963,7 +1957,7 @@ export default function MapLibreMap({
       globeControlRef.current = globeControl;
       map.addControl(globeControl);
     }
-  }, [availableBasemaps, currentBasemap]);
+  }, [availableBasemaps, currentBasemap, handleBasemapChange]);
 
   // Update globe control when basemap changes
   useEffect(() => {

@@ -38,7 +38,7 @@ const PostGISDocumentation = () => {
     if (connectionId) {
       fetchDocumentation();
     }
-  }, [connectionId]);
+  }, [connectionId, fetchDocumentation]);
 
   // Extract headings from markdown content
   useEffect(() => {

@@ -29,7 +29,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
     if (!sessionContext.loading && sessionContext.doesSessionExist) {
       fetchProjects(currentPage);
     }
-  }, [sessionContext, currentPage]);
+  }, [sessionContext, currentPage, fetchProjects]);
 
   const fetchProjects = async (page: number = 1) => {
     setLoading(true);
