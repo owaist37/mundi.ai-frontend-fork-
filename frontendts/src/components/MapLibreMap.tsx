@@ -1208,7 +1208,7 @@ export default function MapLibreMap({
   }>({ available: false, description: '' });
 
   // Helper function to add a new error
-  const addError = (message: string, shouldOverrideMessages: boolean = false) => {
+  const addError = useCallback((message: string, shouldOverrideMessages: boolean = false) => {
     setErrors((prevErrors) => {
       // if it already exists, bail out
       if (prevErrors.some((err) => err.message === message)) {
@@ -1233,7 +1233,7 @@ export default function MapLibreMap({
 
       return [...prevErrors, newError];
     });
-  };
+  }, []);
 
   // Helper function to dismiss a specific error
   const dismissError = (errorId: string) => {
@@ -1251,9 +1251,9 @@ export default function MapLibreMap({
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Function to handle basemap changes
-  const handleBasemapChange = async (newBasemap: string) => {
+  const handleBasemapChange = useCallback(async (newBasemap: string) => {
     setCurrentBasemap(newBasemap);
-  };
+  }, []);
 
   // Function to get the appropriate icon for an action
   const getActionIcon = (action: string) => {
@@ -1345,18 +1345,16 @@ export default function MapLibreMap({
   }, []);
 
   // Quadratic Bezier curve interpolation from p0 to p2 through p1
-  const bezierInterpolate = useCallback((
-    p0: { lng: number; lat: number },
-    p1: { lng: number; lat: number },
-    p2: { lng: number; lat: number },
-    t: number,
-  ) => {
-    const invT = 1 - t;
-    return {
-      lng: invT * invT * p0.lng + 2 * invT * t * p1.lng + t * t * p2.lng,
-      lat: invT * invT * p0.lat + 2 * invT * t * p1.lat + t * t * p2.lat,
-    };
-  }, []);
+  const bezierInterpolate = useCallback(
+    (p0: { lng: number; lat: number }, p1: { lng: number; lat: number }, p2: { lng: number; lat: number }, t: number) => {
+      const invT = 1 - t;
+      return {
+        lng: invT * invT * p0.lng + 2 * invT * t * p1.lng + t * t * p2.lng,
+        lat: invT * invT * p0.lat + 2 * invT * t * p1.lat + t * t * p2.lat,
+      };
+    },
+    [],
+  );
 
   // Update Kue's target points when active actions change
   useEffect(() => {
@@ -1489,41 +1487,44 @@ export default function MapLibreMap({
     };
   }, [otherClientPositions, kuePositions]);
 
-  const loadLegendSymbols = (map: MLMap) => {
-    const style = map.getStyle();
+  const loadLegendSymbols = useCallback(
+    (map: MLMap) => {
+      const style = map.getStyle();
 
-    // Check if style and style.layers exist before proceeding
-    if (!style || !style.layers) return;
+      // Check if style and style.layers exist before proceeding
+      if (!style || !style.layers) return;
 
-    mapData?.layers.forEach((layer) => {
-      const layerId = layer.id;
+      mapData?.layers.forEach((layer) => {
+        const layerId = layer.id;
 
-      const mapLayer = style.layers.find((styleLayer) => 'source' in styleLayer && (styleLayer as any).source === layerId);
+        const mapLayer = style.layers.find((styleLayer) => 'source' in styleLayer && (styleLayer as any).source === layerId);
 
-      if (mapLayer) {
-        const tree: RenderElement | null = legendSymbol({
-          sprite: style.sprite,
-          zoom: map.getZoom(),
-          layer: mapLayer as any,
-        });
-        // long lasting bug
-        if (tree?.attributes?.style?.backgroundImage === 'url(null)') {
-          tree.attributes.style.backgroundImage = 'none';
-          tree.attributes.style.width = '16px';
-          tree.attributes.style.height = '16px';
-          tree.attributes.style.opacity = '1.0';
+        if (mapLayer) {
+          const tree: RenderElement | null = legendSymbol({
+            sprite: style.sprite,
+            zoom: map.getZoom(),
+            layer: mapLayer as any,
+          });
+          // long lasting bug
+          if (tree?.attributes?.style?.backgroundImage === 'url(null)') {
+            tree.attributes.style.backgroundImage = 'none';
+            tree.attributes.style.width = '16px';
+            tree.attributes.style.height = '16px';
+            tree.attributes.style.opacity = '1.0';
+          }
+
+          const symbolElement = renderTree(tree);
+          if (symbolElement) {
+            setLayerSymbols((prev) => ({
+              ...prev,
+              [layerId]: symbolElement as JSX.Element,
+            }));
+          }
         }
-
-        const symbolElement = renderTree(tree);
-        if (symbolElement) {
-          setLayerSymbols((prev) => ({
-            ...prev,
-            [layerId]: symbolElement as JSX.Element,
-          }));
-        }
-      }
-    });
-  };
+      });
+    },
+    [mapData],
+  );
 
   // Separate effect for map initialization (only runs once)
   useEffect(() => {
@@ -1680,7 +1681,7 @@ export default function MapLibreMap({
   const [inputValue, setInputValue] = useState('');
 
   // Function to fetch messages
-  const fetchMessages = async () => {
+  const fetchMessages = useCallback(async () => {
     try {
       const response = await fetch(`/api/maps/${mapId}/messages`);
       if (response.ok) {
@@ -1697,7 +1698,7 @@ export default function MapLibreMap({
     } catch (error) {
       console.error('Error fetching messages:', error);
     }
-  };
+  }, [mapId]);
 
   // Function to send a message
   const sendMessage = async (text: string) => {

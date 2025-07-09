@@ -34,10 +34,10 @@ export default function ProjectView() {
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
 
   // pull changelog and other details
-  async function updateProjectData(id: string) {
+  const updateProjectData = useCallback(async (id: string) => {
     const projectRes = await fetch(`/api/projects/${id}`);
     setProject(await projectRes.json());
-  }
+  }, []);
   useEffect(() => {
     updateProjectData(projectId);
   }, [projectId, updateProjectData]);

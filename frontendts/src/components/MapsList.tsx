@@ -1,7 +1,7 @@
 // Copyright Bunting Labs, Inc. 2025
 
 import { Clock, Plus } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Session from 'supertokens-auth-react/recipe/session';
 import { MapProject } from '../lib/types';
@@ -31,7 +31,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
     }
   }, [sessionContext, currentPage, fetchProjects]);
 
-  const fetchProjects = async (page: number = 1) => {
+  const fetchProjects = useCallback(async (page: number = 1) => {
     setLoading(true);
     try {
       const response = await fetch(`/api/projects/?page=${page}&limit=12`);
@@ -51,7 +51,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
