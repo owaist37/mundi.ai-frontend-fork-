@@ -21,4 +21,4 @@ jobs:
           version: latest
 
       - name: Run Biome
-        run: biome ci --config-path=frontendts/biome.json frontendts/src/
+        run: biome ci frontendts/src/
