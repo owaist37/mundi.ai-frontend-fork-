@@ -23,7 +23,8 @@ import json
 import re
 from fastapi import BackgroundTasks
 from opentelemetry import trace
-import pandas as pd
+import io
+import csv
 import asyncio
 import traceback
 from fastapi import UploadFile
@@ -1156,10 +1157,13 @@ async def process_chat_interaction_task(
                                     )
 
                                 # Convert result to CSV format
-                                df = pd.DataFrame(
-                                    result["result"], columns=result["headers"]
-                                )
-                                result_text = df.to_csv(index=False)
+                                # write header + rows to an in-memory buffer
+                                buf = io.StringIO()
+                                writer = csv.writer(buf)
+                                writer.writerow(result["headers"])
+                                writer.writerows(result["result"])
+
+                                result_text = buf.getvalue()
 
                                 if len(result_text) > 25000:
                                     tool_result = {
