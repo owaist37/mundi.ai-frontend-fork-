@@ -1,0 +1,889 @@
+// Copyright Bunting Labs, Inc. 2025
+
+import {
+  AlertTriangle,
+  ChevronLeft,
+  ChevronRight,
+  Database,
+  Info,
+  Loader2,
+  RotateCw,
+  Save,
+  SignalHigh,
+  SignalLow,
+  Upload,
+} from 'lucide-react';
+import { Map as MLMap } from 'maplibre-gl';
+import React, { useMemo, useState } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { ReadyState } from 'react-use-websocket';
+import { toast } from 'sonner';
+import { LayerListItem } from '@/components/LayerListItem';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import type { EphemeralAction, MapData, MapLayer, MapProject, PostgresConnectionDetails } from '../lib/types';
+
+interface UploadingFile {
+  id: string;
+  file: File;
+  progress: number;
+  status: 'uploading' | 'completed' | 'error';
+  error?: string;
+}
+
+interface LayerWithStatus extends MapLayer {
+  status: 'added' | 'removed' | 'edited' | 'existing';
+}
+
+interface LayerListProps {
+  project: MapProject;
+  currentMapData: MapData;
+  mapRef: React.RefObject<MLMap | null>;
+  openDropzone: () => void;
+  saveAndForkMap: () => void;
+  isSaving: boolean;
+  activeActions: EphemeralAction[];
+  readyState: number;
+  driftDbConnected: boolean;
+  setShowAttributeTable: (show: boolean) => void;
+  setSelectedLayer: (layer: MapLayer | null) => void;
+  updateMapData: (mapId: string) => void;
+  updateProjectData: (projectId: string) => void;
+  layerSymbols: { [layerId: string]: JSX.Element };
+  zoomHistory: Array<{ bounds: [number, number, number, number] }>;
+  zoomHistoryIndex: number;
+  setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
+  uploadingFiles?: UploadingFile[];
+  demoConfig: { available: boolean; description: string };
+}
+
+const LayerList: React.FC<LayerListProps> = ({
+  project,
+  currentMapData,
+  mapRef,
+  openDropzone,
+  saveAndForkMap,
+  readyState,
+  isSaving,
+  activeActions,
+  driftDbConnected,
+  setShowAttributeTable,
+  setSelectedLayer,
+  updateMapData,
+  updateProjectData,
+  layerSymbols,
+  zoomHistory,
+  zoomHistoryIndex,
+  setZoomHistoryIndex,
+  uploadingFiles,
+  demoConfig,
+}) => {
+  const navigate = useNavigate();
+  const [showPostgisDialog, setShowPostgisDialog] = useState(false);
+
+  // Component to render legend symbol for a layer
+  const LayerLegendSymbol = ({ layerDetails }: { layerDetails: MapLayer }) => {
+    // Return cached symbol if available, otherwise null
+    return layerSymbols[layerDetails.id] || null;
+  };
+  const [connectionMethod, setConnectionMethod] = useState<'demo' | 'uri' | 'fields'>('uri');
+  const [postgisForm, setPostgisForm] = useState({
+    uri: '',
+    host: '',
+    port: '5432',
+    database: '',
+    username: '',
+    password: '',
+    schema: 'public',
+  });
+  const [postgisLoading, setPostgisLoading] = useState(false);
+  const [postgisError, setPostgisError] = useState<string | null>(null);
+
+  const handlePostgisConnect = async () => {
+    if (!currentMapData?.project_id) {
+      toast.error('No project ID available');
+      return;
+    }
+
+    let connectionUri = '';
+    if (connectionMethod === 'demo') {
+      connectionUri = 'DEMO'; // Special marker for backend to use DEMO_POSTGIS_URI
+    } else if (connectionMethod === 'uri') {
+      connectionUri = postgisForm.uri;
+    } else {
+      // Build URI from form fields
+      connectionUri = `postgresql://${postgisForm.username}:${postgisForm.password}@${postgisForm.host}:${postgisForm.port}/${postgisForm.database}`;
+    }
+
+    if (!connectionUri.trim() || (connectionMethod !== 'demo' && connectionUri === '')) {
+      setPostgisError('Please provide connection details');
+      return;
+    }
+
+    setPostgisLoading(true);
+    setPostgisError(null);
+
+    try {
+      const response = await fetch(`/api/projects/${currentMapData.project_id}/postgis-connections`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ connection_uri: connectionUri }),
+      });
+
+      if (response.ok) {
+        toast.success('PostgreSQL connection saved successfully! Refreshing...');
+        setShowPostgisDialog(false);
+        // Reset form
+        setPostgisForm({
+          uri: '',
+          host: '',
+          port: '5432',
+          database: '',
+          username: '',
+          password: '',
+          schema: 'public',
+        });
+
+        // Refresh immediately to show "Loading into AI..." in the database list
+        updateProjectData(currentMapData.project_id);
+        updateMapData(currentMapData.map_id);
+
+        // Poll for updated connection details and refresh when AI naming is complete
+        const pollForUpdatedConnection = async () => {
+          let attempts = 0;
+          const maxAttempts = 225; // 15 minutes max (225 * 4 seconds = 900 seconds)
+
+          const pollInterval = setInterval(async () => {
+            attempts++;
+
+            try {
+              // Fetch current project data to check connection names
+              const response = await fetch(`/api/projects/${currentMapData.project_id}`);
+              if (response.ok) {
+                const projectData = await response.json();
+
+                // Check if any connections no longer have "Loading..." as the name
+                const hasUpdatedNames = projectData.postgres_connections?.some(
+                  (conn: PostgresConnectionDetails) => conn.friendly_name && conn.friendly_name !== 'Loading...',
+                );
+
+                if (hasUpdatedNames || attempts >= maxAttempts) {
+                  clearInterval(pollInterval);
+                  // Refresh both project and map data
+                  updateProjectData(currentMapData.project_id);
+                  updateMapData(currentMapData.map_id);
+                }
+              }
+            } catch (error) {
+              console.error('Error polling for connection updates:', error);
+            }
+
+            if (attempts >= maxAttempts) {
+              clearInterval(pollInterval);
+              // Still refresh after max attempts as fallback
+              updateProjectData(currentMapData.project_id);
+              updateMapData(currentMapData.map_id);
+            }
+          }, 4000); // Check every 4 seconds
+        };
+
+        pollForUpdatedConnection();
+      } else {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        setPostgisError(errorData.detail || response.statusText);
+      }
+    } catch (error) {
+      setPostgisError(error instanceof Error ? error.message : 'Network error occurred');
+    } finally {
+      setPostgisLoading(false);
+    }
+  };
+
+  const processedLayers = useMemo<LayerWithStatus[]>(() => {
+    const currentLayersArray = currentMapData.layers || [];
+
+    // Use diff from currentMapData to determine layer statuses
+    if (currentMapData.diff && currentMapData.diff.layer_diffs) {
+      const layerDiffMap = new globalThis.Map<string, string>(currentMapData.diff.layer_diffs.map((diff) => [diff.layer_id, diff.status]));
+
+      // Start with current layers
+      const layersWithStatus = currentLayersArray.map((layer) => ({
+        ...layer,
+        status: (layerDiffMap.get(layer.id) || 'existing') as 'added' | 'removed' | 'edited' | 'existing',
+      }));
+
+      // Add removed layers from diff
+      const removedLayers = currentMapData.diff.layer_diffs
+        .filter((diff) => diff.status === 'removed')
+        .filter((diff) => !currentLayersArray.some((layer) => layer.id === diff.layer_id))
+        .map((diff) => ({
+          id: diff.layer_id,
+          name: diff.name,
+          path: '',
+          // geometry_type: null,
+          type: 'removed',
+          // feature_count: null,
+          status: 'removed' as const,
+        }));
+
+      return [...layersWithStatus, ...removedLayers];
+    }
+
+    // If no diff, all layers are existing
+    return currentLayersArray.map((l) => ({
+      ...l,
+      status: 'existing' as const,
+    }));
+  }, [currentMapData]);
+
+  return (
+    <Card className="absolute top-4 left-4 max-h-[60vh] overflow-auto py-2 rounded-sm border-0 gap-2 max-w-72 w-full">
+      <CardHeader className="px-2">
+        <CardTitle className="text-base flex justify-between items-center gap-2">
+          <div className="flex items-center gap-2">
+            <Tooltip>
+              <TooltipTrigger>
+                {readyState === ReadyState.OPEN && driftDbConnected ? (
+                  <span className="text-green-300 inline-block">
+                    <SignalHigh />
+                  </span>
+                ) : (
+                  <span className="text-red-300 inline-block">
+                    <SignalLow />
+                  </span>
+                )}
+              </TooltipTrigger>
+              <TooltipContent>
+                <div className="text-sm flex space-x-2">
+                  <div className={readyState === ReadyState.OPEN ? 'text-green-300' : 'text-red-300'}>
+                    chat:{' '}
+                    {readyState === ReadyState.OPEN ? (
+                      <SignalHigh className="inline-block h-4 w-4" />
+                    ) : (
+                      <SignalLow className="inline-block h-4 w-4" />
+                    )}
+                  </div>
+                  <div className={driftDbConnected ? 'text-green-300' : 'text-red-300'}>
+                    cursors:{' '}
+                    {driftDbConnected ? <SignalHigh className="inline-block h-4 w-4" /> : <SignalLow className="inline-block h-4 w-4" />}
+                  </div>
+                </div>
+              </TooltipContent>
+            </Tooltip>
+            Map Layers
+          </div>
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="px-0">
+        {processedLayers.length > 0 ? (
+          <ul className="text-sm">
+            {processedLayers.map((layerWithStatus: LayerWithStatus) => {
+              const { status, ...layerDetails } = layerWithStatus;
+
+              // Check if this layer has an active action
+              const hasActiveAction = activeActions.some((action) => action.layer_id === layerDetails.id);
+              const num_highlighted = 0;
+
+              const sridDisplay = layerDetails.metadata?.original_srid ? `EPSG:${layerDetails.metadata.original_srid}` : 'N/A';
+
+              const normalText =
+                layerDetails.type === 'raster'
+                  ? sridDisplay
+                  : num_highlighted > 0
+                    ? `${num_highlighted} / ${layerDetails.feature_count ?? 'N/A'}`
+                    : String(layerDetails.feature_count ?? 'N/A');
+
+              const hoverText = layerDetails.type === 'raster' ? undefined : sridDisplay;
+
+              return (
+                <li key={layerDetails.id}>
+                  <LayerListItem
+                    name={layerDetails.name}
+                    status={status}
+                    isActive={hasActiveAction}
+                    hoverText={hoverText}
+                    normalText={normalText}
+                    legendSymbol={<LayerLegendSymbol layerDetails={layerDetails} />}
+                    displayAsDiff={currentMapData.display_as_diff}
+                    layerId={layerDetails.id}
+                    dropdownActions={{
+                      'zoom-to-layer': {
+                        label: 'Zoom to layer',
+                        disabled: status === 'removed',
+                        action: (layerId) => {
+                          const layer = currentMapData.layers?.find((l) => l.id === layerId);
+                          if (!layer) {
+                            toast.error('Layer not found');
+                            return;
+                          }
+                          if (layer.bounds && layer.bounds.length === 4 && mapRef.current) {
+                            mapRef.current.fitBounds(
+                              [
+                                [layer.bounds[0], layer.bounds[1]],
+                                [layer.bounds[2], layer.bounds[3]],
+                              ],
+                              { padding: 50, animate: true },
+                            );
+                            toast.success('Zoomed to layer');
+                          } else {
+                            toast.info('Layer bounds not available for zoom.');
+                          }
+                        },
+                      },
+                      'view-attributes': {
+                        label: 'View attributes',
+                        disabled: status === 'removed',
+                        action: (layerId) => {
+                          const layer = currentMapData.layers?.find((l) => l.id === layerId);
+                          if (!layer) {
+                            toast.error('Layer not found');
+                            return;
+                          }
+                          setSelectedLayer(layer);
+                          setShowAttributeTable(true);
+                        },
+                      },
+                      'export-geopackage': {
+                        label: 'Export as GeoPackage',
+                        disabled: status === 'removed',
+                        action: () => {
+                          // TODO: Implement geopackage export
+                        },
+                      },
+                      'delete-layer': {
+                        label: status === 'removed' ? 'Layer marked as removed' : 'Delete layer',
+                        action: (layerId) => {
+                          if (status === 'removed') {
+                            toast.info('Layer is already removed.');
+                            return;
+                          }
+                          fetch(`/api/maps/${currentMapData.map_id}/layer/${layerId}`, {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
+                          })
+                            .then((response) => {
+                              if (response.ok) {
+                                toast.success(`Layer deletion process started.`);
+                                window.location.reload();
+                              } else {
+                                response.json().then((err) => toast.error(`Failed to delete layer: ${err.detail || response.statusText}`));
+                              }
+                            })
+                            .catch((err) => {
+                              console.error('Error deleting layer:', err);
+                              toast.error(`Error deleting layer: ${err.message}`);
+                            });
+                        },
+                      },
+                    }}
+                  />
+                </li>
+              );
+            })}
+          </ul>
+        ) : (
+          <p className="text-sm text-slate-500 px-2">No layers to display.</p>
+        )}
+
+        {/* Upload Progress section */}
+        {uploadingFiles && uploadingFiles.length > 0 && (
+          <>
+            <div className="flex items-center px-2 py-2">
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+              <span className="px-3 text-xs font-medium text-gray-600 dark:text-gray-400">UPLOADING</span>
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+            </div>
+            <ul className="space-y-2 text-sm px-2">
+              {uploadingFiles.map((uploadingFile) => (
+                <li key={uploadingFile.id} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate">{uploadingFile.file.name}</span>
+                    <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                      {uploadingFile.status === 'uploading' && `${uploadingFile.progress}%`}
+                      {uploadingFile.status === 'completed' && '✓'}
+                      {uploadingFile.status === 'error' && '✗'}
+                    </span>
+                  </div>
+
+                  {uploadingFile.status === 'uploading' && (
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${uploadingFile.progress}%` }}
+                      />
+                    </div>
+                  )}
+
+                  {uploadingFile.status === 'completed' && (
+                    <div className="text-xs text-green-600 dark:text-green-400">Upload completed</div>
+                  )}
+
+                  {uploadingFile.status === 'error' && (
+                    <div className="text-xs text-red-600 dark:text-red-400">{uploadingFile.error || 'Upload failed'}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </>
+        )}
+
+        {/* Sources section */}
+        {project?.postgres_connections && project.postgres_connections.length > 0 && (
+          <>
+            <div className="flex items-center px-2 py-2">
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+              <span className="px-3 text-xs font-medium text-gray-600 dark:text-gray-400">DATABASES</span>
+              <div className="flex-1 h-px bg-gray-300 dark:bg-gray-600"></div>
+            </div>
+            <ul className="text-sm">
+              {project.postgres_connections.map((connection, index) =>
+                connection.last_error_text ? (
+                  <TooltipProvider key={index}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <li
+                          className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group`}
+                          onClick={async () => {
+                            try {
+                              const response = await fetch(`/api/projects/${project.id}/postgis-connections/${connection.connection_id}`, {
+                                method: 'DELETE',
+                                headers: {
+                                  'Content-Type': 'application/json',
+                                },
+                              });
+
+                              if (response.ok) {
+                                toast.success('Database connection deleted successfully');
+                                updateProjectData(project.id);
+                                updateMapData(currentMapData.map_id);
+                              } else {
+                                const errorData = await response.json().catch(() => ({
+                                  detail: response.statusText,
+                                }));
+                                toast.error(`Failed to delete connection: ${errorData.detail || response.statusText}`);
+                              }
+                            } catch (error) {
+                              toast.error(`Network error: ${error instanceof Error ? error.message : 'Unknown error'}`);
+                            }
+                          }}
+                        >
+                          <span className="font-medium truncate flex items-center gap-2 text-red-400">
+                            <span className="text-red-400">⚠</span>
+                            Connection Error
+                          </span>
+                          <div className="flex-shrink-0">
+                            <div className="group-hover:hidden">
+                              <span className="text-xs text-red-400">Error</span>
+                            </div>
+                            <div className="hidden group-hover:block w-4 h-4">
+                              <svg className="w-4 h-4 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path
+                                  strokeLinecap="round"
+                                  strokeLinejoin="round"
+                                  strokeWidth={2}
+                                  d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                                />
+                              </svg>
+                            </div>
+                          </div>
+                        </li>
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        <p>{connection.last_error_text}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                ) : (
+                  <li
+                    key={index}
+                    className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
+                    onClick={() => navigate(`/postgis/${connection.connection_id}`)}
+                  >
+                    <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
+                      <Database className="h-4 w-4" />
+                      {connection.friendly_name}
+                    </span>
+                    <div className="flex-shrink-0">
+                      <div className="group-hover:hidden">
+                        <span className="text-xs text-slate-500 dark:text-gray-400">{connection.table_count} tables</span>
+                      </div>
+                      <div className="hidden group-hover:block w-4 h-4">
+                        <Info className="w-4 h-4" />
+                      </div>
+                    </div>
+                  </li>
+                ),
+              )}
+            </ul>
+          </>
+        )}
+      </CardContent>
+      <CardFooter className="flex justify-between items-center px-2">
+        <div className="flex items-center gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  disabled={zoomHistoryIndex <= 0}
+                  onClick={() => {
+                    if (zoomHistoryIndex > 0 && mapRef.current) {
+                      const newIndex = zoomHistoryIndex - 1;
+                      const targetBounds = zoomHistory[newIndex].bounds;
+                      mapRef.current.fitBounds(
+                        [
+                          [targetBounds[0], targetBounds[1]],
+                          [targetBounds[2], targetBounds[3]],
+                        ],
+                        { animate: true },
+                      );
+                      setZoomHistoryIndex(newIndex);
+                    }
+                  }}
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Previous location</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <span className="text-xs text-slate-500 dark:text-gray-400">Zoom</span>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  disabled={zoomHistoryIndex >= zoomHistory.length - 1}
+                  onClick={() => {
+                    if (zoomHistoryIndex < zoomHistory.length - 1 && mapRef.current) {
+                      const newIndex = zoomHistoryIndex + 1;
+                      const targetBounds = zoomHistory[newIndex].bounds;
+                      mapRef.current.fitBounds(
+                        [
+                          [targetBounds[0], targetBounds[1]],
+                          [targetBounds[2], targetBounds[3]],
+                        ],
+                        { animate: true },
+                      );
+                      setZoomHistoryIndex(newIndex);
+                    }
+                  }}
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Next location</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        </div>
+        <div className="flex items-center gap-1">
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  onClick={openDropzone}
+                >
+                  <Upload className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Upload file</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                  onClick={() => setShowPostgisDialog(true)}
+                >
+                  <Database className="h-4 w-4" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Load PostGIS</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+          {currentMapData.display_as_diff ? (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                    onClick={saveAndForkMap}
+                    disabled={isSaving}
+                  >
+                    {isSaving ? <RotateCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{isSaving ? 'Saving...' : 'Save'}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          ) : null}
+        </div>
+
+        {/* PostGIS Connection Dialog */}
+        <Dialog
+          open={showPostgisDialog}
+          onOpenChange={(open) => {
+            setShowPostgisDialog(open);
+            if (!open) {
+              setPostgisError(null);
+            }
+          }}
+        >
+          <DialogContent className="sm:max-w-[500px]">
+            <DialogHeader>
+              <DialogTitle>Add a PostGIS Database</DialogTitle>
+              <DialogDescription>
+                Your database connection details will be stored on the server. Read-only access is best.{' '}
+                <a
+                  href="https://docs.mundi.ai/guides/connecting-to-postgis/"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-blue-300 hover:text-blue-400 underline"
+                >
+                  Read our tutorial on PostGIS here.
+                </a>
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="grid gap-4 py-4">
+              {/* Connection Method Toggle */}
+              <div className="flex space-x-2">
+                {demoConfig.available && (
+                  <Button
+                    type="button"
+                    variant={connectionMethod === 'demo' ? 'default' : 'outline'}
+                    size="sm"
+                    onClick={() => setConnectionMethod('demo')}
+                    className="flex-1 hover:cursor-pointer"
+                  >
+                    Demo Database
+                  </Button>
+                )}
+                <Button
+                  type="button"
+                  variant={connectionMethod === 'uri' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConnectionMethod('uri')}
+                  className="flex-1 hover:cursor-pointer"
+                >
+                  Database URI
+                </Button>
+                <Button
+                  type="button"
+                  variant={connectionMethod === 'fields' ? 'default' : 'outline'}
+                  size="sm"
+                  onClick={() => setConnectionMethod('fields')}
+                  className="flex-1 hover:cursor-pointer"
+                >
+                  Connection Details
+                </Button>
+              </div>
+
+              {connectionMethod === 'demo' ? (
+                <div className="space-y-2">
+                  <p className="text-sm text-gray-300">
+                    {demoConfig.description} We provide it as a demo to preview Mundi's capabilities, especially for users with sensitive
+                    PostGIS databases who would rather self-host or use an on-premise deployment.
+                  </p>
+                </div>
+              ) : connectionMethod === 'uri' ? (
+                <div className="space-y-2">
+                  <label htmlFor="uri" className="text-sm font-medium">
+                    Database URI
+                  </label>
+                  <Input
+                    id="uri"
+                    placeholder="postgresql://username:password@host:port/database"
+                    value={postgisForm.uri}
+                    onChange={(e) => {
+                      setPostgisForm((prev) => ({
+                        ...prev,
+                        uri: e.target.value,
+                      }));
+                      setPostgisError(null);
+                    }}
+                  />
+                </div>
+              ) : (
+                <>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label htmlFor="host" className="text-sm font-medium">
+                        Host
+                      </label>
+                      <Input
+                        id="host"
+                        placeholder="localhost"
+                        value={postgisForm.host}
+                        onChange={(e) => {
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            host: e.target.value,
+                          }));
+                          setPostgisError(null);
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="port" className="text-sm font-medium">
+                        Port
+                      </label>
+                      <Input
+                        id="port"
+                        placeholder="5432"
+                        value={postgisForm.port}
+                        onChange={(e) => {
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            port: e.target.value,
+                          }));
+                          setPostgisError(null);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label htmlFor="database" className="text-sm font-medium">
+                        Database
+                      </label>
+                      <Input
+                        id="database"
+                        placeholder="postgres"
+                        value={postgisForm.database}
+                        onChange={(e) => {
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            database: e.target.value,
+                          }));
+                          setPostgisError(null);
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="schema" className="text-sm font-medium">
+                        Schema
+                      </label>
+                      <Input
+                        id="schema"
+                        placeholder="public"
+                        value={postgisForm.schema}
+                        onChange={(e) => {
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            schema: e.target.value,
+                          }));
+                          setPostgisError(null);
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <label htmlFor="username" className="text-sm font-medium">
+                        Username
+                      </label>
+                      <Input
+                        id="username"
+                        placeholder="postgres"
+                        value={postgisForm.username}
+                        onChange={(e) => {
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            username: e.target.value,
+                          }));
+                          setPostgisError(null);
+                        }}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <label htmlFor="password" className="text-sm font-medium">
+                        Password
+                      </label>
+                      <Input
+                        id="password"
+                        type="password"
+                        placeholder="password"
+                        value={postgisForm.password}
+                        onChange={(e) => {
+                          setPostgisForm((prev) => ({
+                            ...prev,
+                            password: e.target.value,
+                          }));
+                          setPostgisError(null);
+                        }}
+                      />
+                    </div>
+                  </div>
+                </>
+              )}
+
+              {/* Error Callout */}
+              {postgisError && (
+                <div className="flex items-start gap-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <AlertTriangle className="h-5 w-5 text-red-500 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm text-red-700">
+                    {postgisError}{' '}
+                    <a
+                      href="https://docs.mundi.ai/guides/connecting-to-postgis/#debugging-common-problems"
+                      target="_blank"
+                      className="text-blue-500 hover:text-blue-600 underline"
+                      rel="noopener"
+                    >
+                      Refer to our documentation on PostGIS errors.
+                    </a>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={() => setShowPostgisDialog(false)} className="hover:cursor-pointer">
+                Cancel
+              </Button>
+              <Button type="button" onClick={handlePostgisConnect} className="hover:cursor-pointer" disabled={postgisLoading}>
+                {postgisLoading ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Adding Connection...
+                  </>
+                ) : (
+                  'Add Connection'
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      </CardFooter>
+    </Card>
+  );
+};
+
+export default LayerList;
