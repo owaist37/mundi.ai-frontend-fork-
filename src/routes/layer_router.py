@@ -39,7 +39,6 @@ import tempfile
 import asyncio
 
 from src.utils import (
-    get_s3_client,
     get_bucket_name,
     get_async_s3_client,
 )
@@ -134,7 +133,7 @@ async def get_layer_cog_tif(
         cog_key = metadata.get("cog_key")
 
         # Set up MinIO/S3 client
-        s3_client = get_s3_client()
+        s3_client = await get_async_s3_client()
 
         # If COG doesn't exist, create it
         if not cog_key:
@@ -299,7 +298,7 @@ async def get_layer_cog_tif(
                 )
 
         # Get the file size first to handle range requests
-        s3_head = s3_client.head_object(Bucket=bucket_name, Key=cog_key)
+        s3_head = await s3_client.head_object(Bucket=bucket_name, Key=cog_key)
         file_size = s3_head["ContentLength"]
 
         # Check for Range header to support byte serving
@@ -322,7 +321,7 @@ async def get_layer_cog_tif(
             content_length = end_byte - start_byte + 1
 
             # Get the specified range from S3
-            s3_response = s3_client.get_object(
+            s3_response = await s3_client.get_object(
                 Bucket=bucket_name,
                 Key=cog_key,
                 Range=f"bytes={start_byte}-{end_byte}",
@@ -341,7 +340,7 @@ async def get_layer_cog_tif(
             }
         else:
             # Get the entire file
-            s3_response = s3_client.get_object(Bucket=bucket_name, Key=cog_key)
+            s3_response = await s3_client.get_object(Bucket=bucket_name, Key=cog_key)
             status_code = 200
             headers = {
                 "Content-Length": str(file_size),
@@ -360,7 +359,7 @@ async def get_layer_cog_tif(
             # Stream the content in chunks
             chunk_size = 8192  # 8KB chunks
             while True:
-                chunk = body.read(chunk_size)
+                chunk = await body.read(chunk_size)
                 if not chunk:
                     break
                 yield chunk

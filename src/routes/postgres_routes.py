@@ -48,7 +48,6 @@ from starlette.responses import (
 import asyncio
 
 from src.utils import (
-    get_s3_client,
     get_bucket_name,
     process_zip_with_shapefile,
     get_async_s3_client,
@@ -1023,9 +1022,9 @@ async def get_map_style_internal(
             assert pmtiles_key is not None
 
             bucket_name = get_bucket_name()
-            s3_client = get_s3_client()
+            s3_client = await get_async_s3_client()
 
-            presigned_url = s3_client.generate_presigned_url(
+            presigned_url = await s3_client.generate_presigned_url(
                 "get_object",
                 Params={"Bucket": bucket_name, "Key": pmtiles_key},
                 ExpiresIn=180,  # URL valid for 3 minutes
@@ -1215,7 +1214,7 @@ async def internal_upload_layer(
         s3_key = f"uploads/{user_id}/{project_id}/{layer_id}{file_ext}"
 
         # Create S3 client
-        s3_client = get_s3_client()
+        s3_client = await get_async_s3_client()
         bucket_name = get_bucket_name()
 
         # Save uploaded file to a temporary location
@@ -1279,10 +1278,10 @@ async def internal_upload_layer(
                     )
 
             # Upload file to S3/MinIO
-            s3_client.upload_file(temp_file_path, bucket_name, s3_key)
+            await s3_client.upload_file(temp_file_path, bucket_name, s3_key)
 
             # Generate a presigned URL for the file
-            presigned_url = s3_client.generate_presigned_url(
+            presigned_url = await s3_client.generate_presigned_url(
                 ClientMethod="get_object",
                 Params={"Bucket": bucket_name, "Key": s3_key},
                 ExpiresIn=3600 * 24 * 7,  # 1 week
