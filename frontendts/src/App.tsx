@@ -50,7 +50,7 @@ SuperTokens.init({
   recipeList,
   style: `
   [data-supertokens~="container"] {
-    font-family: "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   }`,
 });
 
