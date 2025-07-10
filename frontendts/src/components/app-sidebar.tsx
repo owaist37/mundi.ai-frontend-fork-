@@ -21,7 +21,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import { ProjectState } from '@/lib/types';
+import type { ProjectState } from '@/lib/types';
 
 export function AppSidebar({ projects }: { projects: ProjectState }) {
   const sessionContext = Session.useSessionContext();
