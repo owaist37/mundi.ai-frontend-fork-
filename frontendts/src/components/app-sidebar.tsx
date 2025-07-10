@@ -73,54 +73,52 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
       </SidebarHeader>
       <SidebarContent>
         {!sessionContext.loading && sessionContext.doesSessionExist && (
-          <>
-            <SidebarGroup>
-              <SidebarGroupLabel asChild>Projects</SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  <SidebarMenuItem>
-                    <SidebarMenuButton asChild tooltip="My Projects">
-                      <Link to="/">
-                        <LMap className="w-4 h-4 mr-2" />
-                        <span className="text-sm">My Projects</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                  {projects.type === 'loaded' && (
-                    <SidebarMenuSub>
-                      {projects.projects.slice(-3).map((project) => (
-                        <SidebarMenuItem key={project.id}>
-                          <SidebarMenuButton asChild>
-                            <Link to={`/project/${project.id}`} className="flex items-center justify-between w-full">
-                              <span className="text-sm">{project.most_recent_version?.title || `Project ${project.id.slice(0, 8)}`}</span>
-                              <span className="text-xs text-muted-foreground ml-2">
-                                {project.most_recent_version?.last_edited
-                                  ? (() => {
-                                      const now = new Date();
-                                      const edited = new Date(project.most_recent_version.last_edited);
-                                      const diffMs = now.getTime() - edited.getTime();
-                                      const diffSecs = Math.floor(diffMs / 1000);
-                                      const diffMins = Math.floor(diffSecs / 60);
-                                      const diffHours = Math.floor(diffMins / 60);
-                                      const diffDays = Math.floor(diffHours / 24);
+          <SidebarGroup>
+            <SidebarGroupLabel asChild>Projects</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild tooltip="My Projects">
+                    <Link to="/">
+                      <LMap className="w-4 h-4 mr-2" />
+                      <span className="text-sm">My Projects</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                {projects.type === 'loaded' && (
+                  <SidebarMenuSub>
+                    {projects.projects.slice(-3).map((project) => (
+                      <SidebarMenuItem key={project.id}>
+                        <SidebarMenuButton asChild>
+                          <Link to={`/project/${project.id}`} className="flex items-center justify-between w-full">
+                            <span className="text-sm">{project.most_recent_version?.title || `Project ${project.id.slice(0, 8)}`}</span>
+                            <span className="text-xs text-muted-foreground ml-2">
+                              {project.most_recent_version?.last_edited
+                                ? (() => {
+                                    const now = new Date();
+                                    const edited = new Date(project.most_recent_version.last_edited);
+                                    const diffMs = now.getTime() - edited.getTime();
+                                    const diffSecs = Math.floor(diffMs / 1000);
+                                    const diffMins = Math.floor(diffSecs / 60);
+                                    const diffHours = Math.floor(diffMins / 60);
+                                    const diffDays = Math.floor(diffHours / 24);
 
-                                      if (diffSecs < 60) return `${diffSecs} seconds ago`;
-                                      if (diffMins < 60) return `${diffMins} minutes ago`;
-                                      if (diffHours < 24) return `${diffHours} hours ago`;
-                                      return `${diffDays} days ago`;
-                                    })()
-                                  : 'No date'}
-                              </span>
-                            </Link>
-                          </SidebarMenuButton>
-                        </SidebarMenuItem>
-                      ))}
-                    </SidebarMenuSub>
-                  )}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          </>
+                                    if (diffSecs < 60) return `${diffSecs} seconds ago`;
+                                    if (diffMins < 60) return `${diffMins} minutes ago`;
+                                    if (diffHours < 24) return `${diffHours} hours ago`;
+                                    return `${diffDays} days ago`;
+                                  })()
+                                : 'No date'}
+                            </span>
+                          </Link>
+                        </SidebarMenuButton>
+                      </SidebarMenuItem>
+                    ))}
+                  </SidebarMenuSub>
+                )}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
         )}
 
         <SidebarGroup>
