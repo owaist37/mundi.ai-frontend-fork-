@@ -65,12 +65,12 @@ services:
       - MINIO_DEFAULT_BUCKETS=test-bucket
     volumes:
       - ./data/minio:/data
-    # No need for network aliases
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 5s
+      interval: 1s
       timeout: 2s
-      retries: 2
+      retries: 10
 
   mc:
     image: minio/mc
@@ -79,7 +79,6 @@ services:
         condition: service_healthy
     entrypoint: >
       /bin/sh -c "
-      sleep 5;
       /usr/bin/mc alias set myminio http://minio:9000 admin password;
       /usr/bin/mc admin user add myminio s3user backup123;
       /usr/bin/mc admin policy attach myminio readwrite --user s3user ||
@@ -97,7 +96,7 @@ services:
       - ./data/postgres:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U mundiuser -d mundidb"]
-      interval: 5s
+      interval: 1s
       timeout: 5s
       retries: 5
 
@@ -116,7 +115,7 @@ services:
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "cat /proc/net/tcp | grep '1F90'"]
-      interval: 5s
+      interval: 1s
       timeout: 2s
       retries: 5
       start_period: 3s
@@ -125,7 +124,7 @@ services:
     image: redis:alpine
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
-      interval: 5s
+      interval: 1s
       timeout: 2s
       retries: 5
 
