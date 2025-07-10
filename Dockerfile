@@ -77,7 +77,7 @@ COPY frontendts/ ./
 ENV VITE_WEBSITE_DOMAIN=$VITE_WEBSITE_DOMAIN
 ENV VITE_EMAIL_VERIFICATION=$VITE_EMAIL_VERIFICATION
 ENV NODE_OPTIONS="--max-old-space-size=4096"
-RUN npm run build && npm prune --production
+RUN npm run build
 
 # final stage
 FROM tools AS final
