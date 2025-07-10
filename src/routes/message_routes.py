@@ -28,7 +28,6 @@ import csv
 import asyncio
 import traceback
 from fastapi import UploadFile
-import io
 import httpx
 from typing import Callable
 from redis import Redis
