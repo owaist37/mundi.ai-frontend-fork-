@@ -53,7 +53,6 @@ from src.utils import (
     process_zip_with_shapefile,
     get_async_s3_client,
 )
-import fiona
 from osgeo import gdal
 import subprocess
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
@@ -1369,6 +1368,8 @@ async def internal_upload_layer(
                     ds = None
             else:
                 # Get bounds from vector file and detect geometry type
+                import fiona
+
                 with fiona.open(temp_file_path) as collection:
                     try:
                         # Fiona bounds are returned as (minx, miny, maxx, maxy)
