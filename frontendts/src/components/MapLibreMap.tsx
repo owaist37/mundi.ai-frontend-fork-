@@ -12,7 +12,6 @@ import {
   Info,
   Loader2,
   MessagesSquare,
-  MoreHorizontal,
   RotateCw,
   Send,
   SignalHigh,
@@ -34,20 +33,11 @@ import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
 import Session from 'supertokens-auth-react/recipe/session';
 import AttributeTable from '@/components/AttributeTable';
+import { LayerListItem } from '@/components/LayerListItem';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuPortal,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import type {
@@ -529,151 +519,101 @@ const LayerList: React.FC<LayerListProps> = ({
       <CardContent className="px-0">
         {processedLayers.length > 0 ? (
           <ul className="text-sm">
-            {processedLayers.map((layerWithStatus) => {
+            {processedLayers.map((layerWithStatus: LayerWithStatus) => {
               const { status, ...layerDetails } = layerWithStatus;
 
               // Check if this layer has an active action
               const hasActiveAction = activeActions.some((action) => action.layer_id === layerDetails.id);
-
-              let liClassName = '';
-              if (currentMapData.display_as_diff) {
-                if (status === 'added') {
-                  liClassName += ' bg-green-100 dark:bg-green-900 hover:bg-green-200 dark:hover:bg-green-800';
-                } else if (status === 'removed') {
-                  liClassName += ' bg-red-100 dark:bg-red-900 hover:bg-red-200 dark:hover:bg-red-800';
-                } else if (status === 'edited') {
-                  liClassName += ' bg-yellow-100 dark:bg-yellow-800 hover:bg-yellow-200 dark:hover:bg-yellow-700';
-                } else {
-                  // existing
-                  liClassName += ' hover:bg-slate-100 dark:hover:bg-gray-600 dark:focus:bg-gray-600';
-                }
-              } else {
-                liClassName += ' hover:bg-slate-100 dark:hover:bg-gray-600 dark:focus:bg-gray-600';
-              }
-
-              // Add pulse animation if there's an active action for this layer
-              if (hasActiveAction) {
-                liClassName += ' animate-pulse';
-              }
               const num_highlighted = 0;
 
-              return (
-                <DropdownMenu key={layerDetails.id}>
-                  <DropdownMenuTrigger asChild>
-                    <li className={`${liClassName} flex items-center justify-between px-2 py-1 gap-2 cursor-pointer group`}>
-                      <div className="flex items-center gap-2">
-                        <span className="font-medium truncate" title={layerDetails.name}>
-                          {layerDetails.name.length > 26 ? layerDetails.name.slice(0, 26) + '...' : layerDetails.name}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs text-slate-500 dark:text-gray-400">
-                          {(() => {
-                            const sridDisplay = layerDetails.metadata?.original_srid
-                              ? `EPSG:${layerDetails.metadata.original_srid}`
-                              : 'N/A';
-                            if (layerDetails.type === 'raster') {
-                              return sridDisplay;
-                            }
-                            // For vector layers: show SRID on hover, feature count + highlighted when not hovering
-                            return (
-                              <>
-                                <span className="group-hover:hidden">
-                                  {num_highlighted > 0 ? (
-                                    <>
-                                      <span className="text-gray-300 font-bold">{num_highlighted} /</span>{' '}
-                                      {layerDetails.feature_count ?? 'N/A'}
-                                    </>
-                                  ) : (
-                                    (layerDetails.feature_count ?? 'N/A')
-                                  )}
-                                </span>
-                                <span className="hidden group-hover:inline">{sridDisplay}</span>
-                              </>
-                            );
-                          })()}
-                        </span>
-                        <div className="w-4 h-4 flex-shrink-0">
-                          <div className="group-hover:hidden">
-                            <LayerLegendSymbol layerDetails={layerDetails} />
-                          </div>
-                          <div className="hidden group-hover:block">
-                            <MoreHorizontal className="w-4 h-4" />
-                          </div>
-                        </div>
-                      </div>
-                    </li>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent>
-                    <DropdownMenuItem
-                      disabled={status === 'removed'}
-                      onClick={() => {
-                        if (status === 'removed') return;
-                        if (layerDetails.bounds && layerDetails.bounds.length === 4 && mapRef.current) {
-                          mapRef.current.fitBounds(
-                            [
-                              [layerDetails.bounds[0], layerDetails.bounds[1]],
-                              [layerDetails.bounds[2], layerDetails.bounds[3]],
-                            ],
-                            { padding: 50, animate: true },
-                          );
-                          toast.success('Zoomed to layer');
-                        } else {
-                          toast.info('Layer bounds not available for zoom.');
-                        }
-                      }}
-                    >
-                      Zoom to layer
-                    </DropdownMenuItem>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        if (status === 'removed') return;
+              const sridDisplay = layerDetails.metadata?.original_srid ? `EPSG:${layerDetails.metadata.original_srid}` : 'N/A';
 
-                        // Set the selected layer and show the attribute table
-                        setSelectedLayer(layerDetails);
-                        setShowAttributeTable(true);
-                      }}
-                    >
-                      View attributes
-                    </DropdownMenuItem>
-                    <DropdownMenuSub>
-                      <DropdownMenuSubTrigger disabled={status === 'removed'}>Export layer as</DropdownMenuSubTrigger>
-                      <DropdownMenuPortal>
-                        <DropdownMenuSubContent>
-                          <DropdownMenuItem>Shapefile</DropdownMenuItem>
-                          <DropdownMenuItem>GeoPackage</DropdownMenuItem>
-                        </DropdownMenuSubContent>
-                      </DropdownMenuPortal>
-                    </DropdownMenuSub>
-                    <DropdownMenuItem
-                      onClick={() => {
-                        if (status === 'removed') {
-                          toast.info('Layer is already removed.'); // Or implement restore functionality
-                          return;
-                        }
-                        fetch(`/api/maps/${currentMapData.map_id}/layer/${layerDetails.id}`, {
-                          method: 'DELETE',
-                          headers: { 'Content-Type': 'application/json' },
-                        })
-                          .then((response) => {
-                            if (response.ok) {
-                              toast.success(`Layer "${layerDetails.name}" deletion process started.`);
-                              // Consider a state update mechanism instead of reload for better UX
-                              window.location.reload();
-                            } else {
-                              response.json().then((err) => toast.error(`Failed to delete layer: ${err.detail || response.statusText}`));
-                            }
+              const normalText =
+                layerDetails.type === 'raster'
+                  ? sridDisplay
+                  : num_highlighted > 0
+                    ? `${num_highlighted} / ${layerDetails.feature_count ?? 'N/A'}`
+                    : String(layerDetails.feature_count ?? 'N/A');
+
+              const hoverText = layerDetails.type === 'raster' ? undefined : sridDisplay;
+
+              return (
+                <li key={layerDetails.id}>
+                  <LayerListItem
+                    name={layerDetails.name}
+                    status={status}
+                    isActive={hasActiveAction}
+                    hoverText={hoverText}
+                    normalText={normalText}
+                    legendSymbol={<LayerLegendSymbol layerDetails={layerDetails} />}
+                    displayAsDiff={currentMapData.display_as_diff}
+                    layerId={layerDetails.id}
+                    dropdownActions={{
+                      'zoom-to-layer': {
+                        label: 'Zoom to layer',
+                        disabled: status === 'removed',
+                        action: (layerId) => {
+                          const layer = currentMapData.layers?.find((l) => l.id === layerId);
+                          if (layer?.bounds && layer.bounds.length === 4 && mapRef.current) {
+                            mapRef.current.fitBounds(
+                              [
+                                [layer.bounds[0], layer.bounds[1]],
+                                [layer.bounds[2], layer.bounds[3]],
+                              ],
+                              { padding: 50, animate: true },
+                            );
+                            toast.success('Zoomed to layer');
+                          } else {
+                            toast.info('Layer bounds not available for zoom.');
+                          }
+                        },
+                      },
+                      'view-attributes': {
+                        label: 'View attributes',
+                        disabled: status === 'removed',
+                        action: (layerId) => {
+                          const layer = currentMapData.layers?.find((l) => l.id === layerId);
+                          if (layer) {
+                            setSelectedLayer(layer);
+                            setShowAttributeTable(true);
+                          }
+                        },
+                      },
+                      'export-geopackage': {
+                        label: 'Export as GeoPackage',
+                        disabled: status === 'removed',
+                        action: () => {
+                          // TODO: Implement geopackage export
+                        },
+                      },
+                      'delete-layer': {
+                        label: status === 'removed' ? 'Layer marked as removed' : 'Delete layer',
+                        action: (layerId) => {
+                          if (status === 'removed') {
+                            toast.info('Layer is already removed.');
+                            return;
+                          }
+                          fetch(`/api/maps/${currentMapData.map_id}/layer/${layerId}`, {
+                            method: 'DELETE',
+                            headers: { 'Content-Type': 'application/json' },
                           })
-                          .catch((err) => {
-                            console.error('Error deleting layer:', err);
-                            toast.error(`Error deleting layer: ${err.message}`);
-                          });
-                      }}
-                    >
-                      {status === 'removed' ? 'Layer marked as removed' : 'Delete layer'}
-                    </DropdownMenuItem>
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                            .then((response) => {
+                              if (response.ok) {
+                                toast.success(`Layer deletion process started.`);
+                                window.location.reload();
+                              } else {
+                                response.json().then((err) => toast.error(`Failed to delete layer: ${err.detail || response.statusText}`));
+                              }
+                            })
+                            .catch((err) => {
+                              console.error('Error deleting layer:', err);
+                              toast.error(`Error deleting layer: ${err.message}`);
+                            });
+                        },
+                      },
+                    }}
+                  />
+                </li>
               );
             })}
           </ul>
@@ -2193,7 +2133,7 @@ export default function MapLibreMap({
                   contentDisplay = messageJson.content;
                 } else if (Array.isArray(messageJson.content)) {
                   // Process array content (text + images)
-                  const textParts = messageJson.content
+                  const textParts = (messageJson.content as any[])
                     .filter((part: any) => part.type === 'text')
                     .map((part: any) => part.text)
                     .join('\n');
@@ -2229,7 +2169,8 @@ export default function MapLibreMap({
               }
 
               // Skip rendering if contentDisplay is falsy and there are no images
-              const hasImages = Array.isArray(messageJson.content) && messageJson.content.some((part: any) => part.type === 'image_url');
+              const hasImages =
+                Array.isArray(messageJson.content) && (messageJson.content as any[]).some((part: any) => part.type === 'image_url');
 
               if (!contentDisplay && !hasImages) {
                 return null;
@@ -2250,7 +2191,7 @@ export default function MapLibreMap({
 
                   {/* Render images if present */}
                   {Array.isArray(messageJson.content) &&
-                    messageJson.content
+                    (messageJson.content as any[])
                       .filter((part: any) => part.type === 'image_url')
                       .map((part: any, imgIndex: number) => (
                         <div key={`msg-${msg.id || index}-img-${imgIndex}`} className="mt-2">
