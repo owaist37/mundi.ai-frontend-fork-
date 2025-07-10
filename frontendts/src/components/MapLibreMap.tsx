@@ -271,6 +271,7 @@ export default function MapLibreMap({
   }>({});
   const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number] }>>([]);
   const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
+  const processedBoundsActionIds = useRef<Set<string>>(new Set());
   const [currentBasemap, setCurrentBasemap] = useState<string>('');
   const [availableBasemaps, setAvailableBasemaps] = useState<string[]>([]);
   const [demoConfig, setDemoConfig] = useState<{
@@ -914,8 +915,13 @@ export default function MapLibreMap({
             return; // Early return to skip normal ephemeral action handling
           }
 
-          // Handle bounds zooming for any ephemeral action that includes bounds
-          if (action.bounds && action.bounds.length === 4 && mapRef.current) {
+          // Handle bounds zooming only when action becomes active (not on completion)
+          if (action.bounds && action.bounds.length === 4 && mapRef.current && action.status === 'active') {
+            // Check if we've already processed this action
+            if (processedBoundsActionIds.current.has(action.action_id)) {
+              return;
+            }
+            processedBoundsActionIds.current.add(action.action_id);
             // Save current bounds to history before zooming
             const currentBounds = mapRef.current.getBounds();
             const currentBoundsArray: [number, number, number, number] = [
@@ -925,14 +931,14 @@ export default function MapLibreMap({
               currentBounds.getNorth(),
             ];
 
-            // Add current bounds to history
+            // Add both current bounds and new bounds to history in a single update
             setZoomHistory((prev) => {
-              const newHistory = [...prev.slice(0, zoomHistoryIndex + 1), { bounds: currentBoundsArray }];
-              return newHistory;
+              const historyUpToCurrent = prev.slice(0, zoomHistoryIndex + 1);
+              return [...historyUpToCurrent, { bounds: currentBoundsArray }, { bounds: action.bounds as [number, number, number, number] }];
             });
 
-            // Update index to point to the newly added current position
-            setZoomHistoryIndex((prev) => prev + 1);
+            // Update index to point to the final new bounds (current + 2 positions)
+            setZoomHistoryIndex((prev) => prev + 2);
 
             // Zoom to new bounds
             const [west, south, east, north] = action.bounds;
@@ -943,15 +949,6 @@ export default function MapLibreMap({
               ],
               { animate: true, padding: 50 },
             );
-
-            // Add the new bounds to history as well
-            setZoomHistory((prev) => {
-              const newHistory = [...prev, { bounds: action.bounds as [number, number, number, number] }];
-              return newHistory;
-            });
-
-            // Update index to point to the new bounds
-            setZoomHistoryIndex((prev) => prev + 1);
           }
 
           if (action.status === 'active') {

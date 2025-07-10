@@ -536,15 +536,20 @@ const LayerList: React.FC<LayerListProps> = ({
                   onClick={() => {
                     if (zoomHistoryIndex > 0 && mapRef.current) {
                       const newIndex = zoomHistoryIndex - 1;
-                      const targetBounds = zoomHistory[newIndex].bounds;
-                      mapRef.current.fitBounds(
-                        [
-                          [targetBounds[0], targetBounds[1]],
-                          [targetBounds[2], targetBounds[3]],
-                        ],
-                        { animate: true },
-                      );
-                      setZoomHistoryIndex(newIndex);
+                      const historyItem = zoomHistory[newIndex];
+                      if (historyItem?.bounds && historyItem.bounds.length === 4) {
+                        const targetBounds = historyItem.bounds;
+                        mapRef.current.fitBounds(
+                          [
+                            [targetBounds[0], targetBounds[1]],
+                            [targetBounds[2], targetBounds[3]],
+                          ],
+                          { animate: true },
+                        );
+                        setZoomHistoryIndex(newIndex);
+                      } else {
+                        console.error('Previous zoom - invalid historyItem or bounds:', historyItem);
+                      }
                     }
                   }}
                 >
@@ -568,15 +573,20 @@ const LayerList: React.FC<LayerListProps> = ({
                   onClick={() => {
                     if (zoomHistoryIndex < zoomHistory.length - 1 && mapRef.current) {
                       const newIndex = zoomHistoryIndex + 1;
-                      const targetBounds = zoomHistory[newIndex].bounds;
-                      mapRef.current.fitBounds(
-                        [
-                          [targetBounds[0], targetBounds[1]],
-                          [targetBounds[2], targetBounds[3]],
-                        ],
-                        { animate: true },
-                      );
-                      setZoomHistoryIndex(newIndex);
+                      const historyItem = zoomHistory[newIndex];
+                      if (historyItem?.bounds && historyItem.bounds.length === 4) {
+                        const targetBounds = historyItem.bounds;
+                        mapRef.current.fitBounds(
+                          [
+                            [targetBounds[0], targetBounds[1]],
+                            [targetBounds[2], targetBounds[3]],
+                          ],
+                          { animate: true },
+                        );
+                        setZoomHistoryIndex(newIndex);
+                      } else {
+                        console.error('Next zoom - invalid historyItem or bounds:', historyItem);
+                      }
                     }
                   }}
                 >
