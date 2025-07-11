@@ -60,12 +60,14 @@ These example changes connect to `orieg/gemma3-tools:1b`:
 ```diff
 --- a/docker-compose.yml
 +++ b/docker-compose.yml
-@@ -41,6 +41,9 @@ services:
+@@ -41,6 +41,12 @@ services:
         - REDIS_PORT=6379
 -       - OPENAI_API_KEY=$OPENAI_API_KEY
 +       - OPENAI_BASE_URL=http://host.docker.internal:11434/v1
 +       - OPENAI_API_KEY=ollama
 +       - OPENAI_MODEL=orieg/gemma3-tools:1b
++     extra_hosts:
++       - "host.docker.internal:host-gateway"
      command: uvicorn src.wsgi:app --host 0.0.0.0 --port 8000
 ```
 
