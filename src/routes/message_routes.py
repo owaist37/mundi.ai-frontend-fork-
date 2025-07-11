@@ -74,6 +74,7 @@ from src.dependencies.postgres_connection import (
     PostgresConnectionManager,
     get_postgres_connection_manager,
 )
+from src.database.models import MundiChatCompletionMessage
 from src.utils import get_openai_client
 from src.openstreetmap import download_from_openstreetmap, has_openstreetmap_api_key
 from src.routes.websocket import kue_ephemeral_action, kue_notify_error
@@ -125,9 +126,9 @@ async def get_map_messages(
     # Filter for messages with role "user" or "assistant" and no tool_calls
     filtered_messages = [
         msg
-        for msg in all_messages["messages"]
-        if msg.get("message_json", {}).get("role") in ["user", "assistant"]
-        and not msg.get("message_json", {}).get("tool_calls")
+        for msg in all_messages
+        if msg.message_json.get("role") in ["user", "assistant"]
+        and not msg.message_json.get("tool_calls")
     ]
 
     return {
@@ -139,7 +140,7 @@ async def get_map_messages(
 async def get_all_map_messages(
     map_id: str,
     session: UserContext,
-):
+) -> List[MundiChatCompletionMessage]:
     async with async_conn("get_all_map_messages") as conn:
         map_result = await conn.fetchrow(
             """
@@ -164,28 +165,20 @@ async def get_all_map_messages(
 
         db_messages = await conn.fetch(
             """
-            SELECT id, map_id, sender_id, message_json, created_at
+            SELECT *
             FROM chat_completion_messages
             WHERE map_id = $1
             ORDER BY created_at ASC
             """,
             map_id,
         )
-
-        # We keep everything as dict here, which is because serializing to chat completion row
-        # kept fucking up image urls.
         messages = []
         for msg in db_messages:
             msg_dict = dict(msg)
-            # Parse message_json if it's a string
-            if isinstance(msg_dict["message_json"], str):
-                msg_dict["message_json"] = json.loads(msg_dict["message_json"])
-            messages.append(msg_dict)
-
-        return {
-            "map_id": map_id,
-            "messages": messages,
-        }
+            # Parse message_json ... when using raw asyncpg
+            msg_dict["message_json"] = json.loads(msg_dict["message_json"])
+            messages.append(MundiChatCompletionMessage(**msg_dict))
+        return messages
 
 
 class RecoverableToolCallError(Exception):
@@ -457,7 +450,7 @@ async def process_chat_interaction_task(
                     )
 
                 openai_messages = [
-                    msg["message_json"] for msg in updated_messages_response["messages"]
+                    msg.message_json for msg in updated_messages_response
                 ]
 
                 with tracer.start_as_current_span("kue.fetch_unattached_layers"):
@@ -1696,7 +1689,7 @@ async def send_map_message(
 
     # Use map state provider to generate system messages
     messages_response = await get_all_map_messages(map_id, session)
-    current_messages = [msg["message_json"] for msg in messages_response["messages"]]
+    current_messages = [msg.message_json for msg in messages_response]
 
     current_map_description = await get_map_description(
         request,

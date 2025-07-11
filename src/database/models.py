@@ -86,7 +86,7 @@ class UserMundiaiMap(Base):
     # Relationships
     messages = relationship("Message", back_populates="map")
     chat_completion_messages = relationship(
-        "ChatCompletionMessage", back_populates="map"
+        "MundiChatCompletionMessage", back_populates="map"
     )
     layer_styles = relationship("MapLayerStyle", back_populates="map")
 
@@ -252,13 +252,13 @@ class Message(Base):
     map = relationship("UserMundiaiMap", back_populates="messages")
 
 
-class ChatCompletionMessage(Base):
+class MundiChatCompletionMessage(Base):
     __tablename__ = "chat_completion_messages"
 
     id = Column(Integer, primary_key=True)
     map_id = Column(String(12), ForeignKey("user_mundiai_maps.id"), nullable=False)
     sender_id = Column(UUID, nullable=False)
-    message_json = Column(JSONB, nullable=False)
+    message_json: dict = Column(JSONB, nullable=False)
     created_at = Column(
         TIMESTAMP(timezone=True), server_default=func.current_timestamp()
     )

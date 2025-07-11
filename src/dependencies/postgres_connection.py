@@ -165,7 +165,7 @@ class PostgresConnectionManager:
                 )
 
     async def connect_to_postgres(
-        self, connection_id: str, timeout: float = None
+        self, connection_id: str, timeout: float | None = None
     ) -> asyncpg.Connection:
         """Connect to a PostgreSQL database using the stored connection details."""
         if timeout is None:
