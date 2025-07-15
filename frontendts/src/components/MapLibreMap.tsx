@@ -956,7 +956,11 @@ export default function MapLibreMap({
   }, []);
 
   const wsUrl = useMemo(() => {
-    if (!mapId || !jwt) return null;
+    if (!mapId) {
+      return null;
+    } else if (!jwt) {
+      return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates`;
+    }
 
     return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
   }, [mapId, wsProtocol, jwt]);
