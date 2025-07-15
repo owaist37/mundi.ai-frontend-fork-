@@ -16,12 +16,32 @@ export interface MapProject {
 
 export type ProjectState = { type: 'not_logged_in' } | { type: 'loading' } | { type: 'loaded'; projects: MapProject[] };
 
+export interface MapLayerMetadata {
+  original_filename?: string;
+  original_format?: string;
+  converted_to?: string;
+  original_srid?: number;
+  feature_count?: number;
+  geometry_type?: string;
+  raster_value_stats_b1?: {
+    min: number;
+    max: number;
+  };
+  pointcloud_anchor?: {
+    lon: number;
+    lat: number;
+  };
+  pointcloud_z_range?: [number, number];
+  pmtiles_key?: string;
+  cog_key?: string;
+}
+
 export interface MapLayer {
   id: string;
   name: string;
   path: string;
   type: string;
-  metadata?: Record<string, unknown>;
+  metadata?: MapLayerMetadata;
   bounds?: number[];
   geometry_type?: string;
   feature_count?: number;
