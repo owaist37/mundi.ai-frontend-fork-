@@ -86,7 +86,7 @@ async def get_layer_cog_tif(
         # Get the layer by layer_id
         layer = await conn.fetchrow(
             """
-            SELECT layer_id, name, path, type, raster_cog_url, metadata, feature_count, s3_key
+            SELECT layer_id, name, path, type, metadata, feature_count, s3_key
             FROM map_layers
             WHERE layer_id = $1
             """,

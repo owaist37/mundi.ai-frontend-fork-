@@ -21,7 +21,6 @@ export interface MapLayer {
   name: string;
   path: string;
   type: string;
-  raster_cog_url?: string;
   metadata?: Record<string, unknown>;
   bounds?: number[];
   geometry_type?: string;

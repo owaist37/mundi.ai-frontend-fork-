@@ -125,7 +125,6 @@ class LayerResponse(BaseModel):
     name: str
     path: str
     type: str
-    raster_cog_url: Optional[str] = None
     metadata: Optional[dict] = None
     bounds: Optional[List[float]] = (
         None  # [xmin, ymin, xmax, ymax] in WGS84 coordinates
@@ -459,7 +458,6 @@ async def get_map(
                     name,
                     path,
                     type,
-                    raster_cog_url,
                     metadata,
                     bounds,
                     geometry_type,
@@ -653,7 +651,7 @@ async def get_map_layers(
             # Get all layers by their IDs using ANY() instead of f-string
             layers = await conn.fetch(
                 """
-                SELECT layer_id as id, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count
+                SELECT layer_id as id, name, path, type, metadata, bounds, geometry_type, feature_count
                 FROM map_layers
                 WHERE layer_id = ANY($1)
                 ORDER BY id
@@ -915,7 +913,7 @@ async def get_map_style_internal(
             # Fetch metadata as well to check for cog_url_suffix
             all_layers = await conn.fetch(
                 """
-                SELECT ml.layer_id, ml.name, ml.type, ls.style_json as maplibre_layers, ml.raster_cog_url, ml.feature_count, ml.bounds, ml.metadata, ml.geometry_type
+                SELECT ml.layer_id, ml.name, ml.type, ls.style_json as maplibre_layers, ml.feature_count, ml.bounds, ml.metadata, ml.geometry_type
                 FROM map_layers ml
                 LEFT JOIN map_layer_styles mls ON ml.layer_id = mls.layer_id AND mls.map_id = $1
                 LEFT JOIN layer_styles ls ON mls.style_id = ls.style_id
@@ -1289,21 +1287,11 @@ async def internal_upload_layer(
 
             # No need to rewrite URL - host networking ensures hostname consistency
 
-            # Additional processing for raster layers
-            raster_cog_url = None
-            if layer_type == "raster":
-                # For raster files, we could convert to COG here
-                # For now, we'll just use the same URL for both fields
-                raster_cog_url = presigned_url
-
             # Get layer bounds using GDAL
             bounds = None
             geometry_type = "unknown"
             feature_count = None
-            # Special handling for XYZ layers and example.com test URLs
-            if "type=xyz&" in presigned_url or "example.com" in presigned_url:
-                bounds = None
-            elif layer_type == "raster":
+            if layer_type == "raster":
                 # Use GDAL to get bounds for raster files
                 ds = gdal.Open(temp_file_path)
                 if ds:
@@ -1444,8 +1432,8 @@ async def internal_upload_layer(
             new_layer_result = await conn.fetchrow(
                 """
                 INSERT INTO map_layers
-                (layer_id, owner_uuid, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count, s3_key, size_bytes, source_map_id)
-                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+                (layer_id, owner_uuid, name, path, type, metadata, bounds, geometry_type, feature_count, s3_key, size_bytes, source_map_id)
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
                 RETURNING layer_id
                 """,
                 layer_id,
@@ -1453,7 +1441,6 @@ async def internal_upload_layer(
                 layer_name,
                 presigned_url,
                 layer_type,
-                raster_cog_url,
                 json.dumps(metadata_dict),
                 bounds,
                 geometry_type if layer_type == "vector" else None,
