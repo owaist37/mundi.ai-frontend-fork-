@@ -31,6 +31,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libcairo2-dev libgles2-mesa-dev libgbm-dev \
         libuv1-dev libprotobuf-dev xserver-xorg-core xvfb x11-utils dbus xauth \
         python3-apt \
+        proj-bin libproj-dev proj-data \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=tippecanoe-builder /usr/local/bin/tippecanoe* /usr/local/bin/
@@ -70,7 +71,7 @@ FROM node:20-bookworm-slim AS frontend-builder
 WORKDIR /app/frontendts
 COPY frontendts/package*.json ./
 RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+    npm ci --legacy-peer-deps
 ARG VITE_WEBSITE_DOMAIN
 ARG VITE_EMAIL_VERIFICATION
 COPY frontendts/ ./
@@ -78,6 +79,19 @@ ENV VITE_WEBSITE_DOMAIN=$VITE_WEBSITE_DOMAIN
 ENV VITE_EMAIL_VERIFICATION=$VITE_EMAIL_VERIFICATION
 ENV NODE_OPTIONS="--max-old-space-size=4096"
 RUN npm run build
+
+# LAStools
+FROM base AS lastools-builder
+WORKDIR /tmp/las
+RUN apt-get update && apt-get install -y --no-install-recommends wget ca-certificates && \
+    rm -rf /var/lib/apt/lists/*
+RUN wget https://downloads.rapidlasso.de/LAStools.tar.gz && \
+    tar -xzf LAStools.tar.gz && \
+    cp bin/las2las64 /usr/local/bin/ && \
+    chmod +x /usr/local/bin/las2las64 && \
+    cp bin/lasinfo64 /usr/local/bin/lasinfo64 && \
+    chmod +x /usr/local/bin/lasinfo64 && \
+    rm -rf /tmp/las
 
 # final stage
 FROM tools AS final
@@ -110,6 +124,9 @@ RUN --mount=type=cache,target=/root/.npm \
 COPY --from=python-builder /app/.venv /app/.venv
 COPY --from=ghcr.io/astral-sh/uv:0.4.9 /uv /bin/uv
 ENV PATH="/app/.venv/bin:$PATH"
+
+COPY --from=lastools-builder /usr/local/bin/las2las64 /usr/local/bin/las2las64
+COPY --from=lastools-builder /usr/local/bin/lasinfo64 /usr/local/bin/lasinfo64
 
 # Copy application files
 COPY . /app/

@@ -150,7 +150,9 @@ class MapLayer(Base):
         String, nullable=False
     )  # presigned GET URL in S3 (deprecated because expires)
     s3_key = Column(String)
-    type = Column(String, nullable=False)  # 'vector', 'raster', 'postgis'
+    type = Column(
+        String, nullable=False
+    )  # 'vector', 'raster', 'postgis', 'point_cloud'
     raster_cog_url = Column(String)  # Can be NULL
     postgis_connection_id = Column(
         String(12), ForeignKey("project_postgres_connections.id")

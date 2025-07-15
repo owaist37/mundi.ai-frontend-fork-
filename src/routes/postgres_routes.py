@@ -1198,12 +1198,15 @@ async def internal_upload_layer(
             layer_type = "raster"
             if not file_ext:
                 file_ext = ".tif"  # Default raster extension
+        elif file_ext in [".las", ".laz"]:
+            layer_type = "point_cloud"
         else:
             if not file_ext:
                 file_ext = ".geojson"  # Default vector extension
 
         # Initialize metadata dictionary
         metadata_dict = {"original_filename": filename}
+        bounds = None
 
         # Generate a unique layer ID
         layer_id = generate_id(prefix="L")
@@ -1220,6 +1223,7 @@ async def internal_upload_layer(
         filename = file.filename
         file_ext = os.path.splitext(filename)[1].lower()
 
+        auxiliary_temp_file_path = None
         with tempfile.NamedTemporaryFile(suffix=file_ext) as temp_file:
             # Read file content
             content = await file.read()
@@ -1274,6 +1278,89 @@ async def internal_upload_layer(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                         detail=f"Error processing ZIP file: {str(e)}",
                     )
+            elif layer_type == "point_cloud":
+                # handle it here because we're only going to upload .laz files
+                import laspy
+                import pyproj
+
+                with tracer.start_as_current_span("internal_upload_layer.laspy"):
+                    las = laspy.read(temp_file_path)
+
+                    # centre of the header bounding box
+                    mid_x = (las.header.mins[0] + las.header.maxs[0]) / 2
+                    mid_y = (las.header.mins[1] + las.header.maxs[1]) / 2
+
+                    src_crs = las.header.parse_crs()
+                    if src_crs is None:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail="Point cloud file (.las, .laz) does not have a CRS, which is required to display on the map",
+                        )
+
+                    # Create transformer for CRS conversion
+                    transformer = pyproj.Transformer.from_crs(
+                        src_crs, 4326, always_xy=True
+                    )
+
+                    # lon/lat in WGS-84 for anchor point
+                    lon, lat = transformer.transform(mid_x, mid_y)
+
+                    # Calculate bounds in WGS84
+                    min_x, min_y, min_z = las.header.mins
+                    max_x, max_y, max_z = las.header.maxs
+
+                # Transform bounds to WGS84
+                min_lon, min_lat = transformer.transform(min_x, min_y)
+                max_lon, max_lat = transformer.transform(max_x, max_y)
+
+                bounds = [min_lon, min_lat, max_lon, max_lat]
+
+                metadata_dict["pointcloud_anchor"] = {"lon": lon, "lat": lat}
+                metadata_dict["pointcloud_z_range"] = [min_z, max_z]
+
+                # generate a new .laz file
+                temp_dir = tempfile.mkdtemp()
+                auxiliary_temp_file_path = os.path.join(temp_dir, "4326.laz")
+                las2las_cmd = [
+                    "las2las64",
+                    "-i",
+                    temp_file_path,
+                    "-set_version",
+                    "1.3",
+                    "-proj_epsg",
+                    "4326",
+                    "-o",
+                    auxiliary_temp_file_path,
+                ]
+
+                try:
+                    with tracer.start_as_current_span("internal_upload_layer.las2las"):
+                        process = await asyncio.create_subprocess_exec(*las2las_cmd)
+                        await process.wait()
+
+                    # Check if output file was created and is valid using lasinfo64
+                    if not os.path.exists(auxiliary_temp_file_path):
+                        raise Exception("las2las did not create output file")
+
+                    # Validate the output file using lasinfo64
+                    lasinfo_cmd = ["lasinfo64", auxiliary_temp_file_path]
+                    lasinfo_process = await asyncio.create_subprocess_exec(
+                        *lasinfo_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    await lasinfo_process.wait()
+
+                    if lasinfo_process.returncode != 0:
+                        raise Exception(
+                            f"Output file validation failed - lasinfo64 returned exit code {lasinfo_process.returncode}"
+                        )
+
+                except Exception as e:
+                    print(f"Error converting point cloud to EPSG:4326: {str(e)}")
+                    raise e
+                # upload the new .laz file instead
+                temp_file_path = auxiliary_temp_file_path
 
             # Upload file to S3/MinIO
             await s3_client.upload_file(temp_file_path, bucket_name, s3_key)
@@ -1288,7 +1375,6 @@ async def internal_upload_layer(
             # No need to rewrite URL - host networking ensures hostname consistency
 
             # Get layer bounds using GDAL
-            bounds = None
             geometry_type = "unknown"
             feature_count = None
             if layer_type == "raster":
@@ -1353,6 +1439,9 @@ async def internal_upload_layer(
 
                     # Close dataset
                     ds = None
+            elif layer_type == "point_cloud":
+                # handled above
+                pass
             else:
                 # Get bounds from vector file and detect geometry type
                 import fiona

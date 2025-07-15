@@ -8,6 +8,11 @@ function renderTree(tree: RenderElement | null): JSX.Element | null {
   return React.createElement(tree.element, tree.attributes, tree.children?.map(renderTree));
 }
 
+import { COORDINATE_SYSTEM } from '@deck.gl/core';
+import { PointCloudLayer } from '@deck.gl/layers';
+import { MapboxOverlay } from '@deck.gl/mapbox';
+import { LASLoader } from '@loaders.gl/las';
+import { Matrix4 } from '@math.gl/core';
 import { Activity, Brain, Database, MessagesSquare, Send } from 'lucide-react';
 import { type IControl, type MapOptions, Map as MLMap, NavigationControl, ScaleControl } from 'maplibre-gl';
 import type {
@@ -50,6 +55,8 @@ const KUE_MESSAGE_STYLE = `
   [&_td]:align-top
   [&_a]:text-blue-200 [&_a]:underline
 `;
+
+const SWAP_XY = new Matrix4().set(0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1);
 
 // Custom Globe Control class
 class GlobeControl implements IControl {
@@ -264,6 +271,7 @@ export default function MapLibreMap({
   const mapRef = useRef<MLMap | null>(null);
   const globeControlRef = useRef<GlobeControl | null>(null);
   const exportPDFControlRef = useRef<ExportPDFControl | null>(null);
+  const deckOverlayRef = useRef<MapboxOverlay | null>(null);
   const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{
@@ -278,6 +286,93 @@ export default function MapLibreMap({
     available: boolean;
     description: string;
   }>({ available: false, description: '' });
+
+  const pointCloudLayers = useMemo(() => {
+    return mapData?.layers?.filter((layer) => layer.type === 'point_cloud') || [];
+  }, [mapData?.layers]);
+
+  const createPointCloudLayer = useCallback((pclayer: MapLayer) => {
+    // some projection-foo to compensate for web mercator (gross!) and
+    // latitude-longitude disagreements (SWAP_XY)
+    const { lon, lat } = pclayer.metadata?.pointcloud_anchor as { lon: number; lat: number };
+    if (!lon || !lat) {
+      console.error('no anchor', pclayer);
+      return;
+    }
+    const R = 6378137;
+    const d2r = Math.PI / 180;
+    const cosA = Math.cos(lat * d2r);
+
+    const mPerDegLon = R * d2r * cosA;
+    const mPerDegLat = R * d2r;
+    const translate = new Matrix4().translate([-lon, -lat, 0]);
+    const scale = new Matrix4().scale([mPerDegLon, mPerDegLat, 1]);
+    const modelMatrix = scale.multiplyRight(translate).multiplyRight(SWAP_XY);
+
+    const layer = new PointCloudLayer({
+      id: `point-cloud-layer-${pclayer.id}`,
+      data: `/api/layer/${pclayer.id}.laz`,
+      loaders: [LASLoader],
+      loadOptions: {
+        las: {
+          fp64: true,
+        },
+      },
+      modelMatrix: modelMatrix,
+      coordinateSystem: COORDINATE_SYSTEM.METER_OFFSETS,
+      coordinateOrigin: [lon, lat, 0],
+      getColor: (_d, dinfo) => {
+        const mesh = (dinfo.data as any).loaderData;
+
+        if (!mesh.maxs || !mesh.mins) {
+          return [100, 100, 255, 255];
+        }
+
+        // TODO: improve this. its a fast percentile approximation
+        // but life can always be better. pastures are greener
+        const pointData = dinfo.data as any;
+        const currentZ = pointData.attributes.POSITION.value[dinfo.index * 3 + 2];
+
+        if (!mesh.percentileCache) {
+          const numPoints = pointData.attributes.POSITION.value.length / 3;
+          const sampleSize = Math.min(5000, numPoints);
+          const zValues = [];
+
+          for (let i = 0; i < sampleSize; i++) {
+            const idx = Math.floor((i / sampleSize) * numPoints) * 3 + 2;
+            zValues.push(pointData.attributes.POSITION.value[idx]);
+          }
+
+          zValues.sort((a, b) => a - b);
+          mesh.percentileCache = {
+            p5: zValues[Math.floor(sampleSize * 0.05)],
+            p95: zValues[Math.floor(sampleSize * 0.95)],
+          };
+        }
+
+        const { p5, p95 } = mesh.percentileCache;
+        const range = p95 - p5;
+
+        if (range === 0) {
+          return [100, 100, 255, 255];
+        }
+
+        const clampedZ = Math.max(p5, Math.min(p95, currentZ));
+        const normalizedZ = (clampedZ - p5) / range;
+
+        // TODO: interpolate between two pretty colors
+        const r = Math.round(normalizedZ * 255);
+        const g = Math.round(normalizedZ * 255);
+        const b = Math.round((1 - normalizedZ) * 255);
+        return [r, g, b, 255];
+      },
+      pointSize: 1,
+      onError: (error: any) => {
+        console.error('Point cloud loading error: ' + error.message);
+      },
+    });
+    return layer;
+  }, []);
 
   // Helper function to add a new error
   const addError = useCallback((message: string, shouldOverrideMessages: boolean = false) => {
@@ -598,9 +693,15 @@ export default function MapLibreMap({
     [mapData],
   );
 
-  // Separate effect for map initialization (only runs once)
+  // effect runs when map initializes AND when new point clouds are added
   useEffect(() => {
-    if (!mapContainerRef.current || mapRef.current) return;
+    if (!mapContainerRef.current) return;
+
+    // need to nuke in order to re-draw, TODO this can be improved
+    if (mapRef.current) {
+      mapRef.current.remove();
+      mapRef.current = null;
+    }
 
     try {
       // Initialize the map with a basic style first
@@ -644,6 +745,15 @@ export default function MapLibreMap({
         exportPDFControlRef.current = exportPDFControl;
         newMap.addControl(exportPDFControl, 'top-right');
 
+        const overlaidPCLayers = pointCloudLayers.map((layer) => createPointCloudLayer(layer));
+
+        const deckOverlay = new MapboxOverlay({
+          interleaved: true,
+          layers: overlaidPCLayers,
+        });
+        deckOverlayRef.current = deckOverlay;
+        newMap.addControl(deckOverlay);
+
         // Load cursor image initially
         loadCursorImage();
 
@@ -685,7 +795,7 @@ export default function MapLibreMap({
       addError('Failed to initialize map: ' + (err instanceof Error ? err.message : String(err)), true);
       setLoading(false);
     }
-  }, [addError, loadLegendSymbols, mapId]); // Only run once on mount
+  }, [addError, loadLegendSymbols, mapId, pointCloudLayers, createPointCloudLayer]); // listen to point cloud layers
 
   // Separate effect for style updates
   useEffect(() => {

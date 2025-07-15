@@ -201,6 +201,8 @@ export default function ProjectView() {
       'application/geopackage+sqlite3': ['.gpkg'],
       'application/octet-stream': ['.fgb', '.dem'],
       'application/zip': ['.zip'],
+      'application/vnd.las': ['.las'],
+      'application/las+zip': ['.laz'],
     },
   });
 

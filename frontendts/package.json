@@ -11,7 +11,12 @@
     "watch": "tsc -b --watch & vite build --watch --mode development"
   },
   "dependencies": {
+    "@deck.gl/core": "^9.1.13",
+    "@deck.gl/layers": "^9.1.13",
+    "@deck.gl/mapbox": "^9.1.13",
     "@geomatico/maplibre-cog-protocol": "^0.5.0",
+    "@loaders.gl/3d-tiles": "^4.4.0-alpha.2",
+    "@loaders.gl/las": "^4.4.0-alpha.2",
     "@radix-ui/react-context-menu": "^2.2.12",
     "@radix-ui/react-dialog": "^1.1.14",
     "@radix-ui/react-dropdown-menu": "^2.1.14",

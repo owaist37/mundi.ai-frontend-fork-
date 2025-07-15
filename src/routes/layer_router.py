@@ -509,6 +509,122 @@ async def get_layer_pmtiles(
 
 
 @layer_router.get(
+    "/layer/{layer_id}.laz",
+    operation_id="view_layer_as_laz",
+)
+async def get_layer_laz(
+    layer_id: str,
+    request: Request,
+    session: UserContext = Depends(verify_session_required),
+):
+    async with get_async_db_connection() as conn:
+        # Get the layer by layer_id
+        layer = await conn.fetchrow(
+            """
+            SELECT layer_id, name, path, type, metadata, feature_count, owner_uuid, s3_key
+            FROM map_layers
+            WHERE layer_id = $1
+            """,
+            layer_id,
+        )
+        if not layer:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+            )
+
+        if layer["type"] != "point_cloud":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Layer is not a point cloud type",
+            )
+
+        if session.get_user_id() != str(layer["owner_uuid"]):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+            )
+
+        # Set up S3 client and bucket
+        bucket_name = get_bucket_name()
+
+        # Check if layer has s3_key
+        s3_key = layer["s3_key"]
+
+    # If S3 key doesn't exist, return error
+    if not s3_key:
+        raise HTTPException(
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
+            detail="LAZ file for this layer has not been generated yet",
+        )
+
+    # Get the file size first to handle range requests using async S3
+    s3 = await get_async_s3_client()
+    s3_head = await s3.head_object(Bucket=bucket_name, Key=s3_key)
+    file_size = s3_head["ContentLength"]
+
+    # Check for Range header to support byte serving
+    range_header = request.headers.get("range", None) if request else None
+    start_byte = 0
+    end_byte = file_size - 1
+
+    # Parse the Range header if present
+    if range_header:
+        range_match = re.search(r"bytes=(\d+)-(\d*)", range_header)
+        if range_match:
+            start_byte = int(range_match.group(1))
+            end_group = range_match.group(2)
+            if end_group:
+                end_byte = min(int(end_group), file_size - 1)
+            else:
+                end_byte = file_size - 1
+
+        # Calculate content length for the range
+        content_length = end_byte - start_byte + 1
+
+    # Create streaming function that handles S3 connection properly
+    async def stream_s3_file():
+        s3 = await get_async_s3_client()
+        if range_header:
+            # Get range from S3
+            s3_response = await s3.get_object(
+                Bucket=bucket_name,
+                Key=s3_key,
+                Range=f"bytes={start_byte}-{end_byte}",
+            )
+        else:
+            # Get entire file from S3
+            s3_response = await s3.get_object(Bucket=bucket_name, Key=s3_key)
+
+        # Read all content and yield in chunks
+        body = s3_response["Body"]
+        chunk_size = 8192
+        while True:
+            chunk = await body.read(chunk_size)
+            if not chunk:
+                break
+            yield chunk
+
+    # Set headers based on range request
+    if range_header:
+        status_code = 206  # Partial Content
+        headers = {
+            "Content-Range": f"bytes {start_byte}-{end_byte}/{file_size}",
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(content_length),
+            "Content-Type": "application/octet-stream",
+        }
+    else:
+        status_code = 200
+        headers = {
+            "Accept-Ranges": "bytes",
+            "Content-Length": str(file_size),
+            "Content-Type": "application/octet-stream",
+        }
+
+    # Return a streaming response with the appropriate status and headers
+    return StreamingResponse(stream_s3_file(), status_code=status_code, headers=headers)
+
+
+@layer_router.get(
     "/layer/{layer_id}/{z}/{x}/{y}.mvt",
     operation_id="get_layer_mvt_tile",
 )
