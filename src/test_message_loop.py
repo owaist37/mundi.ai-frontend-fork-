@@ -35,7 +35,7 @@ class MockResponse:
 
 
 @pytest.fixture
-async def test_map_id(auth_client):
+def test_map_id(sync_auth_client):
     map_title = f"Test Message Loop Map {uuid.uuid4()}"
 
     map_data = {
@@ -44,7 +44,7 @@ async def test_map_id(auth_client):
         "link_accessible": True,
     }
 
-    response = await auth_client.post("/api/maps/create", json=map_data)
+    response = sync_auth_client.post("/api/maps/create", json=map_data)
 
     assert response.status_code == 200
     map_id = response.json()["id"]
@@ -53,9 +53,9 @@ async def test_map_id(auth_client):
 
 
 @pytest.fixture
-async def test_vector_layer(auth_client, test_map_id):
+def test_vector_layer(sync_auth_client, test_map_id):
     with open("/app/test_fixtures/UScounties.gpkg", "rb") as f:
-        response = await auth_client.post(
+        response = sync_auth_client.post(
             f"/api/maps/{test_map_id}/layers",
             files={"file": ("UScounties.gpkg", f, "application/octet-stream")},
             data={"layer_name": "US Counties", "add_layer_to_map": "true"},
@@ -150,18 +150,17 @@ async def test_message_simple_response(
         assert len(assistant_messages[0]["content"]) > 0
 
 
-@pytest.mark.anyio
 @pytest.mark.skipif(
     os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
     reason="OPENAI_API_KEY is required for these tests",
 )
-async def test_error_recovery(test_map_id, auth_client):
+def test_error_recovery(test_map_id, sync_auth_client):
     fail_message = {
         "role": "user",
         "content": "Calculate centroids for a layer with ID 'nonexistent_123'.",
     }
 
-    response = await auth_client.post(
+    response = sync_auth_client.post(
         f"/api/maps/{test_map_id}/messages/send",
         json=fail_message,
     )
@@ -173,13 +172,13 @@ async def test_error_recovery(test_map_id, auth_client):
         "content": "What GIS operations are available in this system?",
     }
 
-    response = await auth_client.post(
+    response = sync_auth_client.post(
         f"/api/maps/{test_map_id}/messages/send",
         json=valid_message,
     )
 
     assert response.status_code == 200
-    messages_response = await auth_client.get(
+    messages_response = sync_auth_client.get(
         f"/api/maps/{test_map_id}/messages",
     )
 
