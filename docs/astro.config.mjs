@@ -42,7 +42,8 @@ export default defineConfig({
 					items: [
 						{ label: 'Self-hosting Mundi', slug: 'deployments/self-hosting-mundi' },
 						{ label: 'On-Premise/VPC Kubernetes', slug: 'deployments/on-premise-vpc-kubernetes-deployment' },
-						{ label: 'Using a local LLM with Ollama', slug: 'deployments/connecting-to-local-llm-with-ollama' }
+						{ label: 'Using a local LLM with Ollama', slug: 'deployments/connecting-to-local-llm-with-ollama' },
+						{ label: 'Air-gapped deployments', slug: 'deployments/air-gapped' }
 					]
 				}
 			],
