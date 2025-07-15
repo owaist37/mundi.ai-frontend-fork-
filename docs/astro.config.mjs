@@ -34,6 +34,7 @@ export default defineConfig({
 					items: [
 						{ label: 'Connecting to PostGIS', slug: 'guides/connecting-to-postgis' },
 						{ label: 'Geoprocessing from QGIS', slug: 'guides/geoprocessing-from-qgis' },
+						{ label: 'Visualizing point clouds', slug: 'guides/visualizing-point-clouds-las-laz' },
 						{ label: 'Satellite basemaps', slug: 'guides/switching-basemaps-satellite-or-traditional-vector' },
 					],
 				},
