@@ -23,7 +23,6 @@ from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi_mcp import FastApiMCP
 from fastapi_proxy_lib.fastapi.app import reverse_http_app, reverse_ws_app
 import httpx
 
@@ -36,6 +35,7 @@ from src.routes import (
 )
 from src.routes.postgres_routes import basemap_router
 from src.routes.layer_router import layer_router
+# from fastapi_mcp import FastApiMCP
 
 
 @asynccontextmanager
@@ -118,22 +118,23 @@ drift_app = reverse_http_app(base_url="http://driftdb:8080/")
 app.mount("/drift/", drift_app)
 
 
-mcp = FastApiMCP(
-    app,
-    name="Mundi.ai MCP",
-    description="GIS as an MCP",
-    exclude_operations=[
-        "upload_layer_to_map",
-        "view_layer_as_geojson",
-        "view_layer_as_pmtiles",
-        "view_layer_as_cog_tif",
-        "remove_layer_from_map",
-        "view_map_html",
-        "get_map_stylejson",
-        "describe_layer",
-    ],
-)
-mcp.mount()
+# TODO: this isn't useful right now. But we should work on it in the future
+# mcp = FastApiMCP(
+#     app,
+#     name="Mundi.ai MCP",
+#     description="GIS as an MCP",
+#     exclude_operations=[
+#         "upload_layer_to_map",
+#         "view_layer_as_geojson",
+#         "view_layer_as_pmtiles",
+#         "view_layer_as_cog_tif",
+#         "remove_layer_from_map",
+#         "view_map_html",
+#         "get_map_stylejson",
+#         "describe_layer",
+#     ],
+# )
+# mcp.mount()
 
 
 # First mount specific static assets to ensure they're properly served
