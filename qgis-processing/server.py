@@ -144,26 +144,28 @@ def run_qgis_process(request: QGISProcessRequest) -> Dict[str, Any]:
                         with open(output_path, "rb") as f:
                             data = f.read()
 
-                        req = Request(put_url, data=data, method="PUT")
+                        req = Request(
+                            put_url,
+                            data=data,
+                            method="PUT",
+                            headers={"x-amz-content-sha256": "UNSIGNED-PAYLOAD"},
+                        )
                         with urlopen(req) as response:
                             pass  # Just ensure the request succeeds
 
                         upload_results[param_name] = {
                             "uploaded": True,
-                            "url": put_url,
                             "file_size": os.path.getsize(output_path),
                         }
                     except Exception as e:
                         upload_results[param_name] = {
                             "uploaded": False,
                             "error": str(e),
-                            "url": put_url,
                         }
                 else:
                     upload_results[param_name] = {
                         "uploaded": False,
                         "error": f"Output file not found: {output_path}",
-                        "url": put_url,
                     }
 
         end_time = time.time()

@@ -39,7 +39,7 @@ def generate_id(length=12, prefix=""):
 
 def get_s3_client():
     config = boto3.session.Config(
-        signature_version="s3",
+        signature_version="s3v4",
     )
     return boto3.client(
         "s3",
@@ -68,7 +68,7 @@ async def get_async_s3_client():
                 pass
 
         config = boto3.session.Config(
-            signature_version="s3",
+            signature_version="s3v4",
         )
         session = aioboto3.Session()
         client_coro = session.client(
