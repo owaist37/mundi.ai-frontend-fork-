@@ -80,7 +80,6 @@ def sync_test_map_with_vector_layers(sync_auth_client):
     return {"map_id": map_id, **layer_ids}
 
 
-@pytest.mark.skip(reason="Skipping geoprocessing tests")
 @pytest.mark.anyio
 async def test_chat_completions(
     sync_test_map_with_vector_layers,
@@ -141,7 +140,8 @@ async def test_chat_completions(
                 if "$LAST_LAYER_ID" in tool_call.function.arguments:
                     async with get_async_db_connection() as conn:
                         layers = await conn.fetch(
-                            "SELECT layer_id FROM map_layers ORDER by created_on desc limit 1"
+                            "SELECT layer_id FROM map_layers WHERE source_map_id = $1 ORDER by created_on desc limit 1",
+                            map_id,
                         )
                         assert layers is not None
                     actual_layer_id = layers[0]["layer_id"]
@@ -190,6 +190,42 @@ async def test_chat_completions(
             assert msg["ephemeral"] and msg["action"] == "QGIS running native:buffer..."
             assert msg["status"] == "completed"
 
+            # Reach in for the tool call to actually check it worked.. its hard to tell later
+            async with get_async_db_connection() as conn:
+                messages = await conn.fetch(
+                    "SELECT id, sender_id, message_json, created_at FROM chat_completion_messages WHERE map_id = $1 ORDER BY created_at",
+                    map_id,
+                )
+
+                # Find the tool response message for call_1
+                tool_response = None
+                for m in messages:
+                    msg_json = json.loads(dict(m)["message_json"])
+                    if (
+                        msg_json.get("role") == "tool"
+                        and msg_json.get("tool_call_id") == "call_1"
+                    ):
+                        tool_response = json.loads(msg_json["content"])
+                        break
+
+                assert tool_response is not None
+                assert tool_response["status"] == "success"
+                assert "completed successfully" in tool_response["message"]
+                assert tool_response["algorithm_id"] == "native:buffer"
+                assert isinstance(tool_response["qgis_result"], dict)
+                assert "created_layers" in tool_response
+
+                # Check the created layer details
+                created_layers = tool_response["created_layers"]
+                assert len(created_layers) == 1
+                created_layer = created_layers[0]
+                assert created_layer["param_name"] == "OUTPUT"
+                assert created_layer["layer_type"] == "vector"
+                assert "layer_id" in created_layer
+                assert "layer_name" in created_layer
+
+                tool_call_created_layer_id = created_layer["layer_id"]
+
             # loops once
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
@@ -236,3 +272,18 @@ async def test_chat_completions(
                 )
                 assert map_with_layer is not None
                 assert map_with_layer["id"] == map_id
+
+                # Test layer description for the tool-created layer
+                response = await auth_client.get(
+                    f"/api/layer/{tool_call_created_layer_id}/describe"
+                )
+                assert response.status_code == 200, (
+                    f"Failed to get layer description: {response.text}"
+                )
+                assert "Buffered Beaches" in response.text
+                assert "Geometry Type: multipolygon" in response.text
+                assert "-98.0536" in response.text
+                assert "-58.7340" in response.text
+                assert "102.3725" in response.text
+                assert "141.4905" in response.text
+                assert "lifeguard" in response.text
