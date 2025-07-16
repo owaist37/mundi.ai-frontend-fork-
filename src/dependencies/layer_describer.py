@@ -42,6 +42,10 @@ class LayerDescriber(ABC):
         pass
 
     @abstractmethod
+    async def describe_point_cloud_layer(self, layer_data: Dict[str, Any]) -> List[str]:
+        pass
+
+    @abstractmethod
     async def describe_vector_layer(
         self, layer_id: str, layer_data: Dict[str, Any]
     ) -> List[str]:
@@ -61,6 +65,9 @@ class DefaultLayerDescriber(LayerDescriber):
         elif layer_data["type"] == "raster":
             raster_content = await self.describe_raster_layer(layer_data)
             markdown_content.extend(raster_content)
+        elif layer_data["type"] == "point_cloud":
+            point_cloud_content = await self.describe_point_cloud_layer(layer_data)
+            markdown_content.extend(point_cloud_content)
         else:
             vector_content = await self.describe_vector_layer(layer_id, layer_data)
             markdown_content.extend(vector_content)
@@ -156,6 +163,33 @@ class DefaultLayerDescriber(LayerDescriber):
                 max_val = metadata["raster_value_stats_b1"]["max"]
                 markdown_content.append(f"Min Value: {min_val}")
                 markdown_content.append(f"Max Value: {max_val}")
+
+        return markdown_content
+
+    async def describe_point_cloud_layer(self, layer_data: Dict[str, Any]) -> List[str]:
+        markdown_content = []
+
+        markdown_content.append(
+            f"Created On: {str(layer_data['created_on']) if layer_data['created_on'] else 'Unknown'}"
+        )
+        markdown_content.append(
+            f"Last Edited: {str(layer_data['last_edited']) if layer_data['last_edited'] else 'Unknown'}"
+        )
+
+        if layer_data["bounds"]:
+            markdown_content.append("\n## Geographic Extent\n")
+            markdown_content.append(
+                f"Bounds (WGS84): {layer_data['bounds'][0]:.6f},{layer_data['bounds'][1]:.6f},{layer_data['bounds'][2]:.6f},{layer_data['bounds'][3]:.6f}"
+            )
+
+        if layer_data["metadata"]:
+            # Parse metadata JSON if it's a string (asyncpg returns JSON as strings)
+            metadata = layer_data["metadata"]
+            if isinstance(metadata, str):
+                try:
+                    metadata = json.loads(metadata)
+                except (json.JSONDecodeError, TypeError):
+                    metadata = {}
 
         return markdown_content
 
