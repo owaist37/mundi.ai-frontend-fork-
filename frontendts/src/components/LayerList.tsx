@@ -350,7 +350,7 @@ const LayerList: React.FC<LayerListProps> = ({
                       },
                       'export-geopackage': {
                         label: 'Export as GeoPackage',
-                        disabled: status === 'removed',
+                        disabled: status === 'removed' || layerWithStatus.type != 'vector',
                         action: () => {
                           // TODO: Implement geopackage export
                         },
