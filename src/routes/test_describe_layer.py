@@ -132,6 +132,79 @@ async def test_describe_layer_endpoint(test_map_with_coho_layer, auth_client):
     assert '"line-width": 1' in content, "Missing line width"
 
 
+@pytest.fixture
+async def test_map_with_point_cloud_layer(auth_client):
+    random.seed(42)
+    map_payload = {
+        "project": {"layers": [], "crs": {"epsg_code": 3857}},
+        "title": "Point Cloud Layer Description Test Map",
+        "description": "Test map for point cloud layer description endpoint",
+    }
+    map_response = await auth_client.post("/api/maps/create", json=map_payload)
+    assert map_response.status_code == 200, f"Failed to create map: {map_response.text}"
+    map_id = map_response.json()["id"]
+    file_path = str(
+        Path(__file__).parent.parent.parent / "test_fixtures" / "whitney_pc.laz"
+    )
+    with open(file_path, "rb") as f:
+        layer_response = await auth_client.post(
+            f"/api/maps/{map_id}/layers",
+            files={"file": ("whitney_pc.laz", f, "application/octet-stream")},
+            data={"layer_name": "Whitney Point Cloud"},
+        )
+        assert layer_response.status_code == 200, (
+            f"Failed to upload layer: {layer_response.text}"
+        )
+        layer_data = layer_response.json()
+        layer_id = layer_data["id"]
+        child_map_id = layer_data["dag_child_map_id"]
+        layer_details_response = await auth_client.get(
+            f"/api/maps/{child_map_id}/layers"
+        )
+        assert layer_details_response.status_code == 200
+        layers = layer_details_response.json()["layers"]
+        assert len(layers) == 1
+        layer = layers[0]
+        assert layer["type"] == "point_cloud"
+    return {"map_id": child_map_id, "layer_id": layer_id}
+
+
+@pytest.mark.anyio
+async def test_describe_point_cloud_layer_endpoint(
+    test_map_with_point_cloud_layer, auth_client
+):
+    layer_id = test_map_with_point_cloud_layer["layer_id"]
+    response = await auth_client.get(f"/api/layer/{layer_id}/describe")
+
+    # Check that the response is successful
+    assert response.status_code == 200, (
+        f"Failed to get layer description: {response.text}"
+    )
+
+    # Verify the content type
+    assert "text/plain" in response.headers["content-type"], (
+        "Response is not text/plain"
+    )
+
+    # Check for key sections in the markdown output
+    content = response.text
+    print(content)
+    assert "# Layer: Whitney Point Cloud" in content, "Missing layer title"
+    assert "Created On:" in content, "Missing created on section"
+    assert "Last Edited:" in content, "Missing last edited section"
+
+    # Verify specific data points
+    assert f"ID: {layer_id}" in content, "Missing or incorrect layer ID"
+    assert "Type: point_cloud" in content, "Missing or incorrect layer type"
+
+    # Check for geographic extent and bounds formatting (3 decimal places)
+    assert "## Geographic Extent" in content, "Missing geographic extent section"
+    assert "-118.296" in content, "Missing bounds value -118.296"
+    assert "36.570" in content, "Missing bounds value 36.570"
+    assert "-118.285" in content, "Missing bounds value -118.285"
+    assert "36.579" in content, "Missing bounds value 36.579"
+
+
 @pytest.mark.anyio
 async def test_describe_layer_not_found(auth_client):
     response = await auth_client.get("/api/layer/L123456789012/describe")
