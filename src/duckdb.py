@@ -95,16 +95,17 @@ async def execute_duckdb_query(
                 SELECT * FROM ST_Read('{gpkg_path}');
             """)
 
-            result = con.execute(sql_query).fetchdf().head(max_n_rows)
-            result_json = result.to_json(orient="values")
-            headers = result.columns.tolist()
+            cursor = con.execute(sql_query)
+            headers = [col[0] for col in cursor.description]
+            rows = cursor.fetchall()[:max_n_rows]
+            result_json = json.loads(json.dumps(rows))
 
             return {
                 "status": "success",
                 "duration_ms": 1000 * (time.time() - start_time),
-                "result": json.loads(result_json),
+                "result": result_json,
                 "headers": headers,
-                "row_count": len(result),
+                "row_count": len(rows),
                 "query": sql_query,
             }
 
