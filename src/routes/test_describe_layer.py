@@ -42,7 +42,8 @@ async def test_map_with_coho_layer(auth_client):
         assert layer_response.status_code == 200, (
             f"Failed to upload layer: {layer_response.text}"
         )
-        layer_id = layer_response.json()["id"]
+        layer_data = layer_response.json()
+        layer_id = layer_data["id"]
         layer_details_response = await auth_client.get(f"/api/maps/{map_id}/layers")
         assert layer_details_response.status_code == 200
         layers = layer_details_response.json()["layers"]
@@ -157,16 +158,13 @@ async def test_map_with_point_cloud_layer(auth_client):
         )
         layer_data = layer_response.json()
         layer_id = layer_data["id"]
-        child_map_id = layer_data["dag_child_map_id"]
-        layer_details_response = await auth_client.get(
-            f"/api/maps/{child_map_id}/layers"
-        )
+        layer_details_response = await auth_client.get(f"/api/maps/{map_id}/layers")
         assert layer_details_response.status_code == 200
         layers = layer_details_response.json()["layers"]
         assert len(layers) == 1
         layer = layers[0]
         assert layer["type"] == "point_cloud"
-    return {"map_id": child_map_id, "layer_id": layer_id}
+    return {"map_id": map_id, "layer_id": layer_id}
 
 
 @pytest.mark.anyio
