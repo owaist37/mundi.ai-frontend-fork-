@@ -235,6 +235,12 @@ export default function ProjectView() {
     };
   }, [versionId, sessionContext.loading, updateMapData, fetchRoomId]);
 
+  // Let them hide certain layers client-side only
+  const [hiddenLayerIDs, setHiddenLayerIDs] = useState<string[]>([]);
+  const toggleLayerVisibility = (layerId: string) => {
+    setHiddenLayerIDs((prev) => (prev.includes(layerId) ? prev.filter((id) => id !== layerId) : [...prev, layerId]));
+  };
+
   if (sessionContext.loading) {
     return <div className="p-6">Loading session...</div>;
   }
@@ -290,6 +296,8 @@ export default function ProjectView() {
             updateMapData={updateMapData}
             updateProjectData={updateProjectData}
             uploadingFiles={uploadingFiles}
+            hiddenLayerIDs={hiddenLayerIDs}
+            toggleLayerVisibility={toggleLayerVisibility}
           />
         </DriftDBProvider>
       ) : (

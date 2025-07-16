@@ -58,6 +58,8 @@ interface LayerListProps {
   setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
   uploadingFiles?: UploadingFile[];
   demoConfig: { available: boolean; description: string };
+  hiddenLayerIDs: string[];
+  toggleLayerVisibility: (layerId: string) => void;
 }
 
 const LayerList: React.FC<LayerListProps> = ({
@@ -80,6 +82,8 @@ const LayerList: React.FC<LayerListProps> = ({
   setZoomHistoryIndex,
   uploadingFiles,
   demoConfig,
+  hiddenLayerIDs,
+  toggleLayerVisibility,
 }) => {
   const navigate = useNavigate();
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
@@ -304,6 +308,7 @@ const LayerList: React.FC<LayerListProps> = ({
                 <li key={layerDetails.id}>
                   <LayerListItem
                     name={layerDetails.name}
+                    nameClassName={hiddenLayerIDs.includes(layerDetails.id) ? 'line-through text-gray-400' : ''}
                     status={status}
                     isActive={hasActiveAction}
                     hoverText={hoverText}
@@ -333,6 +338,12 @@ const LayerList: React.FC<LayerListProps> = ({
                           } else {
                             toast.info('Layer bounds not available for zoom.');
                           }
+                        },
+                      },
+                      'show-hide-layer': {
+                        label: hiddenLayerIDs.includes(layerDetails.id) ? 'Show layer' : 'Hide layer',
+                        action: (layerId) => {
+                          toggleLayerVisibility(layerId);
                         },
                       },
                       'view-attributes': {

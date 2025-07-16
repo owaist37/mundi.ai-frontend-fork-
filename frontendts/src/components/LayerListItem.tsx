@@ -25,6 +25,7 @@ interface DropdownAction {
 
 interface LayerListItemProps {
   name: string;
+  nameClassName?: string;
   status?: 'added' | 'removed' | 'edited' | 'existing';
   isActive?: boolean;
   progressBar?: number | null;
@@ -42,6 +43,7 @@ interface LayerListItemProps {
 
 export const LayerListItem: React.FC<LayerListItemProps> = ({
   name,
+  nameClassName = '',
   status = 'existing',
   isActive = false,
   progressBar = null,
@@ -87,7 +89,7 @@ export const LayerListItem: React.FC<LayerListItemProps> = ({
           }}
         >
           <div className="flex items-center gap-2">
-            <span className="font-medium truncate" title={name}>
+            <span className={`font-medium truncate ${nameClassName}`} title={name}>
               {truncatedName}
             </span>
           </div>

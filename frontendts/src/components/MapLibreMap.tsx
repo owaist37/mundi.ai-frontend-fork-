@@ -253,6 +253,8 @@ interface MapLibreMapProps {
   updateMapData: (mapId: string) => void;
   updateProjectData: (projectId: string) => void;
   uploadingFiles?: UploadingFile[];
+  hiddenLayerIDs: string[];
+  toggleLayerVisibility: (layerId: string) => void;
 }
 
 export default function MapLibreMap({
@@ -266,6 +268,8 @@ export default function MapLibreMap({
   updateMapData,
   updateProjectData,
   uploadingFiles,
+  hiddenLayerIDs,
+  toggleLayerVisibility,
 }: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<MLMap | null>(null);
@@ -856,6 +860,23 @@ export default function MapLibreMap({
     updateStyle();
   }, [mapId, currentBasemap, addError, loadLegendSymbols, hasZoomed]); // Update when these dependencies change
 
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    const map = mapRef.current;
+    if (!map.isStyleLoaded()) return;
+
+    const style = map.getStyle();
+    if (!style || !style.layers) return;
+
+    style.layers.forEach((layer) => {
+      if ('source' in layer && layer.source) {
+        const visibility = hiddenLayerIDs.includes(layer.source as string) ? 'none' : 'visible';
+        map.setLayoutProperty(layer.id, 'visibility', visibility);
+      }
+    });
+  }, [hiddenLayerIDs]);
+
   // Update the points source when pointer positions change
   useEffect(() => {
     const map = mapRef.current;
@@ -1244,6 +1265,8 @@ export default function MapLibreMap({
             setZoomHistoryIndex={setZoomHistoryIndex}
             uploadingFiles={uploadingFiles}
             demoConfig={demoConfig}
+            hiddenLayerIDs={hiddenLayerIDs}
+            toggleLayerVisibility={toggleLayerVisibility}
           />
         )}
         {/* Changelog */}
