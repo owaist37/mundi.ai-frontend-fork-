@@ -251,12 +251,11 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                       {/* Header */}
                       <div>
                         <h3 className="text-lg font-semibold line-clamp-2 mb-1">{project.most_recent_version?.title}</h3>
-                        <p className="text-sm text-gray-200 line-clamp-2">{project.most_recent_version?.description || 'No description'}</p>
                       </div>
 
                       {/* Footer */}
                       <div className="flex items-center justify-between space-x-2">
-                        <div className="flex items-center text-xs text-gray-300">
+                        <div className="flex items-center text-xs text-gray-200 text-shadow-md">
                           <Clock className="mr-1 h-3 w-3" />
                           {(() => {
                             const lastEdited = new Date(project.most_recent_version?.last_edited || project.created_on);
