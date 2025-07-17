@@ -22,6 +22,7 @@ import shutil
 import aioboto3
 import asyncio
 import secrets
+from functools import lru_cache
 from openai import AsyncOpenAI
 
 
@@ -37,11 +38,12 @@ def generate_id(length=12, prefix=""):
     return prefix + result
 
 
+@lru_cache
 def get_s3_client():
     config = boto3.session.Config(
         signature_version="s3",
     )
-    return boto3.client(
+    return boto3.Session().client(
         "s3",
         endpoint_url=os.environ["S3_ENDPOINT_URL"],
         aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
@@ -51,38 +53,26 @@ def get_s3_client():
     )
 
 
-_async_s3_client = None
-_async_s3_client_loop = None
+# shared session, each asyncio loop gets a client
+_session = aioboto3.Session()
+_clients = {}
 
 
 async def get_async_s3_client():
-    global _async_s3_client, _async_s3_client_loop
-
-    current_loop = asyncio.get_running_loop()
-
-    if _async_s3_client is None or _async_s3_client_loop != current_loop:
-        if _async_s3_client is not None:
-            try:
-                await _async_s3_client.__aexit__(None, None, None)
-            except Exception:
-                pass
-
+    loop = asyncio.get_running_loop()
+    if loop not in _clients:
         config = boto3.session.Config(
             signature_version="s3",
         )
-        session = aioboto3.Session()
-        client_coro = session.client(
+        _clients[loop] = await _session.client(
             "s3",
             endpoint_url=os.environ["S3_ENDPOINT_URL"],
             aws_access_key_id=os.environ["S3_ACCESS_KEY_ID"],
             aws_secret_access_key=os.environ["S3_SECRET_ACCESS_KEY"],
             region_name=os.environ["S3_DEFAULT_REGION"],
             config=config,
-        )
-        _async_s3_client = await client_coro.__aenter__()
-        _async_s3_client_loop = current_loop
-
-    return _async_s3_client
+        ).__aenter__()
+    return _clients[loop]
 
 
 def get_bucket_name():
