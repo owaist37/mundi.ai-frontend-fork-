@@ -13,8 +13,8 @@ import { PointCloudLayer } from '@deck.gl/layers';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { LASLoader } from '@loaders.gl/las';
 import { Matrix4 } from '@math.gl/core';
-import { Activity, Brain, Database, MessagesSquare, Send } from 'lucide-react';
-import { type IControl, type MapOptions, Map as MLMap, NavigationControl, ScaleControl } from 'maplibre-gl';
+import { Activity, Brain, Database, MessagesSquare, Send, X } from 'lucide-react';
+import { type IControl, type MapGeoJSONFeature, type MapOptions, Map as MLMap, NavigationControl, ScaleControl } from 'maplibre-gl';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -31,6 +31,7 @@ import { toast } from 'sonner';
 import Session from 'supertokens-auth-react/recipe/session';
 import AttributeTable from '@/components/AttributeTable';
 import LayerList from '@/components/LayerList';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -493,6 +494,8 @@ export default function MapLibreMap({
     }
   }, [isCancelling, mapId]);
 
+  const [selectedFeature, setSelectedFeature] = useState<MapGeoJSONFeature | null>(null);
+
   const UPDATE_KUE_POINTER_MSEC = 40;
   const KUE_CURVE_DURATION_MS = 2000;
 
@@ -748,6 +751,22 @@ export default function MapLibreMap({
         const exportPDFControl = new ExportPDFControl(mapId);
         exportPDFControlRef.current = exportPDFControl;
         newMap.addControl(exportPDFControl, 'top-right');
+
+        newMap.on('click', (e) => {
+          const features = newMap.queryRenderedFeatures(e.point);
+          if (!features.length) return;
+
+          const feature = features[0];
+
+          setSelectedFeature((prev: MapGeoJSONFeature | null) => {
+            if (prev) {
+              newMap.setFeatureState({ source: prev.source, sourceLayer: prev.sourceLayer, id: prev.id }, { selected: false });
+            }
+
+            newMap.setFeatureState({ source: feature.source, sourceLayer: feature.sourceLayer, id: feature.id }, { selected: true });
+            return feature;
+          });
+        });
 
         const overlaidPCLayers = pointCloudLayers.map((layer) => createPointCloudLayer(layer));
 
@@ -1269,9 +1288,46 @@ export default function MapLibreMap({
             toggleLayerVisibility={toggleLayerVisibility}
           />
         )}
-        {/* Changelog */}
-        {/* Apply flex flex-col justify-end to CommandList to anchor items to the bottom */}
-        <Command className="z-30 absolute bottom-4 left-4 max-h-[18vh] hover:max-h-[70vh] transition-all duration-300 ring ring-black hover:ring-white max-w-72 overflow-auto py-2 rounded-sm bg-white dark:bg-gray-800 shadow-md">
+        {selectedFeature && (
+          <Card className="absolute bottom-4 left-4 max-h-[60vh] overflow-auto py-2 rounded-sm border-0 gap-2 max-w-72 w-full">
+            <CardHeader className="px-2">
+              <CardTitle className="text-base flex justify-between items-center gap-2">
+                Feature Properties
+                <button
+                  onClick={() => setSelectedFeature(null)}
+                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                  title="Close"
+                >
+                  <X className="h-4 w-4 cursor-pointer" />
+                </button>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="px-2 max-h-[50vh] overflow-auto">
+              <div className="overflow-x-auto">
+                <table className="w-full text-xs">
+                  <thead>
+                    <tr className="border-b">
+                      <th className="text-left py-1 pr-2 font-medium">Property</th>
+                      <th className="text-left py-1 font-medium">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {selectedFeature.properties &&
+                      Object.entries(selectedFeature.properties).map(([key, value]) => (
+                        <tr key={key} className="border-b border-gray-100 dark:border-gray-700">
+                          <td className="py-1 pr-2 font-mono text-gray-600 dark:text-gray-400 break-all">{key}</td>
+                          <td className="py-1 font-mono break-all">{String(value)}</td>
+                        </tr>
+                      ))}
+                  </tbody>
+                </table>
+              </div>
+            </CardContent>
+          </Card>
+        )}
+        <Command
+          className={`z-30 absolute bottom-4 left-4 max-h-[18vh] hover:max-h-[70vh] transition-all duration-300 ring ring-black hover:ring-white max-w-72 overflow-auto py-2 rounded-sm bg-white dark:bg-gray-800 shadow-md ${selectedFeature ? 'hidden' : ''}`}
+        >
           <CommandInput placeholder={`Search ${changelog.length} versions...`} />
           {/* Apply flex properties to CommandList to align content to the bottom */}
           {/* This should push the CommandGroup towards the bottom of the scrollable area */}

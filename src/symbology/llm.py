@@ -82,7 +82,12 @@ def generate_maplibre_layers_for_layer_id(layer_id: str, geometry_type: str) -> 
                 "source-layer": "reprojectedfgb",
                 "paint": {
                     "fill-color": selected_color,
-                    "fill-opacity": 0.5,
+                    "fill-opacity": [
+                        "case",
+                        ["boolean", ["feature-state", "selected"], False],
+                        0.9,
+                        0.5,
+                    ],
                     "fill-outline-color": "#000",
                 },
                 "metadata": {"layer_name": layer_id},
