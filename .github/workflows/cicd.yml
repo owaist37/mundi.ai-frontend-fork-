@@ -32,17 +32,23 @@ jobs:
         credentials_json: ${{ secrets.GCP_SA_KEY }}
 
     # ─ build application & DriftDB images with Depot bake ─
-    - name: Bake application & DriftDB images
+    - id: bake
+      name: Bake application & DriftDB images
       uses: depot/bake-action@v1
       with:
         project: 9lr9tw2kzl
         files: docker-compose.yml
-        load: true
+        save: true
         set: |
           app.tags=${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }}
           app.args.VITE_WEBSITE_DOMAIN=http://localhost:8000
           app.args.VITE_EMAIL_VERIFICATION=disable
           driftdb.tags=driftdb-local
+
+    - uses: depot/pull-action@v1
+      with:
+        build-id: ${{ steps.bake.outputs.build-id }}
+        targets: app,driftdb,qgis-processing
 
     - name: Add main tag
       run: docker tag ${{ env.IMAGE_REPO }}:${{ env.IMAGE_TAG }} ${{ env.IMAGE_REPO }}:main
