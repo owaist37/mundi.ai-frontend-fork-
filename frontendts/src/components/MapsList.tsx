@@ -29,38 +29,38 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
 
   useEffect(() => {
     console.log('triggering fetch');
-    
+
     // Mark this page as loading
-    setLoadingPages(prev => new Set(prev).add(filterState.currentPage));
-    
+    setLoadingPages((prev) => new Set(prev).add(filterState.currentPage));
+
     fetch(`/api/projects/?page=${filterState.currentPage}&limit=12&include_deleted=${filterState.showDeleted}`)
-      .then(response => {
+      .then((response) => {
         if (!response.ok) {
           throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
         }
         return response.json();
       })
-      .then(data => {
-        setProjectPages(prev => ({
+      .then((data) => {
+        setProjectPages((prev) => ({
           ...prev,
-          [filterState.currentPage]: data.projects || []
+          [filterState.currentPage]: data.projects || [],
         }));
         setTotalPages(data.total_pages || 1);
         setTotalItems(data.total_items || 0);
         setError(null);
       })
-      .catch(err => {
+      .catch((err) => {
         setError(err instanceof Error ? err.message : 'Failed to fetch projects');
-        setProjectPages(prev => ({
+        setProjectPages((prev) => ({
           ...prev,
-          [filterState.currentPage]: []
+          [filterState.currentPage]: [],
         }));
         setTotalPages(1);
         setTotalItems(0);
       })
       .finally(() => {
         // Remove this page from loading set
-        setLoadingPages(prev => {
+        setLoadingPages((prev) => {
           const newSet = new Set(prev);
           newSet.delete(filterState.currentPage);
           return newSet;
@@ -69,7 +69,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   }, [filterState]);
 
   const handlePageChange = (page: number) => {
-    setFilterState(prev => ({ ...prev, currentPage: page }));
+    setFilterState((prev) => ({ ...prev, currentPage: page }));
   };
 
   const renderPagination = () => {
@@ -150,7 +150,12 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
       await response.json();
       // Clear all cached pages to force refresh
       setProjectPages({});
-      setFilterState(prev => ({ ...prev, showDeleted: prev.showDeleted, currentPage: prev.currentPage, refreshTrigger: prev.refreshTrigger + 1 }));
+      setFilterState((prev) => ({
+        ...prev,
+        showDeleted: prev.showDeleted,
+        currentPage: prev.currentPage,
+        refreshTrigger: prev.refreshTrigger + 1,
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create map');
     } finally {
@@ -173,7 +178,12 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
 
       // Clear all cached pages to force refresh
       setProjectPages({});
-      setFilterState(prev => ({ ...prev, showDeleted: prev.showDeleted, currentPage: prev.currentPage, refreshTrigger: prev.refreshTrigger + 1 }));
+      setFilterState((prev) => ({
+        ...prev,
+        showDeleted: prev.showDeleted,
+        currentPage: prev.currentPage,
+        refreshTrigger: prev.refreshTrigger + 1,
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete map');
     }
@@ -239,7 +249,12 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
           <Button
             onClick={() => {
               setProjectPages({});
-              setFilterState(prev => ({ ...prev, showDeleted: prev.showDeleted, currentPage: prev.currentPage, refreshTrigger: prev.refreshTrigger + 1 }));
+              setFilterState((prev) => ({
+                ...prev,
+                showDeleted: prev.showDeleted,
+                currentPage: prev.currentPage,
+                refreshTrigger: prev.refreshTrigger + 1,
+              }));
             }}
             className="mt-4 bg-[#C1FA3D] hover:bg-[#B8E92B] text-black hover:cursor-pointer"
           >
@@ -250,7 +265,12 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
         <Card className="border-slate-500 text-white flex flex-col items-center justify-center p-6">
           <div className="h-8 w-8 mb-2 text-gray-400 flex items-center justify-center">
             <svg className="animate-spin h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+              <path
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                strokeWidth={2}
+                d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"
+              />
             </svg>
           </div>
           <h3 className="text-lg font-medium">Loading Maps...</h3>
