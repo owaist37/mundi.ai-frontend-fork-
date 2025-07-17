@@ -148,7 +148,6 @@ def run_qgis_process(request: QGISProcessRequest) -> Dict[str, Any]:
                             put_url,
                             data=data,
                             method="PUT",
-                            headers={"x-amz-content-sha256": "UNSIGNED-PAYLOAD"},
                         )
                         with urlopen(req) as response:
                             pass  # Just ensure the request succeeds
