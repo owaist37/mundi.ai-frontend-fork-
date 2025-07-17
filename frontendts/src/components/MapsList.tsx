@@ -1,9 +1,8 @@
 // Copyright Bunting Labs, Inc. 2025
 
 import { Clock, Plus, Trash2 } from 'lucide-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import Session from 'supertokens-auth-react/recipe/session';
 import { Checkbox } from '@/components/ui/checkbox';
 import { MapProject } from '../lib/types';
 import { Button } from './ui/button';
@@ -16,59 +15,61 @@ interface MapsListProps {
 }
 
 export default function MapsList({ hideNewButton = false }: MapsListProps) {
-  const [projects, setProjects] = useState<MapProject[]>([]);
+  const [projectPages, setProjectPages] = useState<{ [page: number]: MapProject[] }>({});
+  const [loadingPages, setLoadingPages] = useState<Set<number>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
-  const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
-  const [loading, setLoading] = useState(false);
-  const [showDeleted, setShowDeleted] = useState(false);
-  const sessionContext = Session.useSessionContext();
+  const [filterState, setFilterState] = useState({
+    showDeleted: false,
+    currentPage: 1,
+    refreshTrigger: 0,
+  });
 
-  const fetchProjects = useCallback(
-    async (page: number = 1) => {
-      setLoading(true);
-      try {
-        const response = await fetch(`/api/projects/?page=${page}&limit=12&include_deleted=${showDeleted}`);
+  useEffect(() => {
+    console.log('triggering fetch');
+    
+    // Mark this page as loading
+    setLoadingPages(prev => new Set(prev).add(filterState.currentPage));
+    
+    fetch(`/api/projects/?page=${filterState.currentPage}&limit=12&include_deleted=${filterState.showDeleted}`)
+      .then(response => {
         if (!response.ok) {
           throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
         }
-        const data = await response.json();
-        setProjects(data.projects || []);
+        return response.json();
+      })
+      .then(data => {
+        setProjectPages(prev => ({
+          ...prev,
+          [filterState.currentPage]: data.projects || []
+        }));
         setTotalPages(data.total_pages || 1);
         setTotalItems(data.total_items || 0);
         setError(null);
-      } catch (err) {
+      })
+      .catch(err => {
         setError(err instanceof Error ? err.message : 'Failed to fetch projects');
-        setProjects([]);
+        setProjectPages(prev => ({
+          ...prev,
+          [filterState.currentPage]: []
+        }));
         setTotalPages(1);
         setTotalItems(0);
-      } finally {
-        setLoading(false);
-      }
-    },
-    [showDeleted],
-  );
-
-  // Fetch maps when component mounts or page changes
-  useEffect(() => {
-    if (!sessionContext.loading && sessionContext.doesSessionExist) {
-      fetchProjects(currentPage);
-    }
-  }, [sessionContext, currentPage, fetchProjects]);
-
-  // Reset to page 1 when toggling deleted filter
-  useEffect(() => {
-    if (currentPage !== 1) {
-      setCurrentPage(1);
-    } else {
-      fetchProjects(1);
-    }
-  }, [showDeleted]);
+      })
+      .finally(() => {
+        // Remove this page from loading set
+        setLoadingPages(prev => {
+          const newSet = new Set(prev);
+          newSet.delete(filterState.currentPage);
+          return newSet;
+        });
+      });
+  }, [filterState]);
 
   const handlePageChange = (page: number) => {
-    setCurrentPage(page);
+    setFilterState(prev => ({ ...prev, currentPage: page }));
   };
 
   const renderPagination = () => {
@@ -83,8 +84,8 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
           pages.push(i);
         }
       } else {
-        const start = Math.max(1, currentPage - 2);
-        const end = Math.min(totalPages, currentPage + 2);
+        const start = Math.max(1, filterState.currentPage - 2);
+        const end = Math.min(totalPages, filterState.currentPage + 2);
 
         for (let i = start; i <= end; i++) {
           pages.push(i);
@@ -101,14 +102,14 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
         <PaginationContent>
           <PaginationItem>
             <PaginationPrevious
-              onClick={() => currentPage > 1 && handlePageChange(currentPage - 1)}
-              className={currentPage <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+              onClick={() => filterState.currentPage > 1 && handlePageChange(filterState.currentPage - 1)}
+              className={filterState.currentPage <= 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
             />
           </PaginationItem>
 
           {visiblePages.map((page) => (
             <PaginationItem key={page}>
-              <PaginationLink onClick={() => handlePageChange(page)} isActive={currentPage === page} className="cursor-pointer">
+              <PaginationLink onClick={() => handlePageChange(page)} isActive={filterState.currentPage === page} className="cursor-pointer">
                 {page}
               </PaginationLink>
             </PaginationItem>
@@ -116,8 +117,8 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
 
           <PaginationItem>
             <PaginationNext
-              onClick={() => currentPage < totalPages && handlePageChange(currentPage + 1)}
-              className={currentPage >= totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+              onClick={() => filterState.currentPage < totalPages && handlePageChange(filterState.currentPage + 1)}
+              className={filterState.currentPage >= totalPages ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
             />
           </PaginationItem>
         </PaginationContent>
@@ -146,10 +147,10 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
         throw new Error('Failed to create map');
       }
 
-      const newMap = await response.json();
-      console.log('newMap', newMap);
-      // Refresh map list
-      fetchProjects(currentPage);
+      await response.json();
+      // Clear all cached pages to force refresh
+      setProjectPages({});
+      setFilterState(prev => ({ ...prev, showDeleted: prev.showDeleted, currentPage: prev.currentPage, refreshTrigger: prev.refreshTrigger + 1 }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to create map');
     } finally {
@@ -170,38 +171,27 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
         throw new Error('Failed to delete map');
       }
 
-      // Refresh map list
-      fetchProjects(currentPage);
+      // Clear all cached pages to force refresh
+      setProjectPages({});
+      setFilterState(prev => ({ ...prev, showDeleted: prev.showDeleted, currentPage: prev.currentPage, refreshTrigger: prev.refreshTrigger + 1 }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to delete map');
     }
   };
 
-  if (sessionContext.loading) {
-    return <div className="p-6 text-white">Loading session...</div>;
-  }
-
-  if (!sessionContext.doesSessionExist) {
-    return (
-      <div className="p-6 text-white">
-        <h1 className="text-2xl font-bold mb-4">Maps</h1>
-        <p>Please log in to view and create maps.</p>
-        <Link to="/auth" className="text-[#e2420d] hover:underline">
-          Login
-        </Link>
-      </div>
-    );
-  }
+  // Get current page projects and loading state
+  const currentPageProjects = projectPages[filterState.currentPage] || [];
+  const isCurrentPageLoading = loadingPages.has(filterState.currentPage);
 
   return (
-    <div className="flex flex-col gap-6 p-6 min-w-xl">
+    <div className="w-full flex flex-col gap-6 p-6 min-w-xl">
       <div className="flex items-center justify-between relative">
         <div className="flex items-center gap-3">
           <div className="flex flex-row items-center gap-2">
             <Checkbox
-              checked={showDeleted}
+              checked={filterState.showDeleted}
               onCheckedChange={(checked) => {
-                setShowDeleted(checked === true);
+                setFilterState({ showDeleted: checked === true, currentPage: 1, refreshTrigger: filterState.refreshTrigger + 1 });
               }}
             />
             <label className="text-sm font-normal text-gray-300 cursor-pointer">Show recently deleted</label>
@@ -210,7 +200,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
 
         <div className="absolute left-1/2 transform -translate-x-1/2">
           <h1 className="text-2xl font-bold">
-            Your Maps <span className="text-gray-400">({totalItems} projects)</span>
+            {filterState.showDeleted ? 'Recently Deleted Maps' : 'Your Maps'} <span className="text-gray-400">({totalItems} projects)</span>
           </h1>
         </div>
 
@@ -247,13 +237,26 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
           <h3 className="text-lg font-medium text-red-400">Error Loading Maps</h3>
           <p className="text-sm text-gray-400 text-center mt-1">{error}</p>
           <Button
-            onClick={() => fetchProjects(currentPage)}
+            onClick={() => {
+              setProjectPages({});
+              setFilterState(prev => ({ ...prev, showDeleted: prev.showDeleted, currentPage: prev.currentPage, refreshTrigger: prev.refreshTrigger + 1 }));
+            }}
             className="mt-4 bg-[#C1FA3D] hover:bg-[#B8E92B] text-black hover:cursor-pointer"
           >
             Try Again
           </Button>
         </Card>
-      ) : projects.length === 0 ? (
+      ) : isCurrentPageLoading ? (
+        <Card className="border-slate-500 text-white flex flex-col items-center justify-center p-6">
+          <div className="h-8 w-8 mb-2 text-gray-400 flex items-center justify-center">
+            <svg className="animate-spin h-6 w-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+          </div>
+          <h3 className="text-lg font-medium">Loading Maps...</h3>
+          <p className="text-sm text-gray-400 text-center mt-1">Please wait while we fetch your projects</p>
+        </Card>
+      ) : currentPageProjects.length === 0 ? (
         <Card className="border-dashed border-2 border-slate-500 text-white flex flex-col items-center justify-center p-6">
           <Plus className="h-8 w-8 mb-2 text-[#e2420d]" />
           <h3 className="text-lg font-medium">No Maps Found</h3>
@@ -270,15 +273,9 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
         </Card>
       ) : (
         <>
-          {loading && (
-            <div className="flex justify-center items-center py-8">
-              <div className="text-white">Loading maps...</div>
-            </div>
-          )}
-
-          {!loading && (
+          <>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-6">
-              {projects.map((project) => (
+              {currentPageProjects.map((project) => (
                 <Link to={`/project/${project.id}`} key={project.id}>
                   <div
                     key={project.id}
@@ -361,7 +358,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                 </Link>
               ))}
             </div>
-          )}
+          </>
         </>
       )}
 
