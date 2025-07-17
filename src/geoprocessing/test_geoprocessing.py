@@ -83,7 +83,6 @@ def sync_test_map_with_vector_layers(sync_auth_client):
 @pytest.mark.anyio
 async def test_chat_completions(
     sync_test_map_with_vector_layers,
-    auth_client,
     sync_auth_client,
     websocket_url_for_map,
 ):
@@ -274,7 +273,7 @@ async def test_chat_completions(
                 assert map_with_layer["id"] == map_id
 
                 # Test layer description for the tool-created layer
-                response = await auth_client.get(
+                response = sync_auth_client.get(
                     f"/api/layer/{tool_call_created_layer_id}/describe"
                 )
                 assert response.status_code == 200, (
