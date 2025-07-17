@@ -61,3 +61,25 @@ async def test_project_deletion(auth_client):
     assert not project_exists_after, (
         f"Deleted project {project_id} still appears in user projects list"
     )
+
+    # 5. Verify project appears when include_deleted=true
+    list_response_with_deleted = await auth_client.get(
+        "/api/projects/?include_deleted=true"
+    )
+    list_response_with_deleted.raise_for_status()
+    projects_data_with_deleted = list_response_with_deleted.json()
+
+    deleted_project = next(
+        (
+            project
+            for project in projects_data_with_deleted["projects"]
+            if project["id"] == project_id
+        ),
+        None,
+    )
+    assert deleted_project is not None, (
+        f"Deleted project {project_id} not found when include_deleted=true"
+    )
+    assert deleted_project["soft_deleted_at"] is not None, (
+        f"Deleted project {project_id} should have soft_deleted_at set"
+    )

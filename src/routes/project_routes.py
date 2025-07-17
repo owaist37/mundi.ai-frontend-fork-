@@ -98,6 +98,7 @@ class ProjectResponse(BaseModel):
     created_on: str
     most_recent_version: Optional[MostRecentVersion] = None
     postgres_connections: List[PostgresConnectionDetails] = []
+    soft_deleted_at: Optional[datetime] = None
 
 
 class UserProjectsResponse(BaseModel):
@@ -116,6 +117,7 @@ async def list_user_projects(
     ),
     page: int = 1,
     limit: int = 12,
+    include_deleted: bool = False,
 ):
     """
     List all projects associated with the authenticated user.
@@ -136,11 +138,12 @@ async def list_user_projects(
                 p.owner_uuid = $1 OR
                 $2 = ANY(p.editor_uuids) OR
                 $3 = ANY(p.viewer_uuids)
-            ) AND p.soft_deleted_at IS NULL
+            ) AND ($4 OR p.soft_deleted_at IS NULL)
             """,
             user_id,
             user_id,
             user_id,
+            include_deleted,
         )
 
         # Calculate total pages
@@ -148,19 +151,20 @@ async def list_user_projects(
 
         projects_data = await conn.fetch(
             """
-            SELECT p.id, p.owner_uuid, p.link_accessible, p.maps, p.created_on
+            SELECT p.id, p.owner_uuid, p.link_accessible, p.maps, p.created_on, p.soft_deleted_at
             FROM user_mundiai_projects p
             WHERE (
                 p.owner_uuid = $1 OR
                 $2 = ANY(p.editor_uuids) OR
                 $3 = ANY(p.viewer_uuids)
-            ) AND p.soft_deleted_at IS NULL
+            ) AND ($4 OR p.soft_deleted_at IS NULL)
             ORDER BY p.created_on DESC
-            LIMIT $4 OFFSET $5
+            LIMIT $5 OFFSET $6
             """,
             user_id,
             user_id,
             user_id,
+            include_deleted,
             limit,
             offset,
         )
@@ -260,6 +264,7 @@ async def list_user_projects(
                     created_on=created_on_str,
                     most_recent_version=most_recent_map_details,
                     postgres_connections=postgres_connections,
+                    soft_deleted_at=project_data["soft_deleted_at"],
                 )
             )
 

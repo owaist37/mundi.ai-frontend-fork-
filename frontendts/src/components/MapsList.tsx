@@ -1,9 +1,10 @@
 // Copyright Bunting Labs, Inc. 2025
 
-import { Clock, Plus } from 'lucide-react';
+import { Clock, Plus, Trash2 } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import Session from 'supertokens-auth-react/recipe/session';
+import { Checkbox } from '@/components/ui/checkbox';
 import { MapProject } from '../lib/types';
 import { Button } from './ui/button';
 import { Card } from './ui/card';
@@ -22,12 +23,13 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   const [totalPages, setTotalPages] = useState(1);
   const [totalItems, setTotalItems] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [showDeleted, setShowDeleted] = useState(false);
   const sessionContext = Session.useSessionContext();
 
-  const fetchProjects = useCallback(async (page: number = 1) => {
+  const fetchProjects = useCallback( async (page: number = 1) => {
     setLoading(true);
     try {
-      const response = await fetch(`/api/projects/?page=${page}&limit=12`);
+      const response = await fetch(`/api/projects/?page=${page}&limit=12&include_deleted=${showDeleted}`);
       if (!response.ok) {
         throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
       }
@@ -44,7 +46,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [showDeleted]);
 
   // Fetch maps when component mounts or page changes
   useEffect(() => {
@@ -52,6 +54,15 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
       fetchProjects(currentPage);
     }
   }, [sessionContext, currentPage, fetchProjects]);
+
+  // Reset to page 1 when toggling deleted filter
+  useEffect(() => {
+    if (currentPage !== 1) {
+      setCurrentPage(1);
+    } else {
+      fetchProjects(1);
+    }
+  }, [showDeleted]);
 
   const handlePageChange = (page: number) => {
     setCurrentPage(page);
@@ -143,6 +154,26 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
     }
   };
 
+  const handleDeleteMap = async (projectId: string, event: React.MouseEvent) => {
+    event.preventDefault(); // Prevent navigation
+    event.stopPropagation(); // Stop event bubbling
+
+    try {
+      const response = await fetch(`/api/projects/${projectId}`, {
+        method: 'DELETE',
+      });
+
+      if (!response.ok) {
+        throw new Error('Failed to delete map');
+      }
+
+      // Refresh map list
+      fetchProjects(currentPage);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete map');
+    }
+  };
+
   if (sessionContext.loading) {
     return <div className="p-6 text-white">Loading session...</div>;
   }
@@ -161,12 +192,27 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
 
   return (
     <div className="flex flex-col gap-6 p-6 min-w-xl">
-      <div className="flex items-center justify-end relative">
+      <div className="flex items-center justify-between relative">
+        <div className="flex items-center gap-3">
+          <div className="flex flex-row items-center gap-2">
+            <Checkbox
+              checked={showDeleted}
+              onCheckedChange={(checked) => {
+                setShowDeleted(checked === true);
+              }}
+            />
+            <label className="text-sm font-normal text-gray-300 cursor-pointer">
+              Show recently deleted
+            </label>
+          </div>
+        </div>
+
         <div className="absolute left-1/2 transform -translate-x-1/2">
           <h1 className="text-2xl font-bold">
             Your Maps <span className="text-gray-400">({totalItems} projects)</span>
           </h1>
         </div>
+
         {!hideNewButton && (
           <TooltipProvider delayDuration={100}>
             <Tooltip>
@@ -236,15 +282,30 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                   <div
                     key={project.id}
                     className="relative h-[280px] border border-zinc-300 rounded-md overflow-hidden group cursor-pointer"
-                    style={{
-                      backgroundImage: `url(/api/projects/${project.id}/social.webp)`,
-                      backgroundSize: 'cover',
-                      backgroundPosition: 'center',
-                      backgroundRepeat: 'no-repeat',
-                    }}
+                    style={
+                      project.soft_deleted_at === null
+                        ? {
+                            backgroundImage: `url(/api/projects/${project.id}/social.webp)`,
+                            backgroundSize: 'cover',
+                            backgroundPosition: 'center',
+                            backgroundRepeat: 'no-repeat',
+                          }
+                        : {
+                            backgroundImage: 'repeating-linear-gradient(45deg, #374151 0px, #374151 10px, #4b5563 10px, #4b5563 20px)',
+                          }
+                    }
                   >
                     {/* Dark overlay for better text readability */}
                     <div className="absolute inset-0 bg-black/40 group-hover:bg-black/50 transition-colors" />
+
+                    {/* Delete button - appears on hover */}
+                    { project.soft_deleted_at === null && <button
+                      onClick={(e) => handleDeleteMap(project.id, e)}
+                      className="absolute top-2 right-2 p-1 bg-red-800 hover:bg-red-700 text-gray-200 hover:text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer"
+                      title="Delete map"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button> }
 
                     {/* Content overlay */}
                     <div className="relative h-full flex flex-col justify-between p-4 text-white">

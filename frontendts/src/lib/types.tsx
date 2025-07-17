@@ -12,6 +12,7 @@ export interface MapProject {
     last_edited?: string;
   };
   postgres_connections?: PostgresConnectionDetails[];
+  soft_deleted_at?: string;
 }
 
 export type ProjectState = { type: 'not_logged_in' } | { type: 'loading' } | { type: 'loaded'; projects: MapProject[] };
