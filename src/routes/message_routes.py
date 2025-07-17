@@ -287,7 +287,11 @@ async def run_geoprocessing_tool(
             # Generate presigned PUT URL for this output
             output_presigned_url = await s3_client.generate_presigned_url(
                 "put_object",
-                Params={"Bucket": bucket_name, "Key": output_s3_key},
+                Params={
+                    "Bucket": bucket_name,
+                    "Key": output_s3_key,
+                    "ContentType": "application/x-www-form-urlencoded",
+                },
                 ExpiresIn=3600,  # 1 hour
             )
 
