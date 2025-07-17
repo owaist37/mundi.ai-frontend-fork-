@@ -28,8 +28,6 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   });
 
   useEffect(() => {
-    console.log('triggering fetch');
-
     // Mark this page as loading
     setLoadingPages((prev) => new Set(prev).add(filterState.currentPage));
 
