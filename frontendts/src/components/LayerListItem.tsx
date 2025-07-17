@@ -125,7 +125,12 @@ export const LayerListItem: React.FC<LayerListItemProps> = ({
       </DropdownMenuTrigger>
       <DropdownMenuContent>
         {Object.entries(dropdownActions).map(([key, actionConfig]) => (
-          <DropdownMenuItem key={key} disabled={actionConfig.disabled} onClick={() => actionConfig.action(layerId)} className="border-transparent hover:border-gray-600 hover:cursor-pointer border">
+          <DropdownMenuItem
+            key={key}
+            disabled={actionConfig.disabled}
+            onClick={() => actionConfig.action(layerId)}
+            className="border-transparent hover:border-gray-600 hover:cursor-pointer border"
+          >
             {actionConfig.label}
           </DropdownMenuItem>
         ))}

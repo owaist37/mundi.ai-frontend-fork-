@@ -26,27 +26,30 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
   const [showDeleted, setShowDeleted] = useState(false);
   const sessionContext = Session.useSessionContext();
 
-  const fetchProjects = useCallback( async (page: number = 1) => {
-    setLoading(true);
-    try {
-      const response = await fetch(`/api/projects/?page=${page}&limit=12&include_deleted=${showDeleted}`);
-      if (!response.ok) {
-        throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
+  const fetchProjects = useCallback(
+    async (page: number = 1) => {
+      setLoading(true);
+      try {
+        const response = await fetch(`/api/projects/?page=${page}&limit=12&include_deleted=${showDeleted}`);
+        if (!response.ok) {
+          throw new Error(`Failed to fetch projects: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
+        setProjects(data.projects || []);
+        setTotalPages(data.total_pages || 1);
+        setTotalItems(data.total_items || 0);
+        setError(null);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch projects');
+        setProjects([]);
+        setTotalPages(1);
+        setTotalItems(0);
+      } finally {
+        setLoading(false);
       }
-      const data = await response.json();
-      setProjects(data.projects || []);
-      setTotalPages(data.total_pages || 1);
-      setTotalItems(data.total_items || 0);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch projects');
-      setProjects([]);
-      setTotalPages(1);
-      setTotalItems(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [showDeleted]);
+    },
+    [showDeleted],
+  );
 
   // Fetch maps when component mounts or page changes
   useEffect(() => {
@@ -201,9 +204,7 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                 setShowDeleted(checked === true);
               }}
             />
-            <label className="text-sm font-normal text-gray-300 cursor-pointer">
-              Show recently deleted
-            </label>
+            <label className="text-sm font-normal text-gray-300 cursor-pointer">Show recently deleted</label>
           </div>
         </div>
 
@@ -299,13 +300,15 @@ export default function MapsList({ hideNewButton = false }: MapsListProps) {
                     <div className="absolute inset-0 bg-black/40 group-hover:bg-black/50 transition-colors" />
 
                     {/* Delete button - appears on hover */}
-                    { project.soft_deleted_at === null && <button
-                      onClick={(e) => handleDeleteMap(project.id, e)}
-                      className="absolute top-2 right-2 p-1 bg-red-800 hover:bg-red-700 text-gray-200 hover:text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer"
-                      title="Delete map"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button> }
+                    {project.soft_deleted_at === null && (
+                      <button
+                        onClick={(e) => handleDeleteMap(project.id, e)}
+                        className="absolute top-2 right-2 p-1 bg-red-800 hover:bg-red-700 text-gray-200 hover:text-white rounded-md opacity-0 group-hover:opacity-100 transition-opacity z-10 cursor-pointer"
+                        title="Delete map"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
+                    )}
 
                     {/* Content overlay */}
                     <div className="relative h-full flex flex-col justify-between p-4 text-white">
