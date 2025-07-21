@@ -14,6 +14,8 @@
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
 import os
+import math
+import json
 from fastapi import (
     APIRouter,
     HTTPException,
@@ -22,12 +24,13 @@ from fastapi import (
     Depends,
     BackgroundTasks,
 )
-from fastapi.responses import Response
+from fastapi.responses import Response, HTMLResponse
 from pydantic import BaseModel
 from ..dependencies.session import (
     verify_session_required,
     UserContext,
 )
+from ..dependencies.base_map import BaseMapProvider, get_base_map_provider
 from typing import List, Optional
 import logging
 from datetime import datetime
@@ -43,7 +46,6 @@ from src.utils import (
 import io
 from opentelemetry import trace
 from ..structures import get_async_db_connection
-from ..dependencies.base_map import BaseMapProvider, get_base_map_provider
 from ..dependencies.database_documenter import (
     DatabaseDocumenter,
     get_database_documenter,
@@ -999,3 +1001,175 @@ async def get_demo_postgis_config():
         return DemoPostgisConfigResponse(available=False)
 
     return DemoPostgisConfigResponse(available=True, description=demo_description)
+
+
+@project_router.get("/embed/v1/{project_id}.html", response_class=HTMLResponse)
+async def get_project_embed(
+    project_id: str,
+    request: Request,
+    base_map_provider: BaseMapProvider = Depends(get_base_map_provider),
+):
+    allowed_origins_env = os.environ.get("MUNDI_EMBED_ALLOWED_ORIGINS")
+    if not allowed_origins_env:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+
+    allowed_origins = [
+        origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
+    ]
+    if not allowed_origins:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
+        )
+
+    origin = request.headers.get("origin", "")
+    referer = request.headers.get("referer", "")
+
+    origin_allowed = False
+    if origin and origin in allowed_origins:
+        origin_allowed = True
+    elif referer:
+        from urllib.parse import urlparse
+
+        referer_origin = f"{urlparse(referer).scheme}://{urlparse(referer).netloc}"
+        if referer_origin in allowed_origins:
+            origin_allowed = True
+
+    if not origin_allowed:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Origin not allowed for embedding",
+        )
+
+    async with get_async_db_connection() as conn:
+        project_data = await conn.fetchrow(
+            """
+            SELECT id, maps
+            FROM user_mundiai_projects
+            WHERE id = $1 AND soft_deleted_at IS NULL
+            """,
+            project_id,
+        )
+
+        if not project_data:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Project {project_id} not found",
+            )
+
+        maps = project_data["maps"]
+        if not maps or len(maps) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Project has no maps"
+            )
+
+        latest_map_id = maps[-1]
+
+        # Get layers for the latest map to calculate bounds
+        map_result = await conn.fetchrow(
+            """
+            SELECT layers
+            FROM user_mundiai_maps
+            WHERE id = $1 AND soft_deleted_at IS NULL
+            """,
+            latest_map_id,
+        )
+
+        if not map_result or not map_result["layers"]:
+            all_layers = []
+        else:
+            all_layers = await conn.fetch(
+                """
+                SELECT bounds
+                FROM map_layers
+                WHERE layer_id = ANY($1)
+                """,
+                map_result["layers"],
+            )
+
+    # Calculate bounds from all layers
+    bounds_list = [layer["bounds"] for layer in all_layers if layer.get("bounds")]
+    center = [0, 0]
+    zoom = 2
+
+    if bounds_list:
+        xs = [b[0] for b in bounds_list] + [b[2] for b in bounds_list]
+        ys = [b[1] for b in bounds_list] + [b[3] for b in bounds_list]
+        min_x, max_x = min(xs), max(xs)
+        min_y, max_y = min(ys), max(ys)
+
+        # Apply 25% padding
+        ZOOM_PADDING_PCT = 25
+        pad_x = (max_x - min_x) * ZOOM_PADDING_PCT / 100
+        pad_y = (max_y - min_y) * ZOOM_PADDING_PCT / 100
+        min_x -= pad_x
+        max_x += pad_x
+        min_y -= pad_y
+        max_y += pad_y
+
+        center = [(min_x + max_x) / 2, (min_y + max_y) / 2]
+
+        # Calculate zoom to fit both longitude and latitude spans
+        lon_span = max_x - min_x
+        lat_span = max_y - min_y
+        zoom_lon = math.log2(360.0 / lon_span) if lon_span else None
+        zoom_lat = math.log2(180.0 / lat_span) if lat_span else None
+
+        zoom = (
+            min(zoom_lon, zoom_lat) if zoom_lon and zoom_lat else zoom_lon or zoom_lat
+        )
+        if zoom is None or zoom <= 0:
+            zoom = 2
+        else:
+            zoom = max(0.5, min(zoom, 18))
+
+    # Get the style JSON directly instead of making client request it
+    from src.routes.postgres_routes import get_map_style_internal
+
+    style_json = await get_map_style_internal(
+        latest_map_id, base_map_provider, only_show_inline_sources=True
+    )
+
+    # Override the calculated center and zoom in the style JSON
+    if bounds_list:
+        style_json["center"] = center
+        style_json["zoom"] = zoom
+
+    style_json_str = json.dumps(style_json)
+
+    html_content = f"""<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <title>Mundi Map Embed</title>
+    <meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no">
+    <link href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" rel="stylesheet">
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+    <style>
+        body {{ margin: 0; padding: 0; }}
+        #map {{ position: absolute; top: 0; bottom: 0; width: 100%; }}
+    </style>
+</head>
+<body>
+    <div id="map"></div>
+    <script>
+        const map = new maplibregl.Map({{
+            container: 'map',
+            style: {style_json_str}
+        }});
+
+        map.addControl(new maplibregl.NavigationControl());
+    </script>
+</body>
+</html>"""
+
+    csp_origins = " ".join(allowed_origins)
+    headers = {
+        "Content-Type": "text/html; charset=utf-8",
+        "Content-Security-Policy": f"frame-ancestors 'self' {csp_origins}",
+    }
+
+    return HTMLResponse(content=html_content, headers=headers)

@@ -114,6 +114,36 @@ def websocket_url_for_map(sync_auth_client):
     return _get_url
 
 
+@pytest.fixture
+async def test_project(auth_client):
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
+        "title": "Test Project",
+        "description": "A test project",
+    }
+
+    response = await auth_client.post("/api/maps/create", json=map_create_payload)
+    assert response.status_code == 200
+    map_data = response.json()
+    return {"project_id": map_data["project_id"], "map_id": map_data["id"]}
+
+
+@pytest.fixture
+async def test_project_with_map(auth_client):
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
+        "title": "Test Project with Map",
+        "description": "A test project with map",
+    }
+
+    response = await auth_client.post("/api/maps/create", json=map_create_payload)
+    assert response.status_code == 200
+    map_data = response.json()
+    return {"project_id": map_data["project_id"], "map_id": map_data["id"]}
+
+
 def pytest_configure(config):
     """Configure pytest markers."""
     config.addinivalue_line("markers", "s3: mark test as requiring S3/MinIO access")

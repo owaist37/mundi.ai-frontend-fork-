@@ -36,6 +36,7 @@ export default defineConfig({
 						{ label: 'Geoprocessing from QGIS', slug: 'guides/geoprocessing-from-qgis' },
 						{ label: 'Visualizing point clouds', slug: 'guides/visualizing-point-clouds-las-laz' },
 						{ label: 'Satellite basemaps', slug: 'guides/switching-basemaps-satellite-or-traditional-vector' },
+                                                { label: 'Embedding into websites', slug: 'guides/embedding-maps-into-websites' },
 					],
 				},
 				{
