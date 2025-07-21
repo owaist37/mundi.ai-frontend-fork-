@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 import tailwindcss from '@tailwindcss/vite'
@@ -9,6 +9,7 @@ export default defineConfig(({ mode }) => ({
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
+      "@ee": path.resolve(__dirname, loadEnv(mode, process.cwd(), '').EE_COMPONENTS_PATH || "./nonexistent"),
     },
   },
   // Base path to ensure assets are loaded correctly

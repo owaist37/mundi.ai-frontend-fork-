@@ -1,4 +1,5 @@
 import { BookOpen, Cloud, KeyRound, Map as LMap, LogIn, LogOut, PanelRightClose, PanelRightOpen, UserPlus } from 'lucide-react';
+import { Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import Session, { signOut } from 'supertokens-auth-react/recipe/session';
 import MDarkSvg from '@/assets/M-dark.svg';
@@ -21,6 +22,7 @@ import {
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { ScheduleCallButton } from '@/lib/ee-loader';
 import type { ProjectState } from '@/lib/types';
 import { formatRelativeTime } from '@/lib/utils';
 
@@ -171,6 +173,11 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
                     <span className="text-sm">Mundi Cloud</span>
                   </a>
                 </SidebarMenuButton>
+              </SidebarMenuItem>
+              <SidebarMenuItem>
+                <Suspense fallback={null}>
+                  <ScheduleCallButton />
+                </Suspense>
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
