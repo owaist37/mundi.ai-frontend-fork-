@@ -30,6 +30,7 @@ from ..dependencies.session import (
     verify_session_required,
     UserContext,
 )
+from ..dependencies.auth import require_auth
 from ..dependencies.base_map import BaseMapProvider, get_base_map_provider
 from typing import List, Optional
 import logging
@@ -1008,42 +1009,8 @@ async def get_project_embed(
     project_id: str,
     request: Request,
     base_map_provider: BaseMapProvider = Depends(get_base_map_provider),
+    allowed_origins: List[str] = Depends(require_auth),
 ):
-    allowed_origins_env = os.environ.get("MUNDI_EMBED_ALLOWED_ORIGINS")
-    if not allowed_origins_env:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not found",
-        )
-
-    allowed_origins = [
-        origin.strip() for origin in allowed_origins_env.split(",") if origin.strip()
-    ]
-    if not allowed_origins:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Not found",
-        )
-
-    origin = request.headers.get("origin", "")
-    referer = request.headers.get("referer", "")
-
-    origin_allowed = False
-    if origin and origin in allowed_origins:
-        origin_allowed = True
-    elif referer:
-        from urllib.parse import urlparse
-
-        referer_origin = f"{urlparse(referer).scheme}://{urlparse(referer).netloc}"
-        if referer_origin in allowed_origins:
-            origin_allowed = True
-
-    if not origin_allowed:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Origin not allowed for embedding",
-        )
-
     async with get_async_db_connection() as conn:
         project_data = await conn.fetchrow(
             """
