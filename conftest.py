@@ -26,7 +26,6 @@ import asyncio
 from starlette.testclient import TestClient
 
 from src.wsgi import app
-from src.database.migrate import run_migrations
 
 
 @pytest.fixture(scope="session")
@@ -38,6 +37,8 @@ def anyio_backend():
 @pytest.mark.anyio
 async def client():
     # Run database migrations before tests
+    from src.database.migrate import run_migrations
+
     await run_migrations()
 
     transport = ASGIWebSocketTransport(app=app)
@@ -94,6 +95,8 @@ async def test_map_with_vector_layers(auth_client):
 @pytest.fixture(scope="function")
 def sync_client():
     # Run database migrations before tests
+    from src.database.migrate import run_migrations
+
     asyncio.run(run_migrations())
 
     with TestClient(app) as client:
