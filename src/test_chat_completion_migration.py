@@ -15,14 +15,15 @@
 
 import pytest
 import json
-import subprocess
 from src.structures import async_conn
 
 
 @pytest.mark.anyio
-async def test_chat_completion_message_json_migration(auth_client):
+async def test_chat_completion_message_json_migration(
+    auth_client, run_alembic_operation
+):
     # First, downgrade to the revision before our migration
-    subprocess.run(["alembic", "downgrade", "71c52d9a8344"], check=True)
+    await run_alembic_operation("downgrade", "71c52d9a8344")
 
     # Create a test map first
     response = await auth_client.post(
@@ -70,7 +71,7 @@ async def test_chat_completion_message_json_migration(auth_client):
         )  # Should be valid JSON
 
     # Run the actual alembic migration
-    subprocess.run(["alembic", "upgrade", "07c7ae795a24"], check=True)
+    await run_alembic_operation("upgrade", "07c7ae795a24")
 
     # Verify the migration worked
     async with async_conn("test_migration_verify") as conn:

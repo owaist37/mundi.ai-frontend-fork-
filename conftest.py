@@ -23,9 +23,34 @@ from httpx import AsyncClient
 from pathlib import Path
 import random
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from starlette.testclient import TestClient
+from alembic import command
+from alembic.config import Config
 
 from src.wsgi import app
+
+
+@pytest.fixture
+def run_alembic_operation():
+    async def _run_alembic_operation(operation, target=None):
+        project_root = Path(__file__).parent
+        alembic_cfg = Config(project_root / "alembic.ini")
+        alembic_cfg.set_main_option("script_location", str(project_root / "alembic"))
+
+        def run_operation():
+            if operation == "upgrade":
+                command.upgrade(alembic_cfg, target or "head")
+            elif operation == "downgrade":
+                command.downgrade(alembic_cfg, target)
+            else:
+                raise ValueError(f"Unknown operation: {operation}")
+
+        loop = asyncio.get_event_loop()
+        with ThreadPoolExecutor() as executor:
+            await loop.run_in_executor(executor, run_operation)
+
+    return _run_alembic_operation
 
 
 @pytest.fixture(scope="session")
