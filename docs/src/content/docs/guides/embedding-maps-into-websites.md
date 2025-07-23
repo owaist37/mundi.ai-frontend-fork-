@@ -77,13 +77,6 @@ variables in the `docker-compose.yml` file.
      command: uvicorn src.wsgi:app --host 0.0.0.0 --port 8000
 ```
 
-<iframe
-  src="http://localhost:5173/api/projects/embed/v1/PjBUgZMTrvf7.html"
-  width="800"
-  height="600"
-  frameborder="0">
-</iframe>
-
 `MUNDI_EMBED_ALLOWED_ORIGINS` accepts a comma-separated list of domains with HTTP or HTTPS (no comma if just one).
 Domains added here will be allowed to embed maps from your Mundi instance.
 
