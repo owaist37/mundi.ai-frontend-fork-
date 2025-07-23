@@ -2181,7 +2181,7 @@ async def summarize_map_diff(
     diff_content = "\n".join(diff)
 
     # Use OpenAI to summarize the diff
-    client = get_openai_client()
+    client = get_openai_client(request)
     chat_completions_args = await chat_args.get_args(
         session.get_user_id(), "summarize_map_diff"
     )

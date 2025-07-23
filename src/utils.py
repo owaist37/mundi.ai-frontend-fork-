@@ -24,6 +24,7 @@ import asyncio
 import secrets
 from functools import lru_cache
 from openai import AsyncOpenAI
+from fastapi import Request
 
 
 def generate_id(length=12, prefix=""):
@@ -129,12 +130,6 @@ def process_zip_with_shapefile(zip_file_path):
         raise e
 
 
-def get_openai_client() -> AsyncOpenAI:
-    """
-    Create an AsyncOpenAI client with optional base URL override.
-
-    Uses OPENAI_BASE_URL environment variable if set, otherwise defaults to
-    the standard OpenAI API endpoint (https://api.openai.com/v1).
-    """
+def get_openai_client(request: Request) -> AsyncOpenAI:
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
     return AsyncOpenAI(base_url=base_url)

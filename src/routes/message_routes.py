@@ -483,7 +483,7 @@ async def process_chat_interaction_task(
                         f"{layer_name} (type: {layer.get('type', 'unknown')}, created: {layer['created_on']})"
                     )
 
-                client = get_openai_client()
+                client = get_openai_client(request)
 
                 tools_payload = [
                     {

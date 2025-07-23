@@ -979,7 +979,7 @@ async def query_layer(
         )
 
     # Generate SQL from natural language query using async client
-    client = get_openai_client()
+    client = get_openai_client(request)
 
     sql_messages = [
         {
