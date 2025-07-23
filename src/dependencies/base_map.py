@@ -30,6 +30,16 @@ class BaseMapProvider(ABC):
         """Return list of available basemap style names."""
         pass
 
+    @abstractmethod
+    def get_csp_policies(self) -> Dict[str, List[str]]:
+        """Return CSP policies required for this base map provider.
+
+        Returns:
+            Dict mapping CSP directive names to lists of allowed sources.
+            Common directives: connect-src, img-src, font-src, style-src, script-src
+        """
+        pass
+
 
 class OpenStreetMapProvider(BaseMapProvider):
     """Default base map provider using OpenStreetMap tiles."""
@@ -74,6 +84,20 @@ class OpenStreetMapProvider(BaseMapProvider):
     def get_available_styles(self) -> List[str]:
         """Return list of available basemap style names."""
         return ["openstreetmap"]
+
+    def get_csp_policies(self) -> Dict[str, List[str]]:
+        """Return CSP policies required for OpenStreetMap tiles."""
+        return {
+            "connect-src": [
+                "https://tile.openstreetmap.org",
+                "https://demotiles.maplibre.org",
+            ],
+            "img-src": [
+                "https://tile.openstreetmap.org",
+                "https://demotiles.maplibre.org",
+            ],
+            "font-src": ["https://demotiles.maplibre.org"],
+        }
 
 
 # Default dependency - can be overridden in closed source

@@ -1107,6 +1107,29 @@ async def get_project_embed(
 
     style_json_str = json.dumps(style_json)
 
+    base_map_csp = base_map_provider.get_csp_policies()
+    base_csp = {
+        "frame-ancestors": ["'self'"] + allowed_origins,
+        "script-src": ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+        "worker-src": ["'self'", "blob:"],
+        "style-src": ["'self'", "'unsafe-inline'", "https://unpkg.com"],
+        "connect-src": ["'self'", "https://unpkg.com"],
+        "img-src": ["'self'", "data:"],
+        "font-src": ["'self'", "https://unpkg.com"],
+    }
+
+    for directive, sources in base_map_csp.items():
+        if directive in base_csp:
+            base_csp[directive].extend(sources)
+        else:
+            base_csp[directive] = sources
+
+    csp_parts = []
+    for directive, sources in base_csp.items():
+        sources_str = " ".join(sources)
+        csp_parts.append(f"{directive} {sources_str}")
+    csp_header = "; ".join(csp_parts)
+
     html_content = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -1125,6 +1148,9 @@ async def get_project_embed(
     <script>
         const map = new maplibregl.Map({{
             container: 'map',
+            attributionControl: {{
+                compact: false
+            }}
             style: {style_json_str}
         }});
 
@@ -1133,10 +1159,10 @@ async def get_project_embed(
 </body>
 </html>"""
 
-    csp_origins = " ".join(allowed_origins)
     headers = {
         "Content-Type": "text/html; charset=utf-8",
-        "Content-Security-Policy": f"frame-ancestors 'self' {csp_origins}",
+        "Content-Security-Policy": csp_header,
+        "X-Frame-Options": "SAMEORIGIN",
     }
 
     return HTMLResponse(content=html_content, headers=headers)

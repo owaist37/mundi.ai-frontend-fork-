@@ -82,10 +82,8 @@ async def test_embed_route_with_valid_origin(auth_client, test_project_with_map)
         )
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/html; charset=utf-8"
-        assert (
-            response.headers["content-security-policy"]
-            == "frame-ancestors 'self' https://example.com https://trusted.com"
-        )
+        expected_csp = "frame-ancestors 'self' https://example.com https://trusted.com; script-src 'self' 'unsafe-inline' https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://unpkg.com https://tile.openstreetmap.org https://demotiles.maplibre.org; img-src 'self' data: https://tile.openstreetmap.org https://demotiles.maplibre.org; font-src 'self' https://unpkg.com https://demotiles.maplibre.org"
+        assert response.headers["content-security-policy"] == expected_csp
         assert "maplibregl.Map" in response.text
         assert '"sources"' in response.text  # Check that style JSON is inlined
 
@@ -102,10 +100,8 @@ async def test_embed_route_with_valid_referer(auth_client, test_project_with_map
             headers={"referer": "http://localhost:4321/guides/embedding-maps"},
         )
         assert response.status_code == 200
-        assert (
-            response.headers["content-security-policy"]
-            == "frame-ancestors 'self' http://localhost:4321"
-        )
+        expected_csp = "frame-ancestors 'self' http://localhost:4321; script-src 'self' 'unsafe-inline' https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://unpkg.com https://tile.openstreetmap.org https://demotiles.maplibre.org; img-src 'self' data: https://tile.openstreetmap.org https://demotiles.maplibre.org; font-src 'self' https://unpkg.com https://demotiles.maplibre.org"
+        assert response.headers["content-security-policy"] == expected_csp
 
 
 @pytest.mark.anyio
@@ -149,5 +145,5 @@ async def test_embed_route_headers_with_multiple_origins(
             headers={"origin": "https://site2.com"},
         )
         assert response.status_code == 200
-        expected_csp = "frame-ancestors 'self' https://site1.com https://site2.com https://site3.com"
+        expected_csp = "frame-ancestors 'self' https://site1.com https://site2.com https://site3.com; script-src 'self' 'unsafe-inline' https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://unpkg.com https://tile.openstreetmap.org https://demotiles.maplibre.org; img-src 'self' data: https://tile.openstreetmap.org https://demotiles.maplibre.org; font-src 'self' https://unpkg.com https://demotiles.maplibre.org"
         assert response.headers["content-security-policy"] == expected_csp
