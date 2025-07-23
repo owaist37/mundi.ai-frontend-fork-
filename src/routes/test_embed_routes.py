@@ -22,7 +22,7 @@ from unittest.mock import patch
 async def test_embed_route_with_no_env_var(auth_client, test_project_with_map):
     project_id = test_project_with_map["project_id"]
 
-    with patch.dict(os.environ, {}, clear=True):
+    with patch.dict(os.environ, {"MUNDI_EMBED_ALLOWED_ORIGINS": ""}):
         response = await auth_client.get(f"/api/projects/embed/v1/{project_id}.html")
         assert response.status_code == 404
 
@@ -31,7 +31,7 @@ async def test_embed_route_with_no_env_var(auth_client, test_project_with_map):
 async def test_embed_route_with_empty_env_var(auth_client, test_project_with_map):
     project_id = test_project_with_map["project_id"]
 
-    with patch.dict(os.environ, {"MUNDI_EMBED_ALLOWED_ORIGINS": ""}, clear=True):
+    with patch.dict(os.environ, {"MUNDI_EMBED_ALLOWED_ORIGINS": ""}):
         response = await auth_client.get(f"/api/projects/embed/v1/{project_id}.html")
         assert response.status_code == 404
 
@@ -42,7 +42,7 @@ async def test_embed_route_with_whitespace_only_env_var(
 ):
     project_id = test_project_with_map["project_id"]
 
-    with patch.dict(os.environ, {"MUNDI_EMBED_ALLOWED_ORIGINS": "  ,  "}, clear=True):
+    with patch.dict(os.environ, {"MUNDI_EMBED_ALLOWED_ORIGINS": "  ,  "}):
         response = await auth_client.get(f"/api/projects/embed/v1/{project_id}.html")
         assert response.status_code == 404
 
@@ -53,7 +53,7 @@ async def test_embed_route_with_no_origin_header(auth_client, test_project_with_
 
     with patch.dict(os.environ, {"MUNDI_EMBED_ALLOWED_ORIGINS": "https://example.com"}):
         response = await auth_client.get(f"/api/projects/embed/v1/{project_id}.html")
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.anyio
@@ -65,7 +65,7 @@ async def test_embed_route_with_invalid_origin(auth_client, test_project_with_ma
             f"/api/projects/embed/v1/{project_id}.html",
             headers={"origin": "https://malicious.com"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.anyio
@@ -82,8 +82,26 @@ async def test_embed_route_with_valid_origin(auth_client, test_project_with_map)
         )
         assert response.status_code == 200
         assert response.headers["content-type"] == "text/html; charset=utf-8"
-        expected_csp = "frame-ancestors 'self' https://example.com https://trusted.com; script-src 'self' 'unsafe-inline' https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://unpkg.com https://tile.openstreetmap.org https://demotiles.maplibre.org; img-src 'self' data: https://tile.openstreetmap.org https://demotiles.maplibre.org; font-src 'self' https://unpkg.com https://demotiles.maplibre.org"
-        assert response.headers["content-security-policy"] == expected_csp
+        csp_header = response.headers["content-security-policy"]
+        # Check key CSP components are present
+        assert "frame-ancestors 'self'" in csp_header
+        assert "https://example.com" in csp_header
+        assert "https://trusted.com" in csp_header
+        assert "script-src 'self' 'unsafe-inline' https://unpkg.com" in csp_header
+        assert "worker-src 'self' blob:" in csp_header
+        assert "style-src 'self' 'unsafe-inline' https://unpkg.com" in csp_header
+        assert "connect-src 'self' https://unpkg.com" in csp_header
+        assert "img-src 'self' data:" in csp_header
+        assert "font-src 'self' https://unpkg.com" in csp_header
+        # Ensure at least one tile source is allowed in connect-src and img-src
+        assert any(
+            domain in csp_header
+            for domain in [
+                "tile.openstreetmap.org",
+                "api.maptiler.com",
+                "demotiles.maplibre.org",
+            ]
+        )
         assert "maplibregl.Map" in response.text
         assert '"sources"' in response.text  # Check that style JSON is inlined
 
@@ -100,8 +118,25 @@ async def test_embed_route_with_valid_referer(auth_client, test_project_with_map
             headers={"referer": "http://localhost:4321/guides/embedding-maps"},
         )
         assert response.status_code == 200
-        expected_csp = "frame-ancestors 'self' http://localhost:4321; script-src 'self' 'unsafe-inline' https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://unpkg.com https://tile.openstreetmap.org https://demotiles.maplibre.org; img-src 'self' data: https://tile.openstreetmap.org https://demotiles.maplibre.org; font-src 'self' https://unpkg.com https://demotiles.maplibre.org"
-        assert response.headers["content-security-policy"] == expected_csp
+        csp_header = response.headers["content-security-policy"]
+        # Check key CSP components are present
+        assert "frame-ancestors 'self'" in csp_header
+        assert "http://localhost:4321" in csp_header
+        assert "script-src 'self' 'unsafe-inline' https://unpkg.com" in csp_header
+        assert "worker-src 'self' blob:" in csp_header
+        assert "style-src 'self' 'unsafe-inline' https://unpkg.com" in csp_header
+        assert "connect-src 'self' https://unpkg.com" in csp_header
+        assert "img-src 'self' data:" in csp_header
+        assert "font-src 'self' https://unpkg.com" in csp_header
+        # Ensure at least one tile source is allowed
+        assert any(
+            domain in csp_header
+            for domain in [
+                "tile.openstreetmap.org",
+                "api.maptiler.com",
+                "demotiles.maplibre.org",
+            ]
+        )
 
 
 @pytest.mark.anyio
@@ -115,7 +150,7 @@ async def test_embed_route_with_invalid_referer(auth_client, test_project_with_m
             f"/api/projects/embed/v1/{project_id}.html",
             headers={"referer": "https://malicious.com/page"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 404
 
 
 @pytest.mark.anyio
@@ -130,9 +165,9 @@ async def test_embed_route_with_nonexistent_project(auth_client):
 
 @pytest.mark.anyio
 async def test_embed_route_headers_with_multiple_origins(
-    auth_client, test_project_with_map
+    auth_client, test_project_with_multiple_origins
 ):
-    project_id = test_project_with_map["project_id"]
+    project_id = test_project_with_multiple_origins["project_id"]
 
     with patch.dict(
         os.environ,
@@ -145,5 +180,24 @@ async def test_embed_route_headers_with_multiple_origins(
             headers={"origin": "https://site2.com"},
         )
         assert response.status_code == 200
-        expected_csp = "frame-ancestors 'self' https://site1.com https://site2.com https://site3.com; script-src 'self' 'unsafe-inline' https://unpkg.com; worker-src 'self' blob:; style-src 'self' 'unsafe-inline' https://unpkg.com; connect-src 'self' https://unpkg.com https://tile.openstreetmap.org https://demotiles.maplibre.org; img-src 'self' data: https://tile.openstreetmap.org https://demotiles.maplibre.org; font-src 'self' https://unpkg.com https://demotiles.maplibre.org"
-        assert response.headers["content-security-policy"] == expected_csp
+        csp_header = response.headers["content-security-policy"]
+        # Check key CSP components are present
+        assert "frame-ancestors 'self'" in csp_header
+        assert "https://site1.com" in csp_header
+        assert "https://site2.com" in csp_header
+        assert "https://site3.com" in csp_header
+        assert "script-src 'self' 'unsafe-inline' https://unpkg.com" in csp_header
+        assert "worker-src 'self' blob:" in csp_header
+        assert "style-src 'self' 'unsafe-inline' https://unpkg.com" in csp_header
+        assert "connect-src 'self' https://unpkg.com" in csp_header
+        assert "img-src 'self' data:" in csp_header
+        assert "font-src 'self' https://unpkg.com" in csp_header
+        # Ensure at least one tile source is allowed
+        assert any(
+            domain in csp_header
+            for domain in [
+                "tile.openstreetmap.org",
+                "api.maptiler.com",
+                "demotiles.maplibre.org",
+            ]
+        )

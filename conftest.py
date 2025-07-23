@@ -117,6 +117,20 @@ async def test_map_with_vector_layers(auth_client):
     return {"map_id": map_id, **layer_ids}
 
 
+@pytest.fixture
+async def test_project_with_multiple_origins(auth_client):
+    """Create a test project for testing multiple origin domains."""
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
+        "title": "Test Project for Multiple Origins",
+        "description": "A test project for testing multiple allowed origins",
+    }
+    response = await auth_client.post("/api/maps/create", json=map_create_payload)
+    assert response.status_code == 200
+    return response.json()
+
+
 @pytest.fixture(scope="function")
 def sync_client():
     # Run database migrations before tests

@@ -51,8 +51,8 @@ async def require_auth(
 
     if not origin_allowed:
         raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Origin not allowed for embedding",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Not found",
         )
 
     return allowed_origins
