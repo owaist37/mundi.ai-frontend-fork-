@@ -4,6 +4,7 @@ import {
   AlertTriangle,
   ChevronLeft,
   ChevronRight,
+  CodeXml,
   Database,
   Info,
   Loader2,
@@ -24,6 +25,7 @@ import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/componen
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
+import { ShareEmbedModal } from '@/lib/ee-loader';
 import type { EphemeralAction, MapData, MapLayer, MapProject, PostgresConnectionDetails } from '../lib/types';
 
 interface UploadingFile {
@@ -105,6 +107,7 @@ const LayerList: React.FC<LayerListProps> = ({
   });
   const [postgisLoading, setPostgisLoading] = useState(false);
   const [postgisError, setPostgisError] = useState<string | null>(null);
+  const [showShareModal, setShowShareModal] = useState(false);
 
   const handlePostgisConnect = async () => {
     if (!currentMapData?.project_id) {
@@ -281,6 +284,25 @@ const LayerList: React.FC<LayerListProps> = ({
             </Tooltip>
             Map Layers
           </div>
+          <React.Suspense fallback={null}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setShowShareModal(true)}
+                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
+                >
+                  <CodeXml className="h-3 w-3" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Embed into website</p>
+              </TooltipContent>
+            </Tooltip>
+
+            <ShareEmbedModal isOpen={showShareModal} onClose={() => setShowShareModal(false)} projectId={currentMapData?.project_id} />
+          </React.Suspense>
         </CardTitle>
       </CardHeader>
       <CardContent className="px-0">

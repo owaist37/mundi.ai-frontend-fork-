@@ -34,3 +34,11 @@ export const loadEEComponent = <T extends React.ComponentType<any>>(componentNam
 };
 
 export const ScheduleCallButton = loadEEComponent<React.ComponentType>('ScheduleCallButton');
+export const ShareEmbedModal =
+  loadEEComponent<
+    React.ComponentType<{
+      isOpen: boolean;
+      onClose: () => void;
+      projectId?: string;
+    }>
+  >('ShareEmbedModal');
