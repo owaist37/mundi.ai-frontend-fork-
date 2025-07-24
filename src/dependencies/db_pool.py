@@ -13,6 +13,7 @@
 # You should have received a copy of the GNU Affero General Public License
 # along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
+import ssl
 import asyncpg
 from typing import Dict, AsyncGenerator
 from contextlib import asynccontextmanager
@@ -24,8 +25,11 @@ _connection_pools: Dict[str, asyncpg.Pool] = {}
 async def get_or_create_pool(connection_uri: str) -> asyncpg.Pool:
     """Get existing pool or create new one for the connection URI"""
     if connection_uri not in _connection_pools:
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
         _connection_pools[connection_uri] = await asyncpg.create_pool(
-            connection_uri, ssl=True, min_size=1, max_size=10, command_timeout=60
+            connection_uri, ssl=ssl_context, min_size=1, max_size=10, command_timeout=60
         )
     return _connection_pools[connection_uri]
 
