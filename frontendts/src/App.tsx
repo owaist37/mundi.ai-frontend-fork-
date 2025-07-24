@@ -3,22 +3,20 @@
 import { cogProtocol } from '@geomatico/maplibre-cog-protocol';
 import maplibregl from 'maplibre-gl';
 import { Protocol } from 'pmtiles';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import * as reactRouterDom from 'react-router-dom';
 import { BrowserRouter, Route, Routes } from 'react-router-dom';
-import SuperTokens, { SuperTokensWrapper } from 'supertokens-auth-react';
-import EmailPassword from 'supertokens-auth-react/recipe/emailpassword';
+import { SuperTokensWrapper } from 'supertokens-auth-react';
 import { EmailPasswordPreBuiltUI } from 'supertokens-auth-react/recipe/emailpassword/prebuiltui';
-import EmailVerification from 'supertokens-auth-react/recipe/emailverification';
 import { EmailVerificationPreBuiltUI } from 'supertokens-auth-react/recipe/emailverification/prebuiltui';
 import Session, { SessionAuth } from 'supertokens-auth-react/recipe/session';
 import { getSuperTokensRoutesForReactRouterDom } from 'supertokens-auth-react/ui';
 import { AppSidebar } from '@/components/app-sidebar';
 import { SidebarProvider } from '@/components/ui/sidebar';
 import { Toaster } from '@/components/ui/sonner';
-
 import MapsList from './components/MapsList';
 import ProjectView from './components/ProjectView';
+import { ProjectState } from './lib/types';
 import PostGISDocumentation from './pages/PostGISDocumentation';
 import './App.css';
 
@@ -32,30 +30,6 @@ if (emailVerificationMode !== 'require' && emailVerificationMode !== 'disable') 
   throw new Error("VITE_EMAIL_VERIFICATION must be either 'require' or 'disable'");
 }
 const emailVerificationEnabled = emailVerificationMode === 'require';
-
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-const recipeList: any[] = [EmailPassword.init(), Session.init()];
-if (emailVerificationEnabled) {
-  recipeList.push(EmailVerification.init({ mode: 'REQUIRED' }));
-}
-
-SuperTokens.init({
-  appInfo: {
-    appName: 'Mundi',
-    apiDomain: websiteDomain,
-    websiteDomain: websiteDomain,
-    apiBasePath: '/supertokens',
-    websiteBasePath: '/auth',
-  },
-  recipeList,
-  style: `
-  [data-supertokens~="container"] {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  }`,
-});
-
-import { useState } from 'react';
-import { ProjectState } from './lib/types';
 
 function AppContent() {
   const [projectState, setProjectState] = useState<ProjectState>({
