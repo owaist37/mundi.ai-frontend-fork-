@@ -35,10 +35,9 @@ export const loadEEComponent = <T extends React.ComponentType<any>>(componentNam
 
 export const loadSupertokensOnHandleEvent = async () => {
   try {
-    // Use string concatenation to avoid Vite trying to resolve the import at build time
-    const moduleName = '@' + 'ee/SupertokensOnHandleEvent.tsx';
     // @ts-ignore - EE module may not exist in OSS builds
-    const eeModule = await import(/* @vite-ignore */ moduleName);
+    const componentName = 'SupertokensOnHandleEvent';
+    const eeModule = await import(`@ee/${componentName}.tsx`);
     return eeModule.default;
   } catch {
     return () => {
