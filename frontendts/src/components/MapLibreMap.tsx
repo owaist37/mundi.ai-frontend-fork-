@@ -1289,10 +1289,19 @@ export default function MapLibreMap({
           />
         )}
         {selectedFeature && (
-          <Card className="absolute bottom-4 left-4 max-h-[60vh] overflow-auto py-2 rounded-sm border-0 gap-2 max-w-72 w-full">
+          <Card className="absolute bottom-10 left-4 max-h-[60vh] overflow-auto py-2 rounded-sm border-0 gap-2 max-w-72 w-full">
             <CardHeader className="px-2">
               <CardTitle className="text-base flex justify-between items-center gap-2">
-                Feature Properties
+                <div className="flex gap-2 items-baseline">
+                  {mapData?.layers.find((l) => l.id === selectedFeature.source) ? (
+                    <>
+                      <span>{mapData?.layers.find((l) => l.id === selectedFeature.source)?.name}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">{mapData?.layers.find((l) => l.id === selectedFeature.source)?.type}</span>
+                    </>
+                  ) : (
+                    <span>Selected feature</span>
+                  )}
+                </div>
                 <button
                   onClick={() => setSelectedFeature(null)}
                   className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
@@ -1314,7 +1323,7 @@ export default function MapLibreMap({
                   <tbody>
                     {selectedFeature.properties &&
                       Object.entries(selectedFeature.properties).map(([key, value]) => (
-                        <tr key={key} className="border-b border-gray-100 dark:border-gray-700">
+                        <tr key={key} className="border-b border-gray-100 dark:border-gray-700" title={`Type: ${typeof value}`}>
                           <td className="py-1 pr-2 font-mono text-gray-600 dark:text-gray-400 break-all">{key}</td>
                           <td className="py-1 font-mono break-all">{String(value)}</td>
                         </tr>
