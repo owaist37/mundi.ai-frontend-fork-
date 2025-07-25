@@ -37,6 +37,7 @@ from redis import Redis
 import httpx
 import tempfile
 import asyncio
+from typing import List
 
 from src.utils import (
     get_bucket_name,
@@ -645,7 +646,7 @@ async def get_layer_mvt_tile(
         # Get the layer by layer_id
         layer = await conn.fetchrow(
             """
-            SELECT layer_id, name, type, postgis_connection_id, postgis_query, owner_uuid
+            SELECT layer_id, name, type, postgis_connection_id, postgis_query, owner_uuid, postgis_attribute_column_list
             FROM map_layers
             WHERE layer_id = $1
             """,
@@ -671,6 +672,16 @@ async def get_layer_mvt_tile(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Layer is not a PostGIS type. MVT tiles can only be generated from PostGIS data.",
             )
+
+        if not layer["postgis_attribute_column_list"]:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="PostGIS layer has no attribute columns, you must re-create the layer.",
+            )
+        non_geom_column_names: List[str] = layer["postgis_attribute_column_list"] + [
+            "id"
+        ]
+
         # Get PostGIS connection details and verify ownership
         connection_details = await conn.fetchrow(
             """
@@ -722,16 +733,16 @@ async def get_layer_mvt_tile(
                 FROM bounds_webmerc
             ),
             candidates AS (
-                SELECT ST_MakeValid(t.geom) AS geom
+                SELECT {", ".join([f"t.{name}" for name in non_geom_column_names])}, ST_MakeValid(t.geom) AS geom
                 FROM ({layer["postgis_query"]}) t, bounds_native b
                 WHERE t.geom && b.nat_geom
                   AND ST_Intersects(t.geom, b.nat_geom)
             ),
             mvtgeom AS (
-                SELECT ST_AsMVTGeom(ST_Transform(c.geom, 3857), b.b2d) AS geom
+                SELECT {", ".join([f"c.{name}" for name in non_geom_column_names])}, ST_AsMVTGeom(ST_Transform(c.geom, 3857), b.b2d) AS geom
                 FROM candidates c, bounds_native b
             )
-            SELECT ST_AsMVT(mvtgeom.*, 'reprojectedfgb') FROM mvtgeom
+            SELECT ST_AsMVT(mvtgeom, 'reprojectedfgb', 4096, 'geom', 'id') FROM mvtgeom
             """
 
             # Execute query and get MVT data
@@ -762,11 +773,6 @@ async def get_layer_mvt_tile(
             )
         else:
             raise e
-    except Exception as e:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Error generating MVT tile: {str(e)}",
-        )
 
 
 @layer_router.get(

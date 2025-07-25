@@ -183,6 +183,10 @@ class PostgresConnectionManager:
                 asyncpg.connect(pg_connection["connection_uri"], ssl=ssl_context),
                 timeout=timeout,
             )
+
+            # Make the connection read-only at the session level
+            await conn.execute("SET SESSION CHARACTERISTICS AS TRANSACTION READ ONLY")
+
             await self.update_error_status(connection_id, error_text=None)
             return conn
         except asyncio.TimeoutError:

@@ -158,6 +158,7 @@ class MapLayer(Base):
         String(12), ForeignKey("project_postgres_connections.id")
     )
     postgis_query = Column(String)  # required for postgres
+    postgis_attribute_column_list = Column(ARRAY(String))  # excludes id and geom
     metadata_json = Column(
         "metadata", JSONB
     )  # Use column name "metadata" but Python attribute "metadata_json"

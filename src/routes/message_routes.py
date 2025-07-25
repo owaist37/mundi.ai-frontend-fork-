@@ -192,6 +192,13 @@ def is_layer_id(s: str) -> bool:
     return isinstance(s, str) and s[0] == "L" and len(s) == 12
 
 
+def check_postgis_readonly(plan: dict):
+    if plan.get("Node Type") == "ModifyTable":
+        raise ValueError("Write operations not allowed")
+    for child in plan.get("Plans", []):
+        check_postgis_readonly(child)
+
+
 async def run_geoprocessing_tool(
     tool_call: ChatCompletionToolMessageParam,
     conn,
@@ -811,19 +818,42 @@ async def process_chat_interaction_task(
                                             )
                                             try:
                                                 # 1. Make sure the SQL parsers and planners are happy
-                                                await pg.execute(
-                                                    f"EXPLAIN {query}"
-                                                )  # catches typos & ambiguous refs
-
-                                                # 2. Make sure it returns a geometry column called geom
-                                                await pg.execute(
-                                                    f"""
-                                                    SELECT 1
-                                                    FROM   ({query}) AS sub
-                                                    WHERE  geom IS NOT NULL
-                                                    LIMIT 1
-                                                    """
+                                                explain_result = await pg.fetch(
+                                                    f"EXPLAIN (FORMAT JSON) {query}"
                                                 )
+
+                                                # Parse the JSON string from QUERY PLAN
+                                                query_plan = json.loads(
+                                                    explain_result[0]["QUERY PLAN"]
+                                                )
+                                                check_postgis_readonly(
+                                                    query_plan[0]["Plan"]
+                                                )
+
+                                                # Get column names using prepared statement
+                                                prepared = await pg.prepare(
+                                                    f"SELECT * FROM ({query}) AS sub LIMIT 1"
+                                                )
+                                                column_info = prepared.get_attributes()
+                                                column_names = [
+                                                    attr.name for attr in column_info
+                                                ]
+
+                                                # Make sure it returns a geometry column called geom and id
+                                                if "geom" not in column_names:
+                                                    raise ValueError(
+                                                        "Query must return a column named 'geom'"
+                                                    )
+                                                if "id" not in column_names:
+                                                    raise ValueError(
+                                                        "Query must return a column named 'id'"
+                                                    )
+
+                                                attribute_names = [
+                                                    name
+                                                    for name in column_names
+                                                    if name not in ["geom", "id"]
+                                                ]
 
                                                 # Calculate feature count, bounds, and geometry type for the PostGIS layer
                                                 feature_count = None
@@ -840,53 +870,34 @@ async def process_chat_interaction_task(
                                                     else None
                                                 )
 
-                                                # Find geometry column by trying common names
-                                                geometry_column = None
-                                                common_geom_names = [
-                                                    "geom",
-                                                    "geometry",
-                                                    "shape",
-                                                    "the_geom",
-                                                    "wkb_geometry",
-                                                ]
-
-                                                for geom_name in common_geom_names:
-                                                    try:
-                                                        await pg.fetchval(
-                                                            f"SELECT 1 FROM ({query}) AS sub WHERE {geom_name} IS NOT NULL LIMIT 1"
-                                                        )
-                                                        geometry_column = geom_name
-                                                        break
-                                                    except Exception:
-                                                        continue
-
-                                                if geometry_column:
-                                                    # Detect geometry type for styling
-                                                    geometry_type_result = await pg.fetchrow(
+                                                # Detect geometry type for styling
+                                                geometry_type_result = (
+                                                    await pg.fetchrow(
                                                         f"""
-                                                        SELECT ST_GeometryType({geometry_column}) as geom_type, COUNT(*) as count
+                                                        SELECT ST_GeometryType(geom) as geom_type, COUNT(*) as count
                                                         FROM ({query}) AS sub
-                                                        WHERE {geometry_column} IS NOT NULL
-                                                        GROUP BY ST_GeometryType({geometry_column})
+                                                        WHERE geom IS NOT NULL
+                                                        GROUP BY ST_GeometryType(geom)
                                                         ORDER BY count DESC
                                                         LIMIT 1
                                                         """
                                                     )
+                                                )
 
-                                                    if (
-                                                        geometry_type_result
-                                                        and geometry_type_result[
+                                                if (
+                                                    geometry_type_result
+                                                    and geometry_type_result[
+                                                        "geom_type"
+                                                    ]
+                                                ):
+                                                    # Convert PostGIS geometry type to standard format
+                                                    geometry_type = (
+                                                        geometry_type_result[
                                                             "geom_type"
                                                         ]
-                                                    ):
-                                                        # Convert PostGIS geometry type to standard format
-                                                        geometry_type = (
-                                                            geometry_type_result[
-                                                                "geom_type"
-                                                            ]
-                                                            .replace("ST_", "")
-                                                            .lower()
-                                                        )
+                                                        .replace("ST_", "")
+                                                        .lower()
+                                                    )
 
                                                     # Calculate bounds with proper SRID handling
                                                     # ST_Extent returns BOX2D with SRID 0, so we need to set the SRID before transforming
@@ -894,10 +905,10 @@ async def process_chat_interaction_task(
                                                         f"""
                                                         WITH extent_data AS (
                                                             SELECT
-                                                                ST_Extent({geometry_column}) as extent_geom,
-                                                                (SELECT ST_SRID({geometry_column}) FROM ({query}) AS sub2 WHERE {geometry_column} IS NOT NULL LIMIT 1) as original_srid
+                                                                ST_Extent(geom) as extent_geom,
+                                                                (SELECT ST_SRID(geom) FROM ({query}) AS sub2 WHERE geom IS NOT NULL LIMIT 1) as original_srid
                                                             FROM ({query}) AS sub
-                                                            WHERE {geometry_column} IS NOT NULL
+                                                            WHERE geom IS NOT NULL
                                                         )
                                                         SELECT
                                                             CASE
@@ -979,8 +990,8 @@ async def process_chat_interaction_task(
                                             await conn.execute(
                                                 """
                                                 INSERT INTO map_layers
-                                                (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, source_map_id, created_on, last_edited)
-                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                                                (layer_id, owner_uuid, name, path, type, postgis_connection_id, postgis_query, feature_count, bounds, geometry_type, source_map_id, created_on, last_edited, postgis_attribute_column_list)
+                                                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP, $12)
                                                 """,
                                                 layer_id,
                                                 user_id,
@@ -993,6 +1004,7 @@ async def process_chat_interaction_task(
                                                 bounds,
                                                 geometry_type,
                                                 map_id,
+                                                attribute_names,
                                             )
 
                                             # Create default style in separate table if we have geometry type
