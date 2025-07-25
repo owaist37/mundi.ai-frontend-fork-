@@ -1086,6 +1086,15 @@ async def get_map_style_internal(
         "data": {"type": "FeatureCollection", "features": []},
     }
 
+    # label layers should be higher z-index than geometry layers. maintain order otherwise
+    non_symbol_layers = [
+        layer for layer in style_json["layers"] if layer.get("type") != "symbol"
+    ]
+    symbol_layers = [
+        layer for layer in style_json["layers"] if layer.get("type") == "symbol"
+    ]
+    style_json["layers"] = non_symbol_layers + symbol_layers
+
     # Add cursor layer
     style_json["layers"].append(
         {
