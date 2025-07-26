@@ -14,7 +14,15 @@ import { MapboxOverlay } from '@deck.gl/mapbox';
 import { LASLoader } from '@loaders.gl/las';
 import { Matrix4 } from '@math.gl/core';
 import { Activity, Brain, Database, MessagesSquare, Send, X } from 'lucide-react';
-import { type IControl, type MapGeoJSONFeature, type MapOptions, Map as MLMap, NavigationControl, ScaleControl } from 'maplibre-gl';
+import {
+  AJAXError,
+  type IControl,
+  type MapGeoJSONFeature,
+  type MapOptions,
+  Map as MLMap,
+  NavigationControl,
+  ScaleControl,
+} from 'maplibre-gl';
 import type {
   ChatCompletionMessageParam,
   ChatCompletionMessageToolCall,
@@ -792,14 +800,36 @@ export default function MapLibreMap({
       });
 
       newMap.on('error', (e) => {
-        console.error('MapLibre GL error:', e);
-        const message = e.error?.message || 'Unknown error';
-        if (message.indexOf('AJAXError') !== -1 && message.indexOf('(502)') !== -1 && message.indexOf('.mvt') !== -1) {
-          // This just means database is slow
-          addError('PostGIS query took 60+ seconds, database might be overloaded', true);
+        if (e.error instanceof AJAXError) {
+          // Sometimes we can read the error. If its 4xx, show the user the message
+          if (e.error.status >= 400 && e.error.status < 500 && e.error.body instanceof Blob) {
+            // Read the body of the error
+            (async () => {
+              const bodyStr = await e.error.body.text();
+              try {
+                const bodyObj = JSON.parse(bodyStr);
+
+                if ('detail' in bodyObj) {
+                  addError(bodyObj.detail, true);
+                } else {
+                  addError(bodyStr, true);
+                }
+              } catch {
+                addError(bodyStr, true);
+              }
+            })();
+          } else if (e.error.status == 502 && e.error.message.indexOf('.mvt') !== -1) {
+            // This just means database is slow
+            addError('PostGIS query took 60+ seconds, database might be overloaded', true);
+          } else {
+            // Unknown type of error?
+            addError('Error loading map data: ' + e.error.message, true);
+          }
         } else {
-          addError('Error loading map: ' + message, true);
+          // Unknown type of error?
+          addError('Error loading map data: ' + e.error.message, true);
         }
+
         setLoading(false);
       });
 
@@ -1296,7 +1326,9 @@ export default function MapLibreMap({
                   {mapData?.layers.find((l) => l.id === selectedFeature.source) ? (
                     <>
                       <span>{mapData?.layers.find((l) => l.id === selectedFeature.source)?.name}</span>
-                      <span className="text-xs text-gray-500 dark:text-gray-400">{mapData?.layers.find((l) => l.id === selectedFeature.source)?.type}</span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400">
+                        {mapData?.layers.find((l) => l.id === selectedFeature.source)?.type}
+                      </span>
                     </>
                   ) : (
                     <span>Selected feature</span>

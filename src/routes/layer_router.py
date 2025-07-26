@@ -676,7 +676,7 @@ async def get_layer_mvt_tile(
         if not layer["postgis_attribute_column_list"]:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="PostGIS layer has no attribute columns, you must re-create the layer.",
+                detail=f"PostGIS layer {layer['name']} has no attribute columns, you must re-create the layer.",
             )
         non_geom_column_names: List[str] = layer["postgis_attribute_column_list"] + [
             "id"
