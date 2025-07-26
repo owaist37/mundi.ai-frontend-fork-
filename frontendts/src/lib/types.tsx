@@ -52,7 +52,9 @@ export interface MapLayer {
 export interface PostgresConnectionDetails {
   connection_id: string;
   table_count: number;
-  friendly_name: string;
+  processed_tables_count: number | null;
+  friendly_name: string | null;
+  is_documented: boolean;
   last_error_text?: string;
   last_error_timestamp?: string;
 }

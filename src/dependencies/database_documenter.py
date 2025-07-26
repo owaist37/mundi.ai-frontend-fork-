@@ -20,6 +20,14 @@ import secrets
 from src.structures import get_async_db_connection
 from src.utils import get_openai_client
 from .postgres_connection import PostgresConnectionManager
+from redis import Redis
+import os
+
+redis = Redis(
+    host=os.environ["REDIS_HOST"],
+    port=int(os.environ["REDIS_PORT"]),
+    decode_responses=True,
+)
 
 
 def generate_id(length=12, prefix=""):
@@ -74,6 +82,9 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
                 """
                 )
 
+                redis.set(f"dbdocumenter:{connection_id}:total_tables", len(tables))
+                redis.set(f"dbdocumenter:{connection_id}:processed_tables", 0)
+
                 # Build schema description
                 schema_description = f"Database: {connection_name}\n\n"
 
@@ -110,6 +121,8 @@ class DefaultDatabaseDocumenter(DatabaseDocumenter):
                         schema_description += f"  {col['column_name']} - {col['data_type']}{nullable}{default}\n"
 
                     schema_description += "\n"
+
+                    redis.incr(f"dbdocumenter:{connection_id}:processed_tables")
             finally:
                 # Ensure the connection is closed to avoid leaks
                 await conn.close()

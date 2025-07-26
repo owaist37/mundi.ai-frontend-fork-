@@ -174,9 +174,6 @@ const LayerList: React.FC<LayerListProps> = ({
 
             if (attempts >= maxAttempts) {
               clearInterval(pollInterval);
-              // Still refresh after max attempts as fallback
-              updateProjectData(currentMapData.project_id);
-              updateMapData();
             }
           }, 4000); // Check every 4 seconds
         };
@@ -513,13 +510,32 @@ const LayerList: React.FC<LayerListProps> = ({
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
+                ) : !connection.is_documented ? (
+                  <li key={index} className="border border-gray-200 dark:border-gray-700 rounded-lg p-2 mx-2 mb-2">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="text-sm font-medium text-gray-900 dark:text-gray-100 truncate flex items-center gap-2">
+                        <Database className="h-4 w-4" />
+                        {connection.friendly_name || 'Loading...'}
+                      </span>
+                      <span className="text-xs text-gray-500 dark:text-gray-400 flex-shrink-0">
+                        {connection.processed_tables_count}/{connection.table_count}
+                      </span>
+                    </div>
+                    <div className="w-full bg-gray-200 dark:bg-gray-700 rounded-full h-1.5">
+                      <div
+                        className="bg-blue-600 h-1.5 rounded-full transition-all duration-300"
+                        style={{ width: `${((connection.processed_tables_count ?? 0) / connection.table_count) * 100}%` }}
+                      />
+                    </div>
+                    <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">Documenting database...</div>
+                  </li>
                 ) : (
                   <li
                     key={index}
                     className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group ${connection.friendly_name === 'Loading...' ? 'animate-pulse' : ''}`}
                     onClick={() => navigate(`/postgis/${connection.connection_id}`)}
                   >
-                    <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name}>
+                    <span className="font-medium truncate flex items-center gap-2" title={connection.friendly_name || undefined}>
                       <Database className="h-4 w-4" />
                       {connection.friendly_name}
                     </span>

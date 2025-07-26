@@ -88,7 +88,9 @@ class MostRecentVersion(BaseModel):
 class PostgresConnectionDetails(BaseModel):
     connection_id: str
     table_count: int
-    friendly_name: str
+    is_documented: bool
+    processed_tables_count: Optional[int] = None
+    friendly_name: Optional[str] = None
     last_error_text: Optional[str] = None
     last_error_timestamp: Optional[datetime] = None
 
@@ -253,6 +255,7 @@ async def list_user_projects(
                         connection_id=connection_id,
                         table_count=table_count,
                         friendly_name=friendly_name,
+                        is_documented=summary_result is not None,
                         last_error_text=connection_details["last_error_text"],
                         last_error_timestamp=connection_details["last_error_timestamp"],
                     )
@@ -371,16 +374,18 @@ async def get_project(
                 connection_id,
             )
 
-            friendly_name = (
-                summary_result["friendly_name"]
-                if summary_result and summary_result["friendly_name"]
-                else postgres_conn_result["connection_name"] or "Loading..."
-            )
-            table_count = (
-                summary_result["table_count"]
-                if summary_result and summary_result["table_count"] is not None
-                else 0
-            )
+            if summary_result:
+                friendly_name = summary_result["friendly_name"]
+                table_count = summary_result["table_count"]
+                processed_tables_count = None
+            else:
+                friendly_name = "Loading..."
+                table_count = int(
+                    redis.get(f"dbdocumenter:{connection_id}:total_tables") or 0
+                )
+                processed_tables_count = int(
+                    redis.get(f"dbdocumenter:{connection_id}:processed_tables") or 0
+                )
 
             # Get error details from the database (they were stored during the connection attempt)
             connection_details = await connection_manager.get_connection(connection_id)
@@ -389,6 +394,8 @@ async def get_project(
                 PostgresConnectionDetails(
                     connection_id=connection_id,
                     table_count=table_count,
+                    processed_tables_count=processed_tables_count,
+                    is_documented=summary_result is not None,
                     friendly_name=friendly_name,
                     last_error_text=connection_details["last_error_text"],
                     last_error_timestamp=connection_details["last_error_timestamp"],
@@ -476,6 +483,11 @@ class PostgresConnectionResponse(BaseModel):
     message: str
 
 
+class PostgresCreateConnectionResponse(BaseModel):
+    message: str
+    connection_id: str
+
+
 class DatabaseDocumentationResponse(BaseModel):
     connection_id: str
     connection_name: str
@@ -486,7 +498,7 @@ class DatabaseDocumentationResponse(BaseModel):
 
 @project_router.post(
     "/{project_id}/postgis-connections",
-    response_model=PostgresConnectionResponse,
+    response_model=PostgresCreateConnectionResponse,
     operation_id="add_postgis_connection",
 )
 async def add_postgis_connection(
@@ -598,12 +610,14 @@ async def add_postgis_connection(
                 connection_manager,
             )
 
-            return PostgresConnectionResponse(
-                success=True, message="PostgreSQL connection added successfully"
+            return PostgresCreateConnectionResponse(
+                message="PostgreSQL connection added successfully",
+                connection_id=connection_id,
             )
         else:
-            return PostgresConnectionResponse(
-                success=True, message="Connection URI already exists"
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Connection URI already exists",
             )
 
 

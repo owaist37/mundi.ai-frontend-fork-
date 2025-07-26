@@ -346,12 +346,13 @@ If documentation generation fails, this indicates the database connection detail
                     size="sm"
                     data-scrollspy-anchor={item.id}
                     className={`
-                      justify-start text-left h-auto py-2 px-3 whitespace-normal
+                      justify-start text-left h-auto py-1 px-2 whitespace-normal
                       data-[active=true]:bg-accent data-[active=true]:text-accent-foreground
+                      hover:cursor-pointer
                       ${item.level === 1 ? 'font-medium' : ''}
-                      ${item.level === 2 ? 'ml-3 text-sm' : ''}
-                      ${item.level === 3 ? 'ml-6 text-sm' : ''}
-                      ${item.level >= 4 ? 'ml-9 text-xs' : ''}
+                      ${item.level === 2 ? 'text-sm' : ''}
+                      ${item.level === 3 ? 'ml-4 text-sm' : ''}
+                      ${item.level >= 4 ? 'ml-8 text-xs' : ''}
                     `}
                   >
                     {item.label}
