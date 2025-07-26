@@ -26,7 +26,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ShareEmbedModal } from '@/lib/ee-loader';
-import type { EphemeralAction, MapData, MapLayer, MapProject, PostgresConnectionDetails } from '../lib/types';
+import type { EphemeralAction, MapData, MapLayer, MapProject } from '../lib/types';
 
 interface UploadingFile {
   id: string;
@@ -52,7 +52,7 @@ interface LayerListProps {
   driftDbConnected: boolean;
   setShowAttributeTable: (show: boolean) => void;
   setSelectedLayer: (layer: MapLayer | null) => void;
-  updateMapData: (mapId: string) => void;
+  updateMapData: () => void;
   updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
   zoomHistory: Array<{ bounds: [number, number, number, number] }>;
@@ -158,7 +158,7 @@ const LayerList: React.FC<LayerListProps> = ({
 
         // Refresh immediately to show "Loading into AI..." in the database list
         updateProjectData(currentMapData.project_id);
-        updateMapData(currentMapData.map_id);
+        updateMapData();
 
         // Poll for updated connection details and refresh when AI naming is complete
         const pollForUpdatedConnection = async () => {
@@ -168,33 +168,15 @@ const LayerList: React.FC<LayerListProps> = ({
           const pollInterval = setInterval(async () => {
             attempts++;
 
-            try {
-              // Fetch current project data to check connection names
-              const response = await fetch(`/api/projects/${currentMapData.project_id}`);
-              if (response.ok) {
-                const projectData = await response.json();
-
-                // Check if any connections no longer have "Loading..." as the name
-                const hasUpdatedNames = projectData.postgres_connections?.some(
-                  (conn: PostgresConnectionDetails) => conn.friendly_name && conn.friendly_name !== 'Loading...',
-                );
-
-                if (hasUpdatedNames || attempts >= maxAttempts) {
-                  clearInterval(pollInterval);
-                  // Refresh both project and map data
-                  updateProjectData(currentMapData.project_id);
-                  updateMapData(currentMapData.map_id);
-                }
-              }
-            } catch (error) {
-              console.error('Error polling for connection updates:', error);
-            }
+            // Refresh both project and map data
+            updateProjectData(currentMapData.project_id);
+            updateMapData();
 
             if (attempts >= maxAttempts) {
               clearInterval(pollInterval);
               // Still refresh after max attempts as fallback
               updateProjectData(currentMapData.project_id);
-              updateMapData(currentMapData.map_id);
+              updateMapData();
             }
           }, 4000); // Check every 4 seconds
         };
@@ -493,7 +475,7 @@ const LayerList: React.FC<LayerListProps> = ({
                               if (response.ok) {
                                 toast.success('Database connection deleted successfully');
                                 updateProjectData(project.id);
-                                updateMapData(currentMapData.map_id);
+                                updateMapData();
                               } else {
                                 const errorData = await response.json().catch(() => ({
                                   detail: response.statusText,

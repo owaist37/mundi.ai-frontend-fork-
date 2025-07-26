@@ -7,8 +7,9 @@ import { useParams } from 'react-router-dom';
 import Session from 'supertokens-auth-react/recipe/session';
 import MapLibreMap from './MapLibreMap';
 import 'maplibre-gl/dist/maplibre-gl.css';
+import { useQuery } from '@tanstack/react-query';
 import { toast } from 'sonner';
-import type { MapData, MapProject } from '../lib/types';
+import type { MapProject } from '../lib/types';
 
 // Add interface for tracking upload progress
 interface UploadingFile {
@@ -28,7 +29,16 @@ export default function ProjectView() {
 
   const versionId = versionIdParam || (project?.maps && project.maps.length > 0 ? project.maps[project.maps.length - 1] : null);
 
-  const [mapData, setMapData] = useState<MapData | null>(null);
+  const {
+    isPending,
+    error,
+    data: mapData,
+    refetch: refetchMapData,
+  } = useQuery({
+    queryKey: ['mapData', versionId],
+    queryFn: () => fetch(`/api/maps/${versionId}?diff_map_id=auto`).then((res) => res.json()),
+    enabled: !!versionId, // Only run query when versionId exists
+  });
 
   // Add state for tracking uploading files
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
@@ -42,18 +52,6 @@ export default function ProjectView() {
     updateProjectData(projectId);
   }, [projectId, updateProjectData]);
 
-  // loading current map with auto diff
-  const updateMapData = useCallback(async (id: string) => {
-    const mapRes = await fetch(`/api/maps/${id}?diff_map_id=auto`);
-    setMapData(await mapRes.json());
-  }, []);
-
-  useEffect(() => {
-    if (!project) return;
-    if (!versionId) return;
-
-    updateMapData(versionId);
-  }, [versionId, project, updateMapData]);
   const sessionContext = Session.useSessionContext();
 
   // Get room ID for DriftDB
@@ -107,7 +105,7 @@ export default function ProjectView() {
 
             // Refresh the map data
             setTimeout(() => {
-              updateMapData(versionId);
+              refetchMapData();
             }, 2000);
           } else {
             // Handle HTTP error status (like 400)
@@ -148,7 +146,7 @@ export default function ProjectView() {
         toast.error(`Error uploading ${file.name}: ${errorMessage}`);
       }
     },
-    [versionId, updateMapData],
+    [versionId, refetchMapData],
   );
 
   // Modified dropzone implementation to handle multiple files
@@ -215,7 +213,6 @@ export default function ProjectView() {
 
     // Only fetch if we have a session and an ID
     if (!sessionContext.loading && versionId) {
-      updateMapData(versionId);
       fetchRoomId(versionId);
 
       // Set up timer to re-fetch room ID every 15 mins
@@ -233,7 +230,7 @@ export default function ProjectView() {
         clearInterval(roomTimer);
       }
     };
-  }, [versionId, sessionContext.loading, updateMapData, fetchRoomId]);
+  }, [versionId, sessionContext.loading, fetchRoomId]);
 
   // Let them hide certain layers client-side only
   const [hiddenLayerIDs, setHiddenLayerIDs] = useState<string[]>([]);
@@ -267,6 +264,26 @@ export default function ProjectView() {
     );
   }
 
+  if (isPending) {
+    return (
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-4">Loading map data...</h1>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6">
+        <h1 className="text-2xl font-bold mb-4">Error Loading Map</h1>
+        <p>Failed to load map data: {error.message}</p>
+        <a href="/maps" className="text-blue-500 hover:underline">
+          Back to Maps
+        </a>
+      </div>
+    );
+  }
+
   if (!mapData) {
     return (
       <div className="p-6">
@@ -293,7 +310,7 @@ export default function ProjectView() {
             project={project}
             mapData={mapData}
             openDropzone={open}
-            updateMapData={updateMapData}
+            updateMapData={refetchMapData}
             updateProjectData={updateProjectData}
             uploadingFiles={uploadingFiles}
             hiddenLayerIDs={hiddenLayerIDs}

@@ -259,7 +259,7 @@ interface MapLibreMapProps {
   project: MapProject;
   mapData?: MapData | null;
   openDropzone?: () => void;
-  updateMapData: (mapId: string) => void;
+  updateMapData: () => void;
   updateProjectData: (projectId: string) => void;
   uploadingFiles?: UploadingFile[];
   hiddenLayerIDs: string[];
@@ -461,12 +461,6 @@ export default function MapLibreMap({
   >([]);
   const [messages, setMessages] = useState<ChatCompletionMessageRow[]>([]);
   const [showMessages, setShowMessages] = useState(true);
-
-  useEffect(() => {
-    if (updateMapData) {
-      updateMapData(mapId);
-    }
-  }, [mapId, updateMapData]);
 
   // Process changelog data when mapData changes
   useEffect(() => {
@@ -851,6 +845,7 @@ export default function MapLibreMap({
   }, [addError, loadLegendSymbols, mapId, pointCloudLayers, createPointCloudLayer]); // listen to point cloud layers
 
   // Separate effect for style updates
+  // biome-ignore lint/correctness/useExhaustiveDependencies: want to update on style.json
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;

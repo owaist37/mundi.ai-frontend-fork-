@@ -19,6 +19,7 @@ import ProjectView from './components/ProjectView';
 import { ProjectState } from './lib/types';
 import PostGISDocumentation from './pages/PostGISDocumentation';
 import './App.css';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const websiteDomain = import.meta.env.VITE_WEBSITE_DOMAIN;
 if (!websiteDomain) {
@@ -119,12 +120,18 @@ function AppContent() {
   );
 }
 
+const queryClient = new QueryClient();
+
+
 function App() {
+
   return (
-    <SuperTokensWrapper>
-      <AppContent />
-      <Toaster />
-    </SuperTokensWrapper>
+    <QueryClientProvider client={queryClient}>
+      <SuperTokensWrapper>
+        <AppContent />
+        <Toaster />
+      </SuperTokensWrapper>
+    </QueryClientProvider>
   );
 }
 
