@@ -844,6 +844,10 @@ export default function MapLibreMap({
     }
   }, [addError, loadLegendSymbols, mapId, pointCloudLayers, createPointCloudLayer]); // listen to point cloud layers
 
+  const styleUpdateCounter = useMemo(() => {
+    return activeActions.filter((a) => a.updates.style_json).length;
+  }, [activeActions]);
+
   // Separate effect for style updates
   // biome-ignore lint/correctness/useExhaustiveDependencies: want to update on style.json
   useEffect(() => {
@@ -902,7 +906,7 @@ export default function MapLibreMap({
 
     // If map is already loaded, update immediately, otherwise wait for load
     updateStyle();
-  }, [mapId, currentBasemap, addError, loadLegendSymbols, hasZoomed]); // Update when these dependencies change
+  }, [mapId, currentBasemap, addError, loadLegendSymbols, hasZoomed, styleUpdateCounter]); // Update when these dependencies change
 
   useEffect(() => {
     if (!mapRef.current) return;
