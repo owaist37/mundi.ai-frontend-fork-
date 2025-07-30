@@ -56,7 +56,6 @@ app = FastAPI(
     # Don't show OpenAPI spec, docs, redoc
     openapi_url=None,
     lifespan=lifespan,
-    debug=True,
 )
 
 
