@@ -43,28 +43,50 @@ async def test_remove_layer_from_map(test_setup, auth_client):
             data={"layer_name": "Vector Layer"},
         )
         assert upload_response.status_code == 200
-        layer_id = upload_response.json()["id"]
+        upload_data = upload_response.json()
+        layer_id = upload_data["id"]
+        child_map_id = upload_data["dag_child_map_id"]
 
-    layers_response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    # Check the child map has the layer
+    layers_response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert layers_response.status_code == 200
     layers_data = layers_response.json()
     assert "layers" in layers_data
     assert len(layers_data["layers"]) == 1
 
-    remove_response = await auth_client.delete(f"/api/maps/{map_id}/layer/{layer_id}")
+    # Remove the layer from the child map
+    remove_response = await auth_client.delete(
+        f"/api/maps/{child_map_id}/layer/{layer_id}"
+    )
 
     assert remove_response.status_code == 200
     remove_data = remove_response.json()
     assert "message" in remove_data
     assert "layer_id" in remove_data
+    assert "dag_child_map_id" in remove_data
+    assert "dag_parent_map_id" in remove_data
+    assert "layer_name" in remove_data
     assert remove_data["layer_id"] == layer_id
+    assert remove_data["dag_parent_map_id"] == child_map_id
+    assert remove_data["dag_child_map_id"] != child_map_id
     assert "successfully removed" in remove_data["message"].lower()
 
-    layers_response_after = await auth_client.get(f"/api/maps/{map_id}/layers")
+    # Remove operation creates a new child map due to DAG architecture
+    removal_child_map_id = remove_data["dag_child_map_id"]
+    layers_response_after = await auth_client.get(
+        f"/api/maps/{removal_child_map_id}/layers"
+    )
     assert layers_response_after.status_code == 200
 
     layers_data_after = layers_response_after.json()
     assert len(layers_data_after["layers"]) == 0
+
+    # Verify the parent map (child_map_id) still contains the layer (DAG immutability)
+    parent_layers_response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
+    assert parent_layers_response.status_code == 200
+    parent_layers_data = parent_layers_response.json()
+    assert len(parent_layers_data["layers"]) == 1
+    assert parent_layers_data["layers"][0]["id"] == layer_id
 
 
 @pytest.mark.anyio

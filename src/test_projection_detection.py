@@ -39,9 +39,10 @@ async def test_upload_raster_with_projection_detection(auth_client):
     assert upload_response.status_code == 200
     upload_data = upload_response.json()
     layer_id = upload_data["id"]
+    child_map_id = upload_data["dag_child_map_id"]
 
     # Get the layer list and check that projection info is included
-    layers_response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    layers_response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert layers_response.status_code == 200
 
     layers_data = layers_response.json()
@@ -84,9 +85,10 @@ async def test_upload_vector_with_projection_detection(auth_client):
     assert upload_response.status_code == 200
     upload_data = upload_response.json()
     layer_id = upload_data["id"]
+    child_map_id = upload_data["dag_child_map_id"]
 
     # Get the layer list and check that projection info is included
-    layers_response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    layers_response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert layers_response.status_code == 200
 
     layers_data = layers_response.json()
@@ -130,9 +132,10 @@ async def test_upload_geojson_with_wgs84(auth_client):
     assert upload_response.status_code == 200
     upload_data = upload_response.json()
     layer_id = upload_data["id"]
+    child_map_id = upload_data["dag_child_map_id"]
 
     # Get the layer list
-    layers_response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    layers_response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert layers_response.status_code == 200
 
     layers_data = layers_response.json()

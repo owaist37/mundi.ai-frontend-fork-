@@ -26,15 +26,21 @@ from sqlalchemy import (
     Float,
     ForeignKey,
 )
+import json
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.sql import func
 from sqlalchemy.orm import relationship
+from typing import TYPE_CHECKING
+from datetime import datetime
+
+if TYPE_CHECKING:
+    pass
 
 Base = declarative_base()
 
 
-class UserMundiaiProject(Base):
+class MundiProject(Base):
     __tablename__ = "user_mundiai_projects"
 
     id = Column(String(12), primary_key=True)  # starts with P
@@ -59,12 +65,15 @@ class UserMundiaiProject(Base):
     )
 
 
-class UserMundiaiMap(Base):
+class MundiMap(Base):
     __tablename__ = "user_mundiai_maps"
 
     id = Column(String(12), primary_key=True)  # starts with M
     project_id = Column(String(12))  # No foreign key in init.sql
     owner_uuid = Column(UUID, nullable=False)
+    parent_map_id: str | None = Column(
+        String(12), ForeignKey("user_mundiai_maps.id"), nullable=True
+    )
     layers = Column(ARRAY(String(12)))
     display_as_diff = Column(
         Boolean, default=True
@@ -81,14 +90,16 @@ class UserMundiaiMap(Base):
         nullable=False,
         server_default=func.current_timestamp(),
     )
+    fork_reason = Column(String, nullable=True)
     soft_deleted_at = Column(TIMESTAMP(timezone=True))
 
     # Relationships
-    messages = relationship("Message", back_populates="map")
     chat_completion_messages = relationship(
         "MundiChatCompletionMessage", back_populates="map"
     )
     layer_styles = relationship("MapLayerStyle", back_populates="map")
+    parent_map = relationship("MundiMap", remote_side=[id])
+    child_maps = relationship("MundiMap", overlaps="parent_map")
 
 
 class ProjectPostgresConnection(Base):
@@ -112,7 +123,7 @@ class ProjectPostgresConnection(Base):
     soft_deleted_at = Column(TIMESTAMP(timezone=True))
 
     # Relationships
-    project = relationship("UserMundiaiProject", back_populates="postgres_connections")
+    project = relationship("MundiProject", back_populates="postgres_connections")
     summaries = relationship("ProjectPostgresSummary", back_populates="connection")
     layers = relationship("MapLayer", back_populates="postgis_connection")
 
@@ -159,9 +170,7 @@ class MapLayer(Base):
     )
     postgis_query = Column(String)  # required for postgres
     postgis_attribute_column_list = Column(ARRAY(String))  # excludes id and geom
-    metadata_json = Column(
-        "metadata", JSONB
-    )  # Use column name "metadata" but Python attribute "metadata_json"
+    metadata_json = Column("metadata", JSONB)
     bounds = Column(ARRAY(Float))  # [xmin, ymin, xmax, ymax] in WGS84 coordinates
     geometry_type = Column(
         String
@@ -179,6 +188,12 @@ class MapLayer(Base):
         nullable=False,
         server_default=func.current_timestamp(),
     )
+
+    @property
+    def metadata_dict(self):
+        """Return metadata as parsed JSON."""
+        if self.metadata is not None:
+            return json.loads(self.metadata)
 
     # Relationships
     postgis_connection = relationship(
@@ -218,51 +233,50 @@ class MapLayerStyle(Base):
     style_id = Column(String(12), ForeignKey("layer_styles.style_id"), nullable=False)
 
     # Relationships
-    map = relationship("UserMundiaiMap", back_populates="layer_styles")
+    map = relationship("MundiMap", back_populates="layer_styles")
     layer = relationship("MapLayer", back_populates="map_layer_styles")
     style = relationship("LayerStyle", back_populates="map_layer_styles")
 
 
-class Message(Base):
-    __tablename__ = "messages"
+class Conversation(Base):
+    __tablename__ = "conversations"
 
     id = Column(Integer, primary_key=True)
-    map_id = Column(String(12), ForeignKey("user_mundiai_maps.id"), nullable=False)
-    role = Column(Text, nullable=False)  # 'user', 'assistant', 'system', 'tool', etc.
-    content = Column(
-        Text
-    )  # Message content (nullable since tool calls might not have content)
-    content_json = Column(JSONB)  # JSON payload for messages (e.g. text+image)
+    project_id = Column(
+        String(12), ForeignKey("user_mundiai_projects.id"), nullable=False
+    )
+    owner_uuid = Column(UUID, nullable=False)
+    title = Column(String)
     created_at = Column(
         TIMESTAMP(timezone=True), server_default=func.current_timestamp()
     )
-
-    # For tool calls and responses
-    tool_call_id = Column(Text)  # ID for the tool call, matching OpenAI's format
-    tool_name = Column(Text)  # Name of the tool being called
-    tool_args = Column(JSONB)  # Arguments passed to the tool
-    tool_response = Column(JSONB)  # Response from the tool
-
-    # Index for keeping messages ordered
-    message_index = Column(Integer, nullable=False)
-
-    # Optional user info
-    user_id = Column(UUID)  # User who sent the message
+    updated_at = Column(
+        TIMESTAMP(timezone=True), server_default=func.current_timestamp()
+    )
+    soft_deleted_at = Column(TIMESTAMP(timezone=True))
 
     # Relationships
-    map = relationship("UserMundiaiMap", back_populates="messages")
+    chat_completion_messages = relationship(
+        "MundiChatCompletionMessage", back_populates="conversation"
+    )
 
 
 class MundiChatCompletionMessage(Base):
     __tablename__ = "chat_completion_messages"
 
-    id = Column(Integer, primary_key=True)
-    map_id = Column(String(12), ForeignKey("user_mundiai_maps.id"), nullable=False)
+    id: int = Column(Integer, primary_key=True)
+    map_id: str = Column(String(12), ForeignKey("user_mundiai_maps.id"), nullable=False)
+    conversation_id: int = Column(
+        Integer, ForeignKey("conversations.id"), nullable=True
+    )
     sender_id = Column(UUID, nullable=False)
     message_json: dict = Column(JSONB, nullable=False)
-    created_at = Column(
+    created_at: datetime = Column(
         TIMESTAMP(timezone=True), server_default=func.current_timestamp()
     )
 
     # Relationships
-    map = relationship("UserMundiaiMap", back_populates="chat_completion_messages")
+    map = relationship("MundiMap", back_populates="chat_completion_messages")
+    conversation = relationship(
+        "Conversation", back_populates="chat_completion_messages"
+    )

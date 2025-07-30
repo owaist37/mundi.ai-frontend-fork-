@@ -16,7 +16,6 @@
 import os
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from src.database.models import Base
 
 # Database URL from environment
 # Match structures.py approach - require env vars without defaults
@@ -48,15 +47,3 @@ async def get_db():
             yield session
         finally:
             await session.close()
-
-
-async def create_tables():
-    """Create all tables (for development/testing)"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-
-async def drop_tables():
-    """Drop all tables (for development/testing)"""
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)

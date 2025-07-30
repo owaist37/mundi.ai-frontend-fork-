@@ -41,13 +41,17 @@ class MockResponse:
 
 @pytest.fixture
 def sync_test_map_with_vector_layers(sync_auth_client):
-    map_payload = {
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
         "title": "Geoprocessing Test Map",
         "description": "Test map for geoprocessing operations with vector layers",
     }
-    map_response = sync_auth_client.post("/api/maps/create", json=map_payload)
+    map_response = sync_auth_client.post("/api/maps/create", json=map_create_payload)
     assert map_response.status_code == 200, f"Failed to create map: {map_response.text}"
-    map_id = map_response.json()["id"]
+    data = map_response.json()
+    map_id = data["id"]
+    project_id = data["project_id"]
     layer_ids = {}
 
     def _upload_layer(file_name, layer_name_in_db):
@@ -68,7 +72,7 @@ def sync_test_map_with_vector_layers(sync_auth_client):
     layer_ids["cafes_layer_id"] = _upload_layer(
         "barcelona_cafes.fgb", "Barcelona Cafes"
     )
-    return {"map_id": map_id, **layer_ids}
+    return {"map_id": map_id, "project_id": project_id, **layer_ids}
 
 
 @pytest.mark.anyio
@@ -80,6 +84,7 @@ async def test_chat_completions(
 ):
     layer_id = sync_test_map_with_vector_layers["cafes_layer_id"]
     map_id = sync_test_map_with_vector_layers["map_id"]
+    project_id = sync_test_map_with_vector_layers["project_id"]
 
     def create_response_queue():
         return [
@@ -120,14 +125,25 @@ async def test_chat_completions(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
+        # Create conversation
+        response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert response.status_code == 200
+        conversation_id = response.json()["id"]
+
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{map_id}/messages/send",
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
                 json={
-                    "role": "user",
-                    "content": "Count how many cafes have name=Starbucks",
+                    "message": {
+                        "role": "user",
+                        "content": "Count how many cafes have name=Starbucks",
+                    },
+                    "selected_feature": None,
                 },
             )
             assert response.status_code == 200
@@ -135,29 +151,50 @@ async def test_chat_completions(
             assert data["status"] == "processing_started"
             assert "message_id" in data
 
-            sent_msg = websocket.receive_json()
-            assert sent_msg["message_json"]["role"] == "user"
+            # Message 1: User message
+            msg1 = websocket.receive_json()
+            assert msg1["role"] == "user"
+            assert msg1["content"] == "Count how many cafes have name=Starbucks"
+
+            # Message 2: Kue is thinking (start)
+            msg2 = websocket.receive_json()
+            assert msg2["ephemeral"]
+            assert msg2["action"] == "Kue is thinking..."
+            assert msg2["status"] == "active"
+
+            # Message 3: Kue is thinking (completed)
+            msg3 = websocket.receive_json()
+            assert msg3["ephemeral"]
+            assert msg3["action"] == "Kue is thinking..."
+            assert msg3["status"] == "completed"
+
+            # Message 4: Assistant message with tool call
+            msg4 = websocket.receive_json()
+            assert msg4["role"] == "assistant"
             assert (
-                sent_msg["message_json"]["content"]
-                == "Count how many cafes have name=Starbucks"
+                msg4["content"]
+                == "I'll help you count the cafes where name=Starbucks using a SQL query."
             )
+            assert msg4["has_tool_calls"]
+            assert len(msg4["tool_calls"]) == 1
+            assert msg4["tool_calls"][0]["id"] == "call_1"
 
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
-            assert msg["status"] == "completed"
+            # Message 5: Querying with SQL (start)
+            msg5 = websocket.receive_json()
+            assert msg5["ephemeral"]
+            assert msg5["action"] == "Querying with SQL..."
+            assert msg5["status"] == "active"
 
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Querying with SQL..."
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Querying with SQL..."
-            assert msg["status"] == "completed"
+            # Message 6: Querying with SQL (completed)
+            msg6 = websocket.receive_json()
+            assert msg6["ephemeral"]
+            assert msg6["action"] == "Querying with SQL..."
+            assert msg6["status"] == "completed"
 
             async with get_async_db_connection() as conn:
                 messages = await conn.fetch(
-                    "SELECT id, sender_id, message_json, created_at FROM chat_completion_messages WHERE map_id = $1 ORDER BY created_at",
-                    map_id,
+                    "SELECT id, sender_id, message_json, created_at FROM chat_completion_messages WHERE conversation_id = $1 ORDER BY created_at",
+                    conversation_id,
                 )
 
                 tool_response = None
@@ -171,7 +208,6 @@ async def test_chat_completions(
                         break
 
                 assert tool_response is not None
-                print("DuckDB Tool Response:", json.dumps(tool_response, indent=2))
 
                 assert tool_response["status"] == "success"
                 assert "result" in tool_response
@@ -186,16 +222,19 @@ async def test_chat_completions(
                 assert result_lines[1] == "18"
                 assert tool_response["row_count"] == 1
 
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
-            assert msg["status"] == "completed"
+            # Message 7: Final thinking (start)
+            msg7 = websocket.receive_json()
+            assert msg7["ephemeral"]
+            assert msg7["action"] == "Kue is thinking..."
+            assert msg7["status"] == "active"
 
-            assistant_msg = websocket.receive_json()
-            print("Assistant response:", assistant_msg)
-            assert assistant_msg["message_json"]["role"] == "assistant"
-            assert (
-                "18 cafes where name=Starbucks"
-                in assistant_msg["message_json"]["content"]
-            )
+            # Message 8: Final thinking (completed)
+            msg8 = websocket.receive_json()
+            assert msg8["ephemeral"]
+            assert msg8["action"] == "Kue is thinking..."
+            assert msg8["status"] == "completed"
+
+            # Message 9: Final assistant response
+            msg9 = websocket.receive_json()
+            assert msg9["role"] == "assistant"
+            assert "18 cafes where name=Starbucks" in msg9["content"]

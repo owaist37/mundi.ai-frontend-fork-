@@ -43,9 +43,11 @@ async def test_fgb_bounds_extraction(test_setup, auth_client):
             data={"layer_name": "San Francisco Streets"},
         )
         assert response.status_code == 200, f"Failed to upload layer: {response.text}"
-        layer_id = response.json()["id"]
+        upload_response = response.json()
+        layer_id = upload_response["id"]
+        child_map_id = upload_response["dag_child_map_id"]
         print(f"Created layer with ID: {layer_id}")
-    response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert response.status_code == 200, f"Failed to get layers: {response.text}"
     layers_response = response.json()
     print(f"Layers response: {layers_response}")
@@ -76,7 +78,9 @@ async def test_gpkg_bounds_extraction(test_setup, auth_client):
             data={"layer_name": "US Counties"},
         )
         assert response.status_code == 200, f"Failed to upload layer: {response.text}"
-    response = await auth_client.get(f"/api/maps/{map_id}/layers")
+        upload_response = response.json()
+        child_map_id = upload_response["dag_child_map_id"]
+    response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert response.status_code == 200, f"Failed to get layers: {response.text}"
     layers = response.json()["layers"]
     layer = None
@@ -104,3 +108,17 @@ async def test_view_map_with_bounds(test_setup, auth_client):
             data={"layer_name": "San Francisco Streets"},
         )
         assert response.status_code == 200, f"Failed to upload layer: {response.text}"
+        upload_response = response.json()
+        child_map_id = upload_response["dag_child_map_id"]
+
+    # Test viewing the map with bounds
+    response = await auth_client.get(f"/api/maps/{child_map_id}")
+    assert response.status_code == 200, f"Failed to get map: {response.text}"
+    map_data = response.json()
+    assert "layers" in map_data
+    assert len(map_data["layers"]) > 0
+
+    # Check that the layer has bounds
+    layer = map_data["layers"][0]
+    assert "bounds" in layer
+    assert layer["bounds"] is not None

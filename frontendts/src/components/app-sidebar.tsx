@@ -1,4 +1,4 @@
-import { BookOpen, Cloud, KeyRound, Map as LMap, LogIn, LogOut, PanelRightClose, PanelRightOpen, UserPlus } from 'lucide-react';
+import { BookOpen, Cloud, House, KeyRound, LogIn, LogOut, PanelRightClose, PanelRightOpen, UserPlus } from 'lucide-react';
 import { Suspense } from 'react';
 import { Link } from 'react-router-dom';
 import Session, { signOut } from 'supertokens-auth-react/recipe/session';
@@ -18,12 +18,11 @@ import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarMenuSub,
   useSidebar,
 } from '@/components/ui/sidebar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { ScheduleCallButton } from '@/lib/ee-loader';
-import type { ProjectState } from '@/lib/types';
+import type { MapProject, ProjectState } from '@/lib/types';
 import { formatRelativeTime } from '@/lib/utils';
 
 export function AppSidebar({ projects }: { projects: ProjectState }) {
@@ -33,6 +32,16 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
   async function onLogout() {
     await signOut();
     window.location.href = '/auth'; // or redirect to wherever the login page is
+  }
+
+  let recentProjects: MapProject[] = [];
+  if (projects.type === 'loaded') {
+    recentProjects = projects.projects
+      .sort(
+        (a, b) =>
+          new Date(b.most_recent_version?.last_edited || '').getTime() - new Date(a.most_recent_version?.last_edited || '').getTime(),
+      )
+      .slice(0, 3);
   }
 
   return (
@@ -77,20 +86,20 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
       <SidebarContent>
         {!sessionContext.loading && sessionContext.doesSessionExist && (
           <SidebarGroup>
-            <SidebarGroupLabel asChild>Projects</SidebarGroupLabel>
+            <SidebarGroupLabel>Projects</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild tooltip="My Projects">
-                    <Link to="/">
-                      <LMap className="w-4 h-4 mr-2" />
-                      <span className="text-sm">My Projects</span>
+                  <SidebarMenuButton asChild tooltip="Home">
+                    <Link to={`/`}>
+                      <House className="w-4 h-4 mr-2" />
+                      <span className="text-sm">Home</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
-                {projects.type === 'loaded' && (
-                  <SidebarMenuSub>
-                    {projects.projects.slice(-3).map((project) => (
+                {projects.type === 'loaded' && state === 'expanded' && (
+                  <>
+                    {recentProjects.map((project) => (
                       <SidebarMenuItem key={project.id}>
                         <SidebarMenuButton asChild>
                           <Link to={`/project/${project.id}`} className="flex items-center justify-between w-full">
@@ -102,7 +111,7 @@ export function AppSidebar({ projects }: { projects: ProjectState }) {
                         </SidebarMenuButton>
                       </SidebarMenuItem>
                     ))}
-                  </SidebarMenuSub>
+                  </>
                 )}
               </SidebarMenu>
             </SidebarGroupContent>

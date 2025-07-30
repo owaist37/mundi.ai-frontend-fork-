@@ -20,6 +20,7 @@ import { ProjectState } from './lib/types';
 import PostGISDocumentation from './pages/PostGISDocumentation';
 import './App.css';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { ReactQueryDevtools } from '@tanstack/react-query-devtools';
 
 const websiteDomain = import.meta.env.VITE_WEBSITE_DOMAIN;
 if (!websiteDomain) {
@@ -120,11 +121,18 @@ function AppContent() {
   );
 }
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 
 function App() {
   return (
     <QueryClientProvider client={queryClient}>
+      <ReactQueryDevtools initialIsOpen={false} buttonPosition="bottom-left" />
       <SuperTokensWrapper>
         <AppContent />
         <Toaster />

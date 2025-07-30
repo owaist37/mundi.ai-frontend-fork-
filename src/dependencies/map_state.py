@@ -15,21 +15,38 @@
 
 from abc import ABC, abstractmethod
 from typing import List, Dict, Any
+from pydantic import BaseModel
+
+
+class SelectedFeature(BaseModel):
+    layer_id: str
+    attributes: Dict[str, Any]
 
 
 class MapStateProvider(ABC):
     @abstractmethod
     async def get_system_messages(
-        self, messages: List[Dict[str, Any]], current_map_description: str
+        self,
+        messages: List[Dict[str, Any]],
+        current_map_description: str,
+        selected_feature: SelectedFeature | None,
     ) -> List[Dict[str, Any]]:
         pass
 
 
 class DefaultMapStateProvider(MapStateProvider):
     async def get_system_messages(
-        self, messages: List[Dict[str, Any]], current_map_description: str
+        self,
+        messages: List[Dict[str, Any]],
+        current_map_description: str,
+        selected_feature: SelectedFeature | None,
     ) -> List[Dict[str, Any]]:
         tagged_description = f"<MapState>\n{current_map_description}\n</MapState>"
+        if selected_feature:
+            tagged_description += f"\n<SelectedFeature>\n{selected_feature.model_dump_json()}\n</SelectedFeature>"
+        else:
+            tagged_description += "\n<NoSelectedFeature />"
+
         return [{"role": "system", "content": tagged_description}]
 
 

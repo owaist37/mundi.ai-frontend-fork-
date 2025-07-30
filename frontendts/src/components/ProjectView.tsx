@@ -1,84 +1,286 @@
 // Copyright Bunting Labs, Inc. 2025
 
 import { DriftDBProvider } from 'driftdb-react';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useDropzone } from 'react-dropzone';
-import { useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
+import useWebSocket from 'react-use-websocket';
 import Session from 'supertokens-auth-react/recipe/session';
 import MapLibreMap from './MapLibreMap';
 import 'maplibre-gl/dist/maplibre-gl.css';
-import { useQuery } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Map as MLMap } from 'maplibre-gl';
 import { toast } from 'sonner';
-import type { MapProject } from '../lib/types';
-
-// Add interface for tracking upload progress
-interface UploadingFile {
-  id: string;
-  file: File;
-  progress: number;
-  status: 'uploading' | 'completed' | 'error';
-  error?: string;
-}
+import type { ErrorEntry, UploadingFile } from '../lib/frontend-types';
+import type { Conversation, EphemeralAction, MapProject, MapTreeResponse } from '../lib/types';
 
 export default function ProjectView() {
-  // Get map ID from URL parameter or query string
-  const { projectId, versionIdParam } = useParams();
-  if (!projectId) throw new Error('Project ID is required');
+  const navigate = useNavigate();
+  const queryClient = useQueryClient();
+  const sessionContext = Session.useSessionContext();
 
-  const [project, setProject] = useState<MapProject | null>(null);
+  const { projectId, versionIdParam } = useParams();
+
+  // State for controlling project query refetch interval
+  const [projectRefetchInterval, setProjectRefetchInterval] = useState<number | false>(false);
+
+  // handle a single store of project<->map<->conversation data
+  const { data: project } = useQuery({
+    queryKey: ['project', projectId],
+    queryFn: () => fetch(`/api/projects/${projectId}`).then((res) => res.json() as Promise<MapProject>),
+    refetchInterval: projectRefetchInterval,
+  });
+
+  // Update refetch interval based on loading PostGIS connections
+  useEffect(() => {
+    const hasLoadingConnections = project?.postgres_connections?.some((connection) => !connection.is_documented);
+
+    setProjectRefetchInterval(hasLoadingConnections ? 4000 : false);
+  }, [project?.postgres_connections]);
+
+  const [conversationId, setConversationId] = useState<number | null>(null);
+  const { data: conversations } = useQuery({
+    queryKey: ['project', projectId, 'conversations'],
+    queryFn: () => fetch(`/api/conversations?project_id=${projectId}`).then((res) => res.json() as Promise<Conversation[]>),
+  });
 
   const versionId = versionIdParam || (project?.maps && project.maps.length > 0 ? project.maps[project.maps.length - 1] : null);
+
+  // When we need to trigger a refresh
+  const invalidateMapData = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['project', projectId, 'map', versionId] });
+  }, [queryClient, projectId, versionId]);
+
+  // Function to update project data (invalidate project queries)
+  const invalidateProjectData = useCallback(() => {
+    queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+  }, [queryClient, projectId]);
 
   const {
     isPending,
     error,
     data: mapData,
-    refetch: refetchMapData,
   } = useQuery({
-    queryKey: ['mapData', versionId],
+    queryKey: ['project', projectId, 'map', versionId],
     queryFn: () => fetch(`/api/maps/${versionId}?diff_map_id=auto`).then((res) => res.json()),
-    enabled: !!versionId, // Only run query when versionId exists
+    enabled: !!versionId,
   });
+
+  const { data: mapTree } = useQuery({
+    queryKey: ['project', projectId, 'map', versionId, 'tree', conversationId],
+    queryFn: () =>
+      fetch(`/api/maps/${versionId}/tree${conversationId ? `?conversation_id=${conversationId}` : ''}`).then(
+        (res) => res.json() as Promise<MapTreeResponse>,
+      ),
+    enabled: !!versionId,
+  });
+
+  const { data: roomId } = useQuery({
+    queryKey: ['project', projectId, 'map', versionId, 'room'],
+    queryFn: () => fetch(`/api/maps/${versionId}/room`).then((res) => res.json() as Promise<{ room_id: string }>),
+    enabled: !!versionId,
+  });
+
+  // tracking ephemeral state, where reloading the page will reset
+  const [errors, setErrors] = useState<ErrorEntry[]>([]);
+  const [activeActions, setActiveActions] = useState<EphemeralAction[]>([]);
+  const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number] }>>([]);
+  const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
+  const mapRef = useRef<MLMap | null>(null);
+  const processedBoundsActionIds = useRef<Set<string>>(new Set());
+
+  // Helper function to add a new error
+  const addError = useCallback((message: string, shouldOverrideMessages: boolean = false) => {
+    setErrors((prevErrors) => {
+      // if it already exists, bail out
+      if (prevErrors.some((err) => err.message === message)) return prevErrors;
+
+      const newError: ErrorEntry = {
+        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+        message,
+        timestamp: new Date(),
+        shouldOverrideMessages,
+      };
+
+      console.error(message);
+      if (!shouldOverrideMessages) toast.error(message);
+
+      // schedule the auto-dismiss
+      setTimeout(() => {
+        setErrors((current) => current.filter((e) => e.id !== newError.id));
+      }, 30000);
+
+      return [...prevErrors, newError];
+    });
+  }, []);
+
+  // Helper function to dismiss a specific error
+  const dismissError = useCallback((errorId: string) => {
+    setErrors((prevErrors) => prevErrors.filter((error) => error.id !== errorId));
+  }, []);
 
   // Add state for tracking uploading files
   const [uploadingFiles, setUploadingFiles] = useState<UploadingFile[]>([]);
 
-  // pull changelog and other details
-  const updateProjectData = useCallback(async (id: string) => {
-    const projectRes = await fetch(`/api/projects/${id}`);
-    setProject(await projectRes.json());
-  }, []);
+  // WebSocket using react-use-websocket
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  const [jwt, setJwt] = useState<string | undefined>(undefined);
+
+  // authenticating web sockets
   useEffect(() => {
-    updateProjectData(projectId);
-  }, [projectId, updateProjectData]);
+    const getSessionData = async () => {
+      if (await Session.doesSessionExist()) {
+        const accessToken = await Session.getAccessToken();
 
-  const sessionContext = Session.useSessionContext();
-
-  // Get room ID for DriftDB
-  const [roomId, setRoomId] = useState<string | null>(null);
-
-  const fetchRoomId = useCallback(async (mapId: string) => {
-    try {
-      const response = await fetch(`/api/maps/${mapId}/room`);
-      if (!response.ok) {
-        throw new Error(`Failed to get room: ${response.statusText}`);
+        setJwt(accessToken);
       }
-      const data = await response.json();
-      setRoomId(data.room_id);
-    } catch (err) {
-      console.error('Error fetching room ID:', err);
-    }
+    };
+    getSessionData();
   }, []);
+
+  const wsUrl = useMemo(() => {
+    if (!conversationId) {
+      return null;
+    } else if (!jwt) {
+      return `${wsProtocol}//${window.location.host}/api/maps/ws/${conversationId}/messages/updates`;
+    }
+
+    return `${wsProtocol}//${window.location.host}/api/maps/ws/${conversationId}/messages/updates?token=${jwt}`;
+  }, [conversationId, wsProtocol, jwt]);
+
+  // Track page visibility and allow socket to remain open for 10 minutes after hidden
+  const WS_REMAIN_OPEN_FOR_MS = 10 * 60 * 1000; // 10 minutes
+  const [isTabVisible, setIsTabVisible] = useState<boolean>(document.visibilityState === 'visible');
+  const [hiddenTimeoutExpired, setHiddenTimeoutExpired] = useState<boolean>(false);
+  const hiddenTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        setIsTabVisible(true);
+        setHiddenTimeoutExpired(false);
+        if (hiddenTimerRef.current !== null) {
+          clearTimeout(hiddenTimerRef.current);
+          hiddenTimerRef.current = null;
+        }
+      } else {
+        setIsTabVisible(false);
+        hiddenTimerRef.current = window.setTimeout(() => {
+          setHiddenTimeoutExpired(true);
+          hiddenTimerRef.current = null;
+        }, WS_REMAIN_OPEN_FOR_MS);
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      if (hiddenTimerRef.current !== null) {
+        clearTimeout(hiddenTimerRef.current);
+      }
+    };
+  }, []);
+
+  // WebSocket using react-use-websocket - only connect when in a conversation
+  const shouldConnect = !sessionContext.loading && conversationId !== null && (isTabVisible || !hiddenTimeoutExpired);
+  const { lastMessage } = useWebSocket(
+    wsUrl,
+    {
+      onError: () => {
+        toast.error('Chat connection error.');
+      },
+      shouldReconnect: () => true,
+      reconnectAttempts: 2880, // 24 hours of continuous work, at 30 seconds each = 2,880
+      reconnectInterval: 30, // interval *between* reconnects, 30 milliseconds
+    },
+    shouldConnect,
+  );
+
+  // Process incoming messages
+  useEffect(() => {
+    if (lastMessage) {
+      try {
+        const update: any = JSON.parse(lastMessage.data);
+
+        // Check if this is an ephemeral action
+        if (update && typeof update === 'object' && 'ephemeral' in update && update.ephemeral === true) {
+          const action = update as EphemeralAction;
+
+          // Check if this is an error notification
+          if (action.error_message) {
+            // Don't add error notifications to active actions, instead treat as error
+            addError(action.error_message, true);
+            return; // Early return to skip normal ephemeral action handling
+          }
+
+          // Handle bounds zooming only when action becomes active (not on completion)
+          if (action.bounds && action.bounds.length === 4 && mapRef.current && action.status === 'active') {
+            // Check if we've already processed this action
+            if (processedBoundsActionIds.current.has(action.action_id)) {
+              return;
+            }
+            processedBoundsActionIds.current.add(action.action_id);
+            // Save current bounds to history before zooming
+            const currentBounds = mapRef.current.getBounds();
+            const currentBoundsArray: [number, number, number, number] = [
+              currentBounds.getWest(),
+              currentBounds.getSouth(),
+              currentBounds.getEast(),
+              currentBounds.getNorth(),
+            ];
+
+            // Add both current bounds and new bounds to history in a single update
+            setZoomHistory((prev) => {
+              const historyUpToCurrent = prev.slice(0, zoomHistoryIndex + 1);
+              return [...historyUpToCurrent, { bounds: currentBoundsArray }, { bounds: action.bounds as [number, number, number, number] }];
+            });
+
+            // Update index to point to the final new bounds (current + 2 positions)
+            setZoomHistoryIndex((prev) => prev + 2);
+
+            // Zoom to new bounds
+            const [west, south, east, north] = action.bounds;
+            mapRef.current.fitBounds(
+              [
+                [west, south],
+                [east, north],
+              ],
+              { animate: true, padding: 50 },
+            );
+          }
+
+          if (action.status === 'active') {
+            // Add to active actions
+            setActiveActions((prev) => [...prev, action]);
+          } else if (action.status === 'completed') {
+            // Remove from active actions
+            setActiveActions((prev) => prev.filter((a) => a.action_id !== action.action_id));
+
+            if (action.updates.style_json) {
+              invalidateMapData();
+            }
+          }
+        } else {
+          // Non-ephemeral messages are of type SanitizedMessage
+          // Regular message
+          // just invalidate map data
+          invalidateMapData();
+        }
+      } catch (e) {
+        console.error('Error processing WebSocket message:', e);
+        addError('Failed to process update from server.', false);
+      }
+    }
+  }, [lastMessage, addError, zoomHistoryIndex, invalidateMapData]);
 
   // Helper function to upload a single file with progress tracking
-  const uploadFile = useCallback(
-    async (file: File, fileId: string) => {
-      if (!versionId) return;
+  const uploadFile = useMutation({
+    mutationFn: async ({ file, fileId }: { file: File; fileId: string }): Promise<{ name: string; dag_child_map_id?: string }> => {
+      if (!versionId) throw new Error('No version ID available');
 
       const formData = new FormData();
       formData.append('file', file);
 
-      try {
+      return new Promise((resolve, reject) => {
         const xhr = new XMLHttpRequest();
 
         // Track upload progress
@@ -93,20 +295,7 @@ export default function ProjectView() {
         xhr.addEventListener('load', () => {
           if (xhr.status >= 200 && xhr.status < 300) {
             const response = JSON.parse(xhr.responseText);
-            toast.success(`Layer "${response.name}" uploaded successfully! Refreshing...`);
-
-            // Mark as completed
-            setUploadingFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, status: 'completed', progress: 100 } : f)));
-
-            // Remove from uploading list after delay
-            setTimeout(() => {
-              setUploadingFiles((prev) => prev.filter((f) => f.id !== fileId));
-            }, 2000);
-
-            // Refresh the map data
-            setTimeout(() => {
-              refetchMapData();
-            }, 2000);
+            resolve(response);
           } else {
             // Handle HTTP error status (like 400)
             let errorMessage = `Upload failed: ${xhr.statusText}`;
@@ -121,33 +310,56 @@ export default function ProjectView() {
               // Keep the default error message if parsing fails
             }
 
-            setUploadingFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)));
-            toast.error(`Error uploading ${file.name}: ${errorMessage}`);
-
-            // Remove from uploading list after delay to show error state
-            setTimeout(() => {
-              setUploadingFiles((prev) => prev.filter((f) => f.id !== fileId));
-            }, 5000);
+            reject(new Error(errorMessage));
           }
         });
 
-        // Handle errors
+        // Handle network errors
         xhr.addEventListener('error', () => {
-          const errorMessage = 'Upload failed due to network error';
-          setUploadingFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)));
-          toast.error(`Error uploading ${file.name}: ${errorMessage}`);
+          reject(new Error('Upload failed due to network error'));
         });
 
         xhr.open('POST', `/api/maps/${versionId}/layers`);
         xhr.send(formData);
-      } catch (err) {
-        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
-        setUploadingFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)));
-        toast.error(`Error uploading ${file.name}: ${errorMessage}`);
+      });
+    },
+    onSuccess: (response, { fileId }) => {
+      toast.success(`Layer "${response.name}" uploaded successfully! Navigating to new map...`);
+
+      // Mark as completed
+      setUploadingFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, status: 'completed', progress: 100 } : f)));
+
+      // Remove from uploading list after delay
+      setTimeout(() => {
+        setUploadingFiles((prev) => prev.filter((f) => f.id !== fileId));
+      }, 2000);
+
+      // Invalidate project data to refresh the project state
+      queryClient.invalidateQueries({ queryKey: ['project', projectId] });
+
+      // Navigate to the new child map if dag_child_map_id is present
+      if (response.dag_child_map_id) {
+        setTimeout(() => {
+          navigate(`/project/${projectId}/${response.dag_child_map_id}`);
+        }, 1000);
+      } else {
+        // Fallback: refresh the current map data
+        setTimeout(() => {
+          invalidateMapData();
+        }, 2000);
       }
     },
-    [versionId, refetchMapData],
-  );
+    onError: (error, { file, fileId }) => {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setUploadingFiles((prev) => prev.map((f) => (f.id === fileId ? { ...f, status: 'error', error: errorMessage } : f)));
+      toast.error(`Error uploading ${file.name}: ${errorMessage}`);
+
+      // Remove from uploading list after delay to show error state
+      setTimeout(() => {
+        setUploadingFiles((prev) => prev.filter((f) => f.id !== fileId));
+      }, 5000);
+    },
+  });
 
   // Modified dropzone implementation to handle multiple files
   const onDrop = useCallback(
@@ -180,7 +392,7 @@ export default function ProjectView() {
 
       // Start uploading each file
       newUploadingFiles.forEach((uploadingFile) => {
-        uploadFile(uploadingFile.file, uploadingFile.id);
+        uploadFile.mutate({ file: uploadingFile.file, fileId: uploadingFile.id });
       });
     },
     [versionId, uploadFile],
@@ -203,34 +415,6 @@ export default function ProjectView() {
       'application/las+zip': ['.laz'],
     },
   });
-
-  useEffect(() => {
-    if (!versionId) {
-      return;
-    }
-
-    let roomTimer: NodeJS.Timeout | undefined;
-
-    // Only fetch if we have a session and an ID
-    if (!sessionContext.loading && versionId) {
-      fetchRoomId(versionId);
-
-      // Set up timer to re-fetch room ID every 15 mins
-      roomTimer = setInterval(
-        () => {
-          fetchRoomId(versionId);
-        },
-        15 * 60 * 1000,
-      ); // 15 mins in milliseconds
-    }
-
-    // Cleanup timer on unmount or dependency change
-    return () => {
-      if (roomTimer) {
-        clearInterval(roomTimer);
-      }
-    };
-  }, [versionId, sessionContext.loading, fetchRoomId]);
 
   // Let them hide certain layers client-side only
   const [hiddenLayerIDs, setHiddenLayerIDs] = useState<string[]>([]);
@@ -303,18 +487,31 @@ export default function ProjectView() {
 
       {/* Interactive Map Section */}
       {roomId && project ? (
-        <DriftDBProvider api="/drift/" room={roomId}>
+        <DriftDBProvider api="/drift/" room={roomId.room_id}>
           <MapLibreMap
             mapId={versionId}
             height="100%"
             project={project}
             mapData={mapData}
+            mapTree={mapTree || null}
+            conversationId={conversationId}
+            conversations={conversations || []}
+            setConversationId={setConversationId}
             openDropzone={open}
-            updateMapData={refetchMapData}
-            updateProjectData={updateProjectData}
             uploadingFiles={uploadingFiles}
             hiddenLayerIDs={hiddenLayerIDs}
             toggleLayerVisibility={toggleLayerVisibility}
+            mapRef={mapRef}
+            activeActions={activeActions}
+            setActiveActions={setActiveActions}
+            zoomHistory={zoomHistory}
+            zoomHistoryIndex={zoomHistoryIndex}
+            setZoomHistoryIndex={setZoomHistoryIndex}
+            addError={addError}
+            dismissError={dismissError}
+            errors={errors}
+            invalidateProjectData={invalidateProjectData}
+            invalidateMapData={invalidateMapData}
           />
         </DriftDBProvider>
       ) : (

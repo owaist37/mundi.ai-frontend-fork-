@@ -86,35 +86,47 @@ async def test_map_with_vector_layers(auth_client):
     }
     map_response = await auth_client.post("/api/maps/create", json=map_payload)
     assert map_response.status_code == 200, f"Failed to create map: {map_response.text}"
-    map_id = map_response.json()["id"]
+    current_map_id = map_response.json()["id"]
     layer_ids = {}
 
-    async def _upload_layer(file_name, layer_name_in_db):
+    async def _upload_layer(file_name, layer_name_in_db, target_map_id):
         file_path = str(Path(__file__).parent / "test_fixtures" / file_name)
         if not os.path.exists(file_path):
             pytest.skip(f"Test file {file_path} not found")
         with open(file_path, "rb") as f:
             layer_response = await auth_client.post(
-                f"/api/maps/{map_id}/layers",
+                f"/api/maps/{target_map_id}/layers",
                 files={"file": (file_name, f, "application/octet-stream")},
                 data={"layer_name": layer_name_in_db},
             )
             assert layer_response.status_code == 200, (
                 f"Failed to upload layer {file_name}: {layer_response.text}"
             )
-            return layer_response.json()["id"]
+            response_data = layer_response.json()
+            print(response_data)
+            return response_data["id"], response_data["dag_child_map_id"]
 
     random.seed(42)
-    layer_ids["beaches_layer_id"] = await _upload_layer(
-        "barcelona_beaches.fgb", "Barcelona Beaches"
+    layer_id, current_map_id = await _upload_layer(
+        "barcelona_beaches.fgb", "Barcelona Beaches", current_map_id
     )
-    layer_ids["cafes_layer_id"] = await _upload_layer(
-        "barcelona_cafes.fgb", "Barcelona Cafes"
+    layer_ids["beaches_layer_id"] = layer_id
+
+    layer_id, current_map_id = await _upload_layer(
+        "barcelona_cafes.fgb", "Barcelona Cafes", current_map_id
     )
-    layer_ids["idaho_stations_layer_id"] = await _upload_layer(
-        "idaho_weatherstations.geojson", "Idaho Weather Stations"
+    layer_ids["cafes_layer_id"] = layer_id
+
+    layer_id, current_map_id = await _upload_layer(
+        "idaho_weatherstations.geojson", "Idaho Weather Stations", current_map_id
     )
-    return {"map_id": map_id, **layer_ids}
+    layer_ids["idaho_stations_layer_id"] = layer_id
+
+    return {
+        "map_id": current_map_id,
+        "project_id": map_response.json()["project_id"],
+        **layer_ids,
+    }
 
 
 @pytest.fixture
@@ -150,8 +162,8 @@ def sync_auth_client(sync_client):
 
 @pytest.fixture
 def websocket_url_for_map(sync_auth_client):
-    def _get_url(map_id):
-        return f"/api/maps/ws/{map_id}/messages/updates"
+    def _get_url(map_id, conversation_id):
+        return f"/api/maps/ws/{conversation_id}/messages/updates"
 
     return _get_url
 

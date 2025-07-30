@@ -34,23 +34,31 @@ class MockResponse:
 
 
 @pytest.fixture
-def test_map_id(sync_auth_client):
-    map_title = f"Test Message Map {uuid.uuid4()}"
-    map_data = {
-        "title": map_title,
+def test_map_fixture(sync_auth_client):
+    # Create a map with a project embedded
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
+        "title": f"Test Message Map {uuid.uuid4()}",
         "description": "Map for testing message API",
         "link_accessible": True,
     }
-    response = sync_auth_client.post("/api/maps/create", json=map_data)
+    response = sync_auth_client.post("/api/maps/create", json=map_create_payload)
     assert response.status_code == 200
-    map_id = response.json()["id"]
-    return map_id
+    data = response.json()
+    map_id = data["id"]
+    project_id = data["project_id"]
+
+    return {"map_id": map_id, "project_id": project_id}
 
 
 @pytest.mark.anyio
 async def test_send_and_get_messages(
-    test_map_id, sync_auth_client, websocket_url_for_map
+    test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
+    map_id = test_map_fixture["map_id"]
+    project_id = test_map_fixture["project_id"]
+
     def create_response_queue():
         return [
             MockResponse(
@@ -70,29 +78,43 @@ async def test_send_and_get_messages(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
-        response = sync_auth_client.get(f"/api/maps/{test_map_id}/messages")
+        # Create a conversation
+        conversation_response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert conversation_response.status_code == 200
+        conversation_id = conversation_response.json()["id"]
+
+        response = sync_auth_client.get(
+            f"/api/conversations/{conversation_id}/messages"
+        )
         assert response.status_code == 200
-        data = response.json()
-        assert data["map_id"] == test_map_id
-        assert len(data["messages"]) == 0
+        messages = response.json()
+        assert isinstance(messages, list)
+        assert len(messages) == 0
 
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(test_map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket:
-            user_message = {
-                "role": "user",
-                "content": "Hello, can you help me analyze this map?",
-            }
             response = sync_auth_client.post(
-                f"/api/maps/{test_map_id}/messages/send",
-                json=user_message,
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+                json={
+                    "message": {
+                        "role": "user",
+                        "content": "Hello, can you help me analyze this map?",
+                    },
+                    "selected_feature": None,
+                },
             )
             assert response.status_code == 200
             assert response.json()["status"] == "processing_started"
 
             sent_msg = websocket.receive_json()
-            assert sent_msg["message_json"]["role"] == "user"
-            assert "analyze this map" in sent_msg["message_json"]["content"]
+            assert sent_msg["role"] == "user"
+            assert "analyze this map" in sent_msg["content"]
+            assert not sent_msg["has_tool_calls"]
+            assert sent_msg["conversation_id"] == conversation_id
 
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
@@ -104,12 +126,16 @@ async def test_send_and_get_messages(
             )
 
             assistant_msg = websocket.receive_json()
-            assert assistant_msg["message_json"]["role"] == "assistant"
-            assert "analyze" in assistant_msg["message_json"]["content"]
+            assert assistant_msg["role"] == "assistant"
+            assert "analyze" in assistant_msg["content"]
+            assert assistant_msg["conversation_id"] == conversation_id
 
-        response = sync_auth_client.get(f"/api/maps/{test_map_id}/messages")
+        response = sync_auth_client.get(
+            f"/api/conversations/{conversation_id}/messages"
+        )
         assert response.status_code == 200
-        data = response.json()
-        assert len(data["messages"]) == 2
-        assert data["messages"][0]["message_json"]["role"] == "user"
-        assert data["messages"][1]["message_json"]["role"] == "assistant"
+        messages = response.json()
+        assert len(messages) == 2
+        # Messages are returned in flat structure from conversation endpoint
+        assert messages[0]["role"] == "user"
+        assert messages[1]["role"] == "assistant"

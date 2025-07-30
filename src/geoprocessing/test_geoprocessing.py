@@ -47,10 +47,11 @@ def sync_test_map_with_vector_layers(sync_auth_client):
     }
     map_response = sync_auth_client.post("/api/maps/create", json=map_payload)
     assert map_response.status_code == 200, f"Failed to create map: {map_response.text}"
-    map_id = map_response.json()["id"]
+    current_map_id = map_response.json()["id"]
+    project_id = map_response.json()["project_id"]
     layer_ids = {}
 
-    def _upload_layer(file_name, layer_name_in_db):
+    def _upload_layer(file_name, layer_name_in_db, map_id):
         file_path = str(
             Path(__file__).parent.parent.parent / "test_fixtures" / file_name
         )
@@ -65,19 +66,26 @@ def sync_test_map_with_vector_layers(sync_auth_client):
             assert layer_response.status_code == 200, (
                 f"Failed to upload layer {file_name}: {layer_response.text}"
             )
-            return layer_response.json()["id"]
+            response_data = layer_response.json()
+            return response_data["id"], response_data["dag_child_map_id"]
 
     random.seed(42)
-    layer_ids["beaches_layer_id"] = _upload_layer(
-        "barcelona_beaches.fgb", "Barcelona Beaches"
+    layer_id, current_map_id = _upload_layer(
+        "barcelona_beaches.fgb", "Barcelona Beaches", current_map_id
     )
-    layer_ids["cafes_layer_id"] = _upload_layer(
-        "barcelona_cafes.fgb", "Barcelona Cafes"
+    layer_ids["beaches_layer_id"] = layer_id
+
+    layer_id, current_map_id = _upload_layer(
+        "barcelona_cafes.fgb", "Barcelona Cafes", current_map_id
     )
-    layer_ids["idaho_stations_layer_id"] = _upload_layer(
-        "idaho_weatherstations.geojson", "Idaho Weather Stations"
+    layer_ids["cafes_layer_id"] = layer_id
+
+    layer_id, current_map_id = _upload_layer(
+        "idaho_weatherstations.geojson", "Idaho Weather Stations", current_map_id
     )
-    return {"map_id": map_id, **layer_ids}
+    layer_ids["idaho_stations_layer_id"] = layer_id
+
+    return {"map_id": current_map_id, "project_id": project_id, **layer_ids}
 
 
 @pytest.mark.anyio
@@ -152,14 +160,26 @@ async def test_chat_completions(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
+        # Create a new conversation
+        response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": sync_test_map_with_vector_layers["project_id"]},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        conversation_id = data["id"]
+
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{map_id}/messages/send",
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
                 json={
-                    "role": "user",
-                    "content": "Buffer the beaches layer with a distance of 100",
+                    "message": {
+                        "role": "user",
+                        "content": "Buffer the beaches layer with a distance of 100",
+                    },
+                    "selected_feature": None,
                 },
             )
             assert response.status_code == 200
@@ -169,22 +189,43 @@ async def test_chat_completions(
 
             # our own message
             sent_msg = websocket.receive_json()
-            assert sent_msg["message_json"]["role"] == "user"
+            assert sent_msg["role"] == "user"
             assert (
-                sent_msg["message_json"]["content"]
-                == "Buffer the beaches layer with a distance of 100"
+                sent_msg["content"] == "Buffer the beaches layer with a distance of 100"
             )
+            assert not sent_msg["has_tool_calls"]
+            assert sent_msg["tool_calls"] == []
+            assert sent_msg["map_id"] == map_id
+            assert "created_at" in sent_msg
+            assert sent_msg["conversation_id"] == conversation_id
 
             # Kue is thinking
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
+
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
             assert msg["status"] == "completed"
 
+            # Assistant response with tool call
+            msg = websocket.receive_json()
+            assert msg["role"] == "assistant"
+            assert (
+                "I'll help you buffer the beaches layer with a 100-unit distance"
+                in msg["content"]
+            )
+            assert msg["has_tool_calls"]
+            assert len(msg["tool_calls"]) == 1
+            assert msg["tool_calls"][0]["tagline"] == "native:buffer"
+            assert msg["tool_calls"][0]["icon"] == "qgis"
+            assert msg["conversation_id"] == conversation_id
+
             # Execute geoprocessing
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "QGIS running native:buffer..."
+            assert msg["status"] == "active"
+
+            # QGIS processing completion
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "QGIS running native:buffer..."
             assert msg["status"] == "completed"
@@ -228,16 +269,32 @@ async def test_chat_completions(
             # loops once
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
+            assert msg["status"] == "active"
+
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
             assert msg["status"] == "completed"
 
             # Adding layer to map
+            assistant_msg = websocket.receive_json()
+            assert assistant_msg["role"] == "assistant"
+            assert (
+                "Now I'll add the buffered layer to your map."
+                in assistant_msg["content"]
+            )
+            assert assistant_msg["role"] == "assistant"
+            assert assistant_msg["has_tool_calls"]
+            assert assistant_msg["tool_calls"][0]["tagline"] == "Adding layer to map..."
+            assert assistant_msg["tool_calls"][0]["icon"] == "map-plus"
+
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Adding layer to map..."
+            assert msg["status"] == "active"
+
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Adding layer to map..."
             assert msg["status"] == "completed"
+            assert msg["updates"]["style_json"]
 
             async with get_async_db_connection() as conn:
                 layers = await conn.fetch(
@@ -252,16 +309,16 @@ async def test_chat_completions(
 
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
+
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
             assert msg["status"] == "completed"
 
             assistant_msg = websocket.receive_json()
-            print("assistant", assistant_msg)
-            assert assistant_msg["message_json"]["role"] == "assistant"
+            assert assistant_msg["role"] == "assistant"
             assert (
-                "successfully created a buffer around the beaches with a 100-unit distance"
-                in assistant_msg["message_json"]["content"]
+                "I've successfully created a buffer around the beaches with a 100-unit distance"
+                in assistant_msg["content"]
             )
 
             async with get_async_db_connection() as conn:

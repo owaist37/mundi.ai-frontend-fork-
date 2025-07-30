@@ -55,15 +55,17 @@ async def test_map_with_layers(auth_client):
     )
     vector_layer_data = response.json()
     vector_layer_id = vector_layer_data["id"]
+    # Get the child map ID from the first upload
+    child_map_id = vector_layer_data["dag_child_map_id"]
 
-    # Upload raster
+    # Upload raster to the child map from the first upload
     raster_path = "test_fixtures/waterboard.tif"
     assert os.path.exists(raster_path), "Raster file not found"
 
     with open(raster_path, "rb") as f:
         files = {"file": ("raster_layer.tif", f, "image/tiff")}
         response = await auth_client.post(
-            f"/api/maps/{map_id}/layers",
+            f"/api/maps/{child_map_id}/layers",
             files=files,
             data={"name": "Raster Layer", "type": "raster"},
         )
@@ -73,9 +75,11 @@ async def test_map_with_layers(auth_client):
     )
     raster_layer_data = response.json()
     raster_layer_id = raster_layer_data["id"]
+    # Get the final child map ID from the second upload
+    final_map_id = raster_layer_data["dag_child_map_id"]
 
-    # Check layer properties by getting details about the layers
-    response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    # Check layer properties by getting details about the layers from the final map
+    response = await auth_client.get(f"/api/maps/{final_map_id}/layers")
     assert response.status_code == 200, f"Failed to get layers: {response.text}"
 
     layers_data = response.json()
@@ -117,9 +121,9 @@ async def test_map_with_layers(auth_client):
         f"Expected feature_count to be {ogrinfo_count} for US Counties layer"
     )
 
-    # Return the map ID and layer IDs
+    # Return the final map ID and layer IDs
     return {
-        "map_id": map_id,
+        "map_id": final_map_id,
         "vector_layer_id": vector_layer_id,
         "raster_layer_id": raster_layer_id,
     }

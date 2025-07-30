@@ -25,7 +25,9 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse, Response
 from ..dependencies.db_pool import get_pooled_connection
+from ..dependencies.dag import get_layer
 from pydantic import BaseModel
+from src.database.models import MapLayer
 from ..dependencies.session import (
     verify_session_required,
     UserContext,
@@ -73,39 +75,18 @@ layer_router = APIRouter()
     operation_id="view_layer_as_cog_tif",
 )
 async def get_layer_cog_tif(
-    layer_id: str,
     request: Request,
+    layer: MapLayer = Depends(get_layer),
     session: UserContext = Depends(verify_session_required),
 ):
-    """
-    Stream a Cloud Optimized GeoTIFF (COG) directly from S3 for a raster layer.
-    This route allows direct access to the layer without requiring a map prefix.
-    If the COG doesn't exist yet, it will be created on-the-fly.
-    """
-    # Connect to database
-    async with get_async_db_connection() as conn:
-        # Get the layer by layer_id
-        layer = await conn.fetchrow(
-            """
-            SELECT layer_id, name, path, type, metadata, feature_count, s3_key
-            FROM map_layers
-            WHERE layer_id = $1
-            """,
-            layer_id,
+    # Check if layer is a raster type
+    if layer.type != "raster":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Layer is not a raster type. COG can only be generated from raster data.",
         )
 
-        if not layer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
-
-        # Check if layer is a raster type
-        if layer["type"] != "raster":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Layer is not a raster type. COG can only be generated from raster data.",
-            )
-
+    async with get_async_db_connection() as conn:
         # Check if layer is associated with any maps via the layers array
         map_result = await conn.fetchrow(
             """
@@ -114,7 +95,7 @@ async def get_layer_cog_tif(
             JOIN user_mundiai_projects p ON m.project_id = p.id
             WHERE $1 = ANY(m.layers) AND m.soft_deleted_at IS NULL
             """,
-            layer_id,
+            layer.layer_id,
         )
 
         if map_result and not map_result["link_accessible"]:
@@ -130,8 +111,7 @@ async def get_layer_cog_tif(
         bucket_name = get_bucket_name()
 
         # Check if metadata has cog_key
-        metadata = json.loads(layer["metadata"] or "{}")
-        cog_key = metadata.get("cog_key")
+        cog_key = layer.metadata_dict.get("cog_key")
 
         # Set up MinIO/S3 client
         s3_client = await get_async_s3_client()
@@ -140,17 +120,19 @@ async def get_layer_cog_tif(
         if not cog_key:
             with tempfile.TemporaryDirectory() as temp_dir:
                 # Download the raster file
-                s3_key = layer["s3_key"]
+                s3_key = layer.s3_key
                 file_extension = os.path.splitext(s3_key)[1]
                 local_input_file = os.path.join(
-                    temp_dir, f"layer_{layer_id}{file_extension}"
+                    temp_dir, f"layer_{layer.layer_id}{file_extension}"
                 )
 
                 # Download from S3 using async client
                 s3 = await get_async_s3_client()
                 await s3.download_file(bucket_name, s3_key, local_input_file)
                 # Create COG file path
-                local_cog_file = os.path.join(temp_dir, f"layer_{layer_id}.cog.tif")
+                local_cog_file = os.path.join(
+                    temp_dir, f"layer_{layer.layer_id}.cog.tif"
+                )
 
                 # Check raster info (needed for band count)
                 gdalinfo_cmd = ["gdalinfo", "-json", local_input_file]
@@ -161,16 +143,17 @@ async def get_layer_cog_tif(
                     gdalinfo_json = json.loads(gdalinfo_result.stdout)
                 except (subprocess.CalledProcessError, json.JSONDecodeError) as e:
                     logger.error(
-                        f"Failed to get gdalinfo for {layer_id}: {e}", exc_info=True
+                        f"Failed to get gdalinfo for {layer.layer_id}: {e}",
+                        exc_info=True,
                     )
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail=f"Failed to process raster info for layer {layer_id}.",
+                        detail=f"Failed to process raster info for layer {layer.layer_id}.",
                     )
 
                 # Always attempt reprojection to EPSG:3857 (gdalwarp is a no-op if already in 3857)
                 reprojected_file_path = os.path.join(
-                    temp_dir, f"layer_{layer_id}_3857.tif"
+                    temp_dir, f"layer_{layer.layer_id}_3857.tif"
                 )
                 gdalwarp_cmd = [
                     "gdalwarp",
@@ -182,17 +165,19 @@ async def get_layer_cog_tif(
                     reprojected_file_path,
                 ]
                 try:
-                    print(f"INFO: Running gdalwarp for layer {layer_id} to EPSG:3857.")
+                    print(
+                        f"INFO: Running gdalwarp for layer {layer.layer_id} to EPSG:3857."
+                    )
                     subprocess.run(
                         gdalwarp_cmd, check=True, capture_output=True, text=True
                     )
                     input_file_for_cog = reprojected_file_path
                     print(
-                        f"INFO: Layer {layer_id} successfully processed/reprojected to EPSG:3857."
+                        f"INFO: Layer {layer.layer_id} successfully processed/reprojected to EPSG:3857."
                     )
                 except subprocess.CalledProcessError as e:
                     print(
-                        f"ERROR: gdalwarp failed for layer {layer_id}: {e.stderr}. Using original file for COG creation."
+                        f"ERROR: gdalwarp failed for layer {layer.layer_id}: {e.stderr}. Using original file for COG creation."
                     )
                     # Fallback to original file if reprojection fails
                     input_file_for_cog = local_input_file
@@ -205,7 +190,7 @@ async def get_layer_cog_tif(
                     try:
                         # Try expanding to RGB first
                         local_rgb_file = os.path.join(
-                            temp_dir, f"layer_{layer_id}_rgb.tif"
+                            temp_dir, f"layer_{layer.layer_id}_rgb.tif"
                         )
                         rgb_cmd = [
                             "gdal_translate",
@@ -220,16 +205,18 @@ async def get_layer_cog_tif(
                             rgb_cmd, check=True, capture_output=True, text=True
                         )
                         input_file_for_cog = local_rgb_file
-                        print(f"INFO: Expanded single band to RGB for layer {layer_id}")
+                        print(
+                            f"INFO: Expanded single band to RGB for layer {layer.layer_id}"
+                        )
                     except subprocess.CalledProcessError as e:
                         print(
-                            f"WARN: gdal_translate -expand rgb failed for layer {layer_id}: {e.stderr}. Using single-band with color ramp."
+                            f"WARN: gdal_translate -expand rgb failed for layer {layer.layer_id}: {e.stderr}. Using single-band with color ramp."
                         )
                         # Use the existing raster_value_stats_b1 from metadata
-                        if "raster_value_stats_b1" in metadata:
+                        if "raster_value_stats_b1" in layer.metadata_dict:
                             needs_color_ramp_suffix = True
                             print(
-                                f"INFO: Using existing raster_value_stats_b1 for layer {layer_id}"
+                                f"INFO: Using existing raster_value_stats_b1 for layer {layer.layer_id}"
                             )
                         # Keep input_file_for_cog as the original single-band file
 
@@ -269,12 +256,13 @@ async def get_layer_cog_tif(
                     )
 
                 # Upload the COG file to S3
-                cog_key = f"cog/layer/{layer_id}.cog.tif"
+                cog_key = f"cog/layer/{layer.layer_id}.cog.tif"
                 s3 = await get_async_s3_client()
                 await s3.upload_file(local_cog_file, bucket_name, cog_key)
                 print(f"INFO: Uploaded COG to s3://{bucket_name}/{cog_key}")
 
                 # Update the layer metadata with the COG key
+                metadata = layer.metadata_dict
                 metadata["cog_key"] = cog_key
 
                 # Update the database
@@ -285,13 +273,13 @@ async def get_layer_cog_tif(
                     WHERE layer_id = $2
                     """,
                     json.dumps(metadata),
-                    layer_id,
+                    layer.layer_id,
                 )
-                print(f"INFO: Updated metadata for layer {layer_id}", metadata)
+                print(f"INFO: Updated metadata for layer {layer.layer_id}", metadata)
 
         # Ensure cog_key is available if it was just generated
         if not cog_key:
-            cog_key = metadata.get("cog_key")
+            cog_key = layer.metadata_dict.get("cog_key")
             if not cog_key:
                 # This case should ideally not be reached if generation logic is sound
                 raise HTTPException(
@@ -379,28 +367,13 @@ async def get_layer_cog_tif(
     operation_id="view_layer_as_pmtiles",
 )
 async def get_layer_pmtiles(
-    layer_id: str,
     request: Request,
+    layer: MapLayer = Depends(get_layer),
     session: UserContext = Depends(verify_session_required),
 ):
     async with get_async_db_connection() as conn:
-        # Get the layer by layer_id
-        layer = await conn.fetchrow(
-            """
-            SELECT layer_id, name, path, type, metadata, feature_count, s3_key
-            FROM map_layers
-            WHERE layer_id = $1
-            """,
-            layer_id,
-        )
-
-        if not layer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
-
         # Check if layer is a vector type
-        if layer["type"] != "vector":
+        if layer.type != "vector":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Layer is not a vector type. PMTiles can only be generated from vector data.",
@@ -414,7 +387,7 @@ async def get_layer_pmtiles(
             JOIN user_mundiai_projects p ON m.project_id = p.id
             WHERE $1 = ANY(m.layers) AND m.soft_deleted_at IS NULL
             """,
-            layer_id,
+            layer.layer_id,
         )
 
         if map_result and not map_result["link_accessible"]:
@@ -431,8 +404,7 @@ async def get_layer_pmtiles(
     bucket_name = get_bucket_name()
 
     # Check if metadata has pmtiles_key
-    metadata = layer["metadata"] or "{}"
-    pmtiles_key = json.loads(metadata).get("pmtiles_key")
+    pmtiles_key = layer.metadata_dict.get("pmtiles_key")
 
     # If PMTiles doesn't exist, create it
     if not pmtiles_key:
@@ -514,41 +486,26 @@ async def get_layer_pmtiles(
     operation_id="view_layer_as_laz",
 )
 async def get_layer_laz(
-    layer_id: str,
     request: Request,
+    layer: MapLayer = Depends(get_layer),
     session: UserContext = Depends(verify_session_required),
 ):
-    async with get_async_db_connection() as conn:
-        # Get the layer by layer_id
-        layer = await conn.fetchrow(
-            """
-            SELECT layer_id, name, path, type, metadata, feature_count, owner_uuid, s3_key
-            FROM map_layers
-            WHERE layer_id = $1
-            """,
-            layer_id,
+    if layer.type != "point_cloud":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Layer is not a point cloud type",
         )
-        if not layer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
 
-        if layer["type"] != "point_cloud":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Layer is not a point cloud type",
-            )
+    if session.get_user_id() != str(layer.owner_uuid):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+        )
 
-        if session.get_user_id() != str(layer["owner_uuid"]):
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
+    # Set up S3 client and bucket
+    bucket_name = get_bucket_name()
 
-        # Set up S3 client and bucket
-        bucket_name = get_bucket_name()
-
-        # Check if layer has s3_key
-        s3_key = layer["s3_key"]
+    # Check if layer has s3_key
+    s3_key = layer.s3_key
 
     # If S3 key doesn't exist, return error
     if not s3_key:
@@ -630,11 +587,10 @@ async def get_layer_laz(
     operation_id="get_layer_mvt_tile",
 )
 async def get_layer_mvt_tile(
-    layer_id: str,
     z: int,
     x: int,
     y: int,
-    request: Request,
+    layer: MapLayer = Depends(get_layer),
     session: UserContext = Depends(verify_session_required),
 ):
     # Validate tile coordinates
@@ -643,44 +599,19 @@ async def get_layer_mvt_tile(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid tile coordinates"
         )
     async with async_conn("mvt") as conn:
-        # Get the layer by layer_id
-        layer = await conn.fetchrow(
-            """
-            SELECT layer_id, name, type, postgis_connection_id, postgis_query, owner_uuid, postgis_attribute_column_list
-            FROM map_layers
-            WHERE layer_id = $1
-            """,
-            layer_id,
-        )
-
-        if not layer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
-
-        # Check if user owns the layer
-        if session.get_user_id() != str(layer["owner_uuid"]):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Authentication required",
-                headers={"WWW-Authenticate": "Bearer"},
-            )
-
         # Check if layer is a PostGIS type
-        if layer["type"] != "postgis":
+        if layer.type != "postgis":
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Layer is not a PostGIS type. MVT tiles can only be generated from PostGIS data.",
             )
 
-        if not layer["postgis_attribute_column_list"]:
+        if not layer.postgis_attribute_column_list:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"PostGIS layer {layer['name']} has no attribute columns, you must re-create the layer.",
+                detail=f"PostGIS layer {layer.name} has no attribute columns, you must re-create the layer.",
             )
-        non_geom_column_names: List[str] = layer["postgis_attribute_column_list"] + [
-            "id"
-        ]
+        non_geom_column_names: List[str] = layer.postgis_attribute_column_list + ["id"]
 
         # Get PostGIS connection details and verify ownership
         connection_details = await conn.fetchrow(
@@ -689,7 +620,7 @@ async def get_layer_mvt_tile(
             FROM project_postgres_connections
             WHERE id = $1
             """,
-            layer["postgis_connection_id"],
+            layer.postgis_connection_id,
         )
 
         if not connection_details:
@@ -728,13 +659,13 @@ async def get_layer_mvt_tile(
                 SELECT ST_MakeEnvelope($1, $2, $3, $4, 3857) AS wm_geom
             ),
             bounds_native AS (
-                SELECT ST_Transform(wm_geom, (SELECT ST_SRID(geom) FROM ({layer["postgis_query"]}) LIMIT 1)) AS nat_geom,
+                SELECT ST_Transform(wm_geom, (SELECT ST_SRID(geom) FROM ({layer.postgis_query}) LIMIT 1)) AS nat_geom,
                        wm_geom::box2d AS b2d
                 FROM bounds_webmerc
             ),
             candidates AS (
                 SELECT {", ".join([f"t.{name}" for name in non_geom_column_names])}, ST_MakeValid(t.geom) AS geom
-                FROM ({layer["postgis_query"]}) t, bounds_native b
+                FROM ({layer.postgis_query}) t, bounds_native b
                 WHERE t.geom && b.nat_geom
                   AND ST_Intersects(t.geom, b.nat_geom)
             ),
@@ -780,115 +711,78 @@ async def get_layer_mvt_tile(
     operation_id="view_layer_as_geojson",
 )
 async def get_layer_geojson(
-    layer_id: str,
-    request: Request,
-    session: UserContext = Depends(verify_session_required),
+    layer: MapLayer = Depends(get_layer),
 ):
-    async with get_async_db_connection() as conn:
-        # Get the layer by layer_id
-        layer = await conn.fetchrow(
-            """
-            SELECT layer_id, name, path, type, metadata, feature_count, owner_uuid, s3_key
-            FROM map_layers
-            WHERE layer_id = $1
-            """,
-            layer_id,
+    # Check if layer is a vector type
+    if layer.type != "vector":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Layer is not a vector type. GeoJSON format is only available for vector data.",
         )
-        if not layer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
+
+    # Retrieve the vector data
+    bucket_name = get_bucket_name()
+    with tempfile.TemporaryDirectory() as temp_dir:
+        # Get file extension from s3_key or path
+        s3_key_or_path = layer.s3_key or layer.path
+
+        # If the path is a presigned URL, download using httpx
+        if s3_key_or_path.startswith("http"):
+            # Extract file extension from URL (before query parameters)
+            url_path = s3_key_or_path.split("?")[0]
+            file_extension = os.path.splitext(url_path)[1]
+
+            local_input_file = os.path.join(
+                temp_dir, f"layer_{layer.layer_id}_input{file_extension}"
             )
 
-        # Check if layer is a vector type
-        if layer["type"] != "vector":
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Layer is not a vector type. GeoJSON format is only available for vector data.",
+            async with httpx.AsyncClient() as client:
+                response = await client.get(s3_key_or_path)
+                response.raise_for_status()
+                with open(local_input_file, "wb") as f:
+                    f.write(response.content)
+        else:
+            # Otherwise, assume it's an S3 key
+            s3_key = s3_key_or_path
+            file_extension = os.path.splitext(s3_key)[1]
+
+            local_input_file = os.path.join(
+                temp_dir, f"layer_{layer.layer_id}_input{file_extension}"
             )
 
-        # First check direct layer ownership
-        if session.get_user_id() != str(layer["owner_uuid"]):
-            # Check if layer is associated with any public map
-            map_result = await conn.fetchrow(
-                """
-                SELECT m.id, p.link_accessible, m.owner_uuid
-                FROM user_mundiai_maps m
-                JOIN user_mundiai_projects p ON m.project_id = p.id
-                WHERE $1 = ANY(m.layers) AND m.soft_deleted_at IS NULL AND p.link_accessible = true
-                """,
-                layer_id,
-            )
-            if not map_result:
-                # Not owner and not in any public map
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
+            # Download from S3 using async client
+            s3 = await get_async_s3_client()
+            await s3.download_file(bucket_name, s3_key, local_input_file)
 
-        # Retrieve the vector data
-        bucket_name = get_bucket_name()
-        with tempfile.TemporaryDirectory() as temp_dir:
-            # Get file extension from s3_key or path
-            s3_key_or_path = layer["s3_key"] or layer["path"]
+        # Convert to GeoJSON using ogr2ogr
+        local_geojson_file = os.path.join(temp_dir, f"layer_{layer.layer_id}.geojson")
+        ogr_cmd = [
+            "ogr2ogr",
+            "-f",
+            "GeoJSON",
+            "-t_srs",
+            "EPSG:4326",  # Ensure coordinates are in WGS84
+            "-lco",
+            "COORDINATE_PRECISION=6",  # ~1m precision at equator
+            local_geojson_file,
+            local_input_file,
+        ]
+        subprocess.run(ogr_cmd, check=True)
 
-            # If the path is a presigned URL, download using httpx
-            if s3_key_or_path.startswith("http"):
-                # Extract file extension from URL (before query parameters)
-                url_path = s3_key_or_path.split("?")[0]
-                file_extension = os.path.splitext(url_path)[1]
+        # Read the GeoJSON file and return it
+        with open(local_geojson_file, "r") as f:
+            geojson_content = f.read()
 
-                local_input_file = os.path.join(
-                    temp_dir, f"layer_{layer_id}_input{file_extension}"
-                )
-
-                async with httpx.AsyncClient() as client:
-                    response = await client.get(s3_key_or_path)
-                    response.raise_for_status()
-                    with open(local_input_file, "wb") as f:
-                        f.write(response.content)
-            else:
-                # Otherwise, assume it's an S3 key
-                s3_key = s3_key_or_path
-                file_extension = os.path.splitext(s3_key)[1]
-
-                local_input_file = os.path.join(
-                    temp_dir, f"layer_{layer_id}_input{file_extension}"
-                )
-
-                # Download from S3 using async client
-                s3 = await get_async_s3_client()
-                await s3.download_file(bucket_name, s3_key, local_input_file)
-
-            # Convert to GeoJSON using ogr2ogr
-            local_geojson_file = os.path.join(temp_dir, f"layer_{layer_id}.geojson")
-            ogr_cmd = [
-                "ogr2ogr",
-                "-f",
-                "GeoJSON",
-                "-t_srs",
-                "EPSG:4326",  # Ensure coordinates are in WGS84
-                "-lco",
-                "COORDINATE_PRECISION=6",  # ~1m precision at equator
-                local_geojson_file,
-                local_input_file,
-            ]
-            subprocess.run(ogr_cmd, check=True)
-
-            # Read the GeoJSON file and return it
-            with open(local_geojson_file, "r") as f:
-                geojson_content = f.read()
-
-            # Return the GeoJSON with appropriate headers and cache control
-            return Response(
-                content=geojson_content,
-                media_type="application/geo+json",
-                headers={
-                    "Content-Disposition": f'attachment; filename="{layer["name"]}.geojson"',
-                    "Access-Control-Allow-Origin": "*",
-                    "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
-                },
-            )
+        # Return the GeoJSON with appropriate headers and cache control
+        return Response(
+            content=geojson_content,
+            media_type="application/geo+json",
+            headers={
+                "Content-Disposition": f'attachment; filename="{layer.name}.geojson"',
+                "Access-Control-Allow-Origin": "*",
+                "Cache-Control": "public, max-age=86400",  # Cache for 24 hours
+            },
+        )
 
 
 KUE_SQL_SYSTEM_PROMPT = """
@@ -943,43 +837,27 @@ class LayerQueryRequest(BaseModel):
     operation_id="query_layer",
 )
 async def query_layer(
-    layer_id: str,
     request: Request,
     body: LayerQueryRequest,
+    layer: MapLayer = Depends(get_layer),
     session: UserContext = Depends(verify_session_required),
     layer_describer: LayerDescriber = Depends(get_layer_describer),
     chat_args: ChatArgsProvider = Depends(get_chat_args_provider),
 ):
     natural_language_query = body.natural_language_query
     max_n_rows = min(body.max_n_rows, 25)  # Cap at 25 rows
-    user_id = session.get_user_id()
-
-    async with get_async_db_connection() as conn:
-        layer = await conn.fetchrow(
-            """
-            SELECT layer_id, name, path, type, s3_key
-            FROM map_layers
-            WHERE layer_id = $1 AND owner_uuid = $2
-            """,
-            layer_id,
-            user_id,
-        )
-        if not layer:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
 
     # Check if schema info is cached in Redis
-    schema_info = redis.get(f"vector_schema:{layer_id}:duckdb")
+    schema_info = redis.get(f"vector_schema:{layer.layer_id}:duckdb")
     if not schema_info:
         # ~0.5 seconds
         schema_info = await describe_layer_internal(
-            layer_id, layer_describer, session.get_user_id()
+            layer.layer_id, layer_describer, session.get_user_id()
         )
 
         # 5 minute expiry
         redis.set(
-            f"vector_schema:{layer_id}:duckdb",
+            f"vector_schema:{layer.layer_id}:duckdb",
             schema_info,
             ex=5 * 60,
         )
@@ -995,7 +873,7 @@ async def query_layer(
         {
             "role": "system",
             "content": f"""
-The table name representing the layer is {layer_id}.
+The table name representing the layer is {layer.layer_id}.
 
 The column names are from "Attribute Fields" in the table schema.
 DO NOT select column names that are not listed. Do not assume there
@@ -1015,7 +893,9 @@ is a primary key column like ID or id, unless it's affirmatively listed.
     # Loop in case we see an error or two
     for _ in range(2):
         # ~1.4 seconds
-        chat_completions_args = await chat_args.get_args(user_id, "query_layer")
+        chat_completions_args = await chat_args.get_args(
+            session.get_user_id(), "query_layer"
+        )
         response = await client.chat.completions.create(
             **chat_completions_args,
             messages=sql_messages,
@@ -1027,7 +907,7 @@ is a primary key column like ID or id, unless it's affirmatively listed.
         # Use the execute_duckdb_query function from src/duckdb.py
         try:
             # ~1.1 seconds
-            result = await execute_duckdb_query(sql_query, layer_id, max_n_rows)
+            result = await execute_duckdb_query(sql_query, layer.layer_id, max_n_rows)
             return result
 
         except (duckdb.duckdb.BinderException, duckdb.duckdb.CatalogException) as e:

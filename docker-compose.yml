@@ -58,6 +58,7 @@ services:
       - ./src:/app/src
       - ./alembic:/app/alembic
       - ./conftest.py:/app/conftest.py
+      - ./docs:/app/docs
 
   minio:
     image: bitnami/minio:latest

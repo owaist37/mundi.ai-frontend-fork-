@@ -5,6 +5,8 @@
 @custom-variant dark (&:is(.dark *));
 @custom-variant dark (&:where(.dark, .dark *));
 
+
+
 @layer base {
   :root {
     --sidebar-background: 0 0% 98%;
@@ -143,5 +145,12 @@
 
   body {
     @apply bg-background text-foreground;
+  }
+}
+
+@layer utilities {
+  .text-halfway-sm-xs {
+    font-size: 0.8125rem; /* 13px - halfway between text-xs (12px) and text-sm (14px) */
+    line-height: calc(1.125 / 0.8125); /* ~1.385 - halfway between text-xs and text-sm line heights */
   }
 }

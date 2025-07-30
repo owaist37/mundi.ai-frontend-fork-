@@ -102,11 +102,15 @@ async def test_upload_with_adding_to_map(test_map_id, auth_client):
         )
 
         assert response.status_code == 200, f"Failed to upload layer: {response.text}"
-        layer_id = response.json()["id"]
+        upload_response = response.json()
+        layer_id = upload_response["id"]
+        child_map_id = upload_response["dag_child_map_id"]
         print(f"Created layer with ID: {layer_id}")
+        print(f"Created child map with ID: {child_map_id}")
 
+    # Check the child map for the layer, not the parent map
     response = await auth_client.get(
-        f"/api/maps/{test_map_id}/layers",
+        f"/api/maps/{child_map_id}/layers",
     )
 
     assert response.status_code == 200, f"Failed to get layers: {response.text}"
@@ -117,3 +121,13 @@ async def test_upload_with_adding_to_map(test_map_id, auth_client):
     assert any(layer["id"] == layer_id for layer in layers), (
         "Layer was not added to map"
     )
+
+    # Verify the parent map does NOT contain the new layer (DAG immutability)
+    parent_response = await auth_client.get(
+        f"/api/maps/{test_map_id}/layers",
+    )
+    assert parent_response.status_code == 200, (
+        f"Failed to get parent layers: {parent_response.text}"
+    )
+    parent_layers = parent_response.json()["layers"]
+    assert len(parent_layers) == 0, "Parent map should not contain the uploaded layer"

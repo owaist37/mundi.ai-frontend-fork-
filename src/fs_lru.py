@@ -122,6 +122,11 @@ class LayerCache:
             if not layer:
                 raise KeyError(f"Layer {layer_id} not found")
 
+            if layer["type"] == "postgis":
+                raise KeyError(
+                    f"PostGIS layer {layer_id} cannot be pulled as individual vector file"
+                )
+
             # Check if the layer is associated with any maps via the layers array
             # Order by created_on DESC to get the most recently created map first
             await conn.fetch(

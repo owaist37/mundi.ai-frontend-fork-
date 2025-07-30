@@ -60,11 +60,14 @@ async def test_laz_file_upload(test_map_id, auth_client):
         assert response.status_code == 200, (
             f"Failed to upload LAZ file: {response.text}"
         )
-        layer_id = response.json()["id"]
+        response_data = response.json()
+        layer_id = response_data["id"]
+        dag_child_map_id = response_data["dag_child_map_id"]
         print(f"Created LAZ layer with ID: {layer_id}")
+        print(f"DAG child map ID: {dag_child_map_id}")
 
     response = await auth_client.get(
-        f"/api/maps/{test_map_id}/layers",
+        f"/api/maps/{dag_child_map_id}/layers",
     )
     assert response.status_code == 200, f"Failed to get layers: {response.text}"
     layers_response = response.json()

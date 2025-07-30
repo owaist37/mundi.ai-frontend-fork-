@@ -17,10 +17,10 @@ import os
 import math
 import json
 from fastapi import (
+    Request,
     APIRouter,
     HTTPException,
     status,
-    Request,
     Depends,
     BackgroundTasks,
 )
@@ -46,17 +46,19 @@ from src.utils import (
 )
 import io
 from opentelemetry import trace
-from ..structures import get_async_db_connection
-from ..dependencies.database_documenter import (
+from src.database.models import MundiProject
+from src.structures import get_async_db_connection
+from src.dependencies.database_documenter import (
     DatabaseDocumenter,
     get_database_documenter,
 )
-from ..dependencies.postgres_connection import (
+from src.dependencies.postgres_connection import (
     PostgresConnectionManager,
     get_postgres_connection_manager,
     PostgresConnectionURIError,
     PostgresConfigurationError,
 )
+from src.dependencies.dag import get_project
 from src.routes.postgres_routes import (
     generate_id,
     get_map_style_internal,
@@ -284,49 +286,21 @@ async def list_user_projects(
 @project_router.get(
     "/{project_id}", response_model=ProjectResponse, operation_id="get_project"
 )
-async def get_project(
-    project_id: str,
+async def get_project_route(
+    project: MundiProject = Depends(get_project),
     session: UserContext = Depends(verify_session_required),
     connection_manager: PostgresConnectionManager = Depends(
         get_postgres_connection_manager
     ),
 ):
-    user_id = session.get_user_id()
     async with get_async_db_connection() as conn:
-        project_data = await conn.fetchrow(
-            """
-            SELECT p.id, p.owner_uuid, p.link_accessible, p.maps, p.created_on
-            FROM user_mundiai_projects p
-            WHERE (
-                p.owner_uuid = $1 OR
-                $2 = ANY(p.editor_uuids) OR
-                $3 = ANY(p.viewer_uuids)
-            ) AND p.soft_deleted_at IS NULL
-            AND p.id = $4
-            ORDER BY p.created_on DESC
-            """,
-            user_id,
-            user_id,
-            user_id,
-            project_id,
-        )
+        created_on_str = project.created_on.isoformat()
 
-        if project_data is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_id} not found.",
-            )
-
-        created_on_str = (
-            project_data["created_on"].isoformat()
-            if isinstance(project_data["created_on"], datetime)
-            else str(project_data["created_on"])
-        )
-        owner_uuid_str = str(project_data["owner_uuid"])
+        owner_uuid_str = str(project.owner_uuid)
         most_recent_map_details = None
 
-        if project_data["maps"] and len(project_data["maps"]) > 0:
-            most_recent_map_id = project_data["maps"][-1]
+        if project.maps and len(project.maps) > 0:
+            most_recent_map_id = project.maps[-1]
             map_details = await conn.fetchrow(
                 """
                 SELECT title, description, last_edited
@@ -356,7 +330,7 @@ async def get_project(
             WHERE project_id = $1 AND soft_deleted_at IS NULL
             ORDER BY created_at ASC
             """,
-            project_data["id"],
+            project.id,
         )
 
         for postgres_conn_result in postgres_conn_results:
@@ -403,10 +377,10 @@ async def get_project(
             )
 
         return ProjectResponse(
-            id=project_data["id"],
+            id=project.id,
             owner_uuid=owner_uuid_str,
-            link_accessible=project_data["link_accessible"],
-            maps=project_data["maps"],
+            link_accessible=project.link_accessible,
+            maps=project.maps,
             created_on=created_on_str,
             most_recent_version=most_recent_map_details,
             postgres_connections=postgres_connections,
@@ -425,41 +399,10 @@ class ProjectUpdateResponse(BaseModel):
     "/{project_id}", response_model=ProjectUpdateResponse, operation_id="update_project"
 )
 async def update_project(
-    project_id: str,
     update_data: ProjectUpdateRequest,
-    session: UserContext = Depends(verify_session_required),
+    project: MundiProject = Depends(get_project),
 ):
-    """
-    Update project settings. Currently supports updating link_accessible status.
-    Only the project owner can update these settings.
-    """
-    user_id = session.get_user_id()
-
     async with get_async_db_connection() as conn:
-        # First check if user is the owner
-        project_data = await conn.fetchrow(
-            """
-            SELECT owner_uuid
-            FROM user_mundiai_projects
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-        )
-
-        if project_data is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_id} not found.",
-            )
-
-        # Verify ownership
-        if str(project_data["owner_uuid"]) != user_id:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="Only the project owner can update project settings.",
-            )
-
-        # Update link_accessible
         await conn.execute(
             """
             UPDATE user_mundiai_projects
@@ -467,7 +410,7 @@ async def update_project(
             WHERE id = $2
             """,
             update_data.link_accessible,
-            project_id,
+            project.id,
         )
 
         return ProjectUpdateResponse(updated=True)
@@ -502,9 +445,9 @@ class DatabaseDocumentationResponse(BaseModel):
     operation_id="add_postgis_connection",
 )
 async def add_postgis_connection(
-    project_id: str,
     connection_data: PostgresConnectionRequest,
     background_tasks: BackgroundTasks,
+    project: MundiProject = Depends(get_project),
     session: UserContext = Depends(verify_session_required),
     database_documenter: DatabaseDocumenter = Depends(get_database_documenter),
     connection_manager: PostgresConnectionManager = Depends(
@@ -518,31 +461,6 @@ async def add_postgis_connection(
     user_id = session.get_user_id()
 
     async with get_async_db_connection() as conn:
-        # Check if user has access to the project
-        project = await conn.fetchrow(
-            """
-            SELECT owner_uuid, editor_uuids
-            FROM user_mundiai_projects
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-        )
-
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_id} not found.",
-            )
-
-        # Check if user is owner or editor
-        if str(project["owner_uuid"]) != user_id and user_id not in (
-            project["editor_uuids"] or []
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to modify this project.",
-            )
-
         # Validate the connection URI format and accessibility
         connection_uri = connection_data.connection_uri.strip()
 
@@ -578,7 +496,7 @@ async def add_postgis_connection(
             SELECT id FROM project_postgres_connections
             WHERE project_id = $1 AND user_id = $2 AND connection_uri = $3 AND soft_deleted_at IS NULL
             """,
-            project_id,
+            project.id,
             user_id,
             connection_uri,
         )
@@ -595,7 +513,7 @@ async def add_postgis_connection(
                 VALUES ($1, $2, $3, $4, $5)
                 """,
                 connection_id,
-                project_id,
+                project.id,
                 user_id,
                 connection_uri,
                 connection_data.connection_name,
@@ -627,42 +545,15 @@ async def add_postgis_connection(
     operation_id="soft_delete_postgis_connection",
 )
 async def soft_delete_postgis_connection(
-    project_id: str,
     connection_id: str,
+    project: MundiProject = Depends(get_project),
     session: UserContext = Depends(verify_session_required),
 ):
     """
     Soft delete a PostgreSQL connection from a project.
     Only the project owner or editors can delete connections.
     """
-    user_id = session.get_user_id()
-
     async with get_async_db_connection() as conn:
-        # Check if user has access to the project
-        project = await conn.fetchrow(
-            """
-            SELECT owner_uuid, editor_uuids
-            FROM user_mundiai_projects
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-        )
-
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_id} not found.",
-            )
-
-        # Check if user is owner or editor
-        if str(project["owner_uuid"]) != user_id and user_id not in (
-            project["editor_uuids"] or []
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to modify this project.",
-            )
-
         # Check if the connection exists and belongs to this project
         connection = await conn.fetchrow(
             """
@@ -671,13 +562,13 @@ async def soft_delete_postgis_connection(
             WHERE id = $1 AND project_id = $2
             """,
             connection_id,
-            project_id,
+            project.id,
         )
 
         if not connection:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"PostgreSQL connection {connection_id} not found in project {project_id}.",
+                detail=f"PostgreSQL connection {connection_id} not found in project {project.id}.",
             )
 
         if connection["soft_deleted_at"] is not None:
@@ -694,7 +585,7 @@ async def soft_delete_postgis_connection(
             WHERE id = $1 AND project_id = $2
             """,
             connection_id,
-            project_id,
+            project.id,
         )
 
         return PostgresConnectionResponse(
@@ -708,43 +599,10 @@ async def soft_delete_postgis_connection(
     operation_id="get_database_documentation",
 )
 async def get_database_documentation(
-    project_id: str,
     connection_id: str,
-    session: UserContext = Depends(verify_session_required),
+    project: MundiProject = Depends(get_project),
 ):
-    """
-    Retrieve the generated database documentation for a specific PostgreSQL connection.
-    """
-    user_id = session.get_user_id()
-
     async with get_async_db_connection() as conn:
-        # Check if user has access to the project
-        project = await conn.fetchrow(
-            """
-            SELECT owner_uuid, editor_uuids, viewer_uuids
-            FROM user_mundiai_projects
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-        )
-
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_id} not found.",
-            )
-
-        # Check if user has access (owner, editor, or viewer)
-        if (
-            str(project["owner_uuid"]) != user_id
-            and user_id not in (project["editor_uuids"] or [])
-            and user_id not in (project["viewer_uuids"] or [])
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to access this project.",
-            )
-
         # Get the database connection and documentation (most recent summary)
         connection = await conn.fetchrow(
             """
@@ -761,7 +619,7 @@ async def get_database_documentation(
             LIMIT 1
             """,
             connection_id,
-            project_id,
+            project.id,
         )
 
         if not connection:
@@ -785,47 +643,15 @@ async def get_database_documentation(
     operation_id="regenerate_database_documentation",
 )
 async def regenerate_database_documentation(
-    project_id: str,
     connection_id: str,
     background_tasks: BackgroundTasks,
-    session: UserContext = Depends(verify_session_required),
+    project: MundiProject = Depends(get_project),
     database_documenter: DatabaseDocumenter = Depends(get_database_documenter),
     connection_manager: PostgresConnectionManager = Depends(
         get_postgres_connection_manager
     ),
 ):
-    """
-    Regenerate the database documentation for a specific PostgreSQL connection.
-    Only the project owner or editors can regenerate documentation.
-    """
-    user_id = session.get_user_id()
-
     async with get_async_db_connection() as conn:
-        # Check if user has access to the project
-        project = await conn.fetchrow(
-            """
-            SELECT owner_uuid, editor_uuids
-            FROM user_mundiai_projects
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-        )
-
-        if not project:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Project {project_id} not found.",
-            )
-
-        # Check if user is owner or editor
-        if str(project["owner_uuid"]) != user_id and user_id not in (
-            project["editor_uuids"] or []
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to modify this project.",
-            )
-
         # Get the database connection
         connection = await conn.fetchrow(
             """
@@ -834,7 +660,7 @@ async def regenerate_database_documentation(
             WHERE id = $1 AND project_id = $2 AND soft_deleted_at IS NULL
             """,
             connection_id,
-            project_id,
+            project.id,
         )
 
         if not connection:
@@ -863,30 +689,10 @@ class SocialImageCacheBustedError(Exception):
 
 @project_router.get("/{project_id}/social.webp", response_class=Response)
 async def get_project_social_preview(
-    request: Request,
-    project_id: str,
-    session: UserContext = Depends(verify_session_required),
+    project: MundiProject = Depends(get_project),
     base_map_provider: BaseMapProvider = Depends(get_base_map_provider),
 ):
-    # Fetch the latest map_id for the project
-    user_id = session.get_user_id()
-    async with get_async_db_connection() as conn:
-        project_record = await conn.fetchrow(
-            """
-            SELECT maps FROM user_mundiai_projects
-            WHERE id = $1 AND owner_uuid = $2 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-            user_id,
-        )
-
-    if not project_record or len(project_record["maps"]) == 0:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Project {project_id} either does not exist or has no maps.",
-        )
-
-    latest_map_id = project_record["maps"][-1]
+    latest_map_id = project.maps[-1]
 
     # S3 configuration - key by map_id instead of project_id
     bucket_name = get_bucket_name()
@@ -948,35 +754,9 @@ async def get_project_social_preview(
 
 @project_router.delete("/{project_id}", operation_id="delete_project")
 async def delete_project(
-    project_id: str,
-    session: UserContext = Depends(verify_session_required),
+    project: MundiProject = Depends(get_project),
 ):
-    """
-    Soft delete a project by setting its soft_deleted_at timestamp.
-    The project still exists in the database but is no longer accessible.
-    """
     async with get_async_db_connection() as conn:
-        # Check if the project exists
-        project_result = await conn.fetchrow(
-            """
-            SELECT id, owner_uuid
-            FROM user_mundiai_projects
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            project_id,
-        )
-        if not project_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Project not found"
-            )
-
-        # Check if user owns the project
-        if session.get_user_id() != str(project_result["owner_uuid"]):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to delete this project",
-            )
-
         # Soft delete the project
         updated_project = await conn.fetchrow(
             """
@@ -985,7 +765,7 @@ async def delete_project(
             WHERE id = $1
             RETURNING id
             """,
-            project_id,
+            project.id,
         )
 
         if not updated_project:
@@ -996,7 +776,7 @@ async def delete_project(
 
         return {
             "message": "Project successfully deleted",
-            "project_id": project_id,
+            "project_id": project.id,
         }
 
 

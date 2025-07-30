@@ -32,6 +32,7 @@ from src.routes import (
     room_routes,
     message_routes,
     websocket,
+    conversation_routes,
 )
 from src.routes.postgres_routes import basemap_router
 from src.routes.layer_router import layer_router
@@ -55,6 +56,7 @@ app = FastAPI(
     # Don't show OpenAPI spec, docs, redoc
     openapi_url=None,
     lifespan=lifespan,
+    debug=True,
 )
 
 
@@ -103,6 +105,11 @@ app.include_router(
     basemap_router,
     prefix="/api/basemaps",
     tags=["Basemaps"],
+)
+app.include_router(
+    conversation_routes.router,
+    prefix="/api",
+    tags=["Conversations"],
 )
 
 
@@ -170,10 +177,9 @@ async def mock_session_refresh(request: Request):
         response.headers["access-control-allow-credentials"] = "true"
 
         # Cookies
-        cookie_opts = dict(path="/", httponly=True, samesite="lax")
-        response.set_cookie("sAccessToken", access_tok, **cookie_opts)
-        response.set_cookie("sRefreshToken", refresh_tok, **cookie_opts)
-        response.set_cookie("sIdRefreshToken", id_refresh, **cookie_opts)
+        response.set_cookie("sAccessToken", access_tok, httponly=True)
+        response.set_cookie("sRefreshToken", refresh_tok, httponly=True)
+        response.set_cookie("sIdRefreshToken", id_refresh, httponly=True)
 
         return response
 

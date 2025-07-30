@@ -1,5 +1,7 @@
 // Copyright Bunting Labs, Inc. 2025
 
+import { ChatCompletionUserMessageParam } from 'openai/resources/chat/completions.mjs';
+
 export interface MapProject {
   id: string;
   owner_uuid: string;
@@ -117,4 +119,88 @@ export interface EphemeralAction {
   bounds?: [number, number, number, number];
   description?: string;
   error_message?: string;
+}
+
+/* tree */
+
+export interface SelectedFeature {
+  layer_id: string;
+  attributes: Record<string, string>;
+}
+
+export interface MessageSendRequest {
+  message: ChatCompletionUserMessageParam;
+  selected_feature: SelectedFeature | null;
+}
+
+export interface MessageSendResponse {
+  conversation_id: number;
+  sent_message: SanitizedMessage;
+  message_id: string;
+  status: string;
+}
+
+export interface CodeBlock {
+  language: string;
+  code: string;
+}
+
+export interface SanitizedToolCall {
+  id: string;
+  tagline: string;
+  icon: 'text-search' | 'brush' | 'wrench' | 'map-plus' | 'cloud-download' | 'zoom-in' | 'qgis';
+  code: CodeBlock | null;
+  table?: Record<string, string>;
+}
+
+export interface SanitizedMessage {
+  role: string;
+  content?: string;
+  has_tool_calls: boolean;
+  tool_calls?: SanitizedToolCall[];
+  map_id?: string; // Associates the message with a specific map version
+  conversation_id?: number; // Associates the message with a specific conversation
+  created_at?: string; // Timestamp from backend for proper ordering of messages
+}
+
+export interface MessagesListResponse {
+  map_id: string;
+  messages: SanitizedMessage[];
+}
+
+export interface LayerInfo {
+  layer_id: string;
+  name: string;
+  type: string;
+  geometry_type: string | null;
+  feature_count: number | null;
+}
+
+export interface LayerDiff {
+  added_layers: LayerInfo[];
+  removed_layers: LayerInfo[];
+}
+
+export interface MapNode {
+  map_id: string;
+  messages: SanitizedMessage[];
+  fork_reason: string | null;
+  created_on: string;
+  diff_from_previous: LayerDiff | null;
+}
+
+export interface MapTreeResponse {
+  project_id: string;
+  tree: MapNode[];
+}
+
+export interface Conversation {
+  id: number;
+  project_id: string;
+  owner_uuid: string;
+  title?: string;
+  created_at: string;
+  updated_at: string;
+  message_count: number;
+  first_message_map_id?: string;
 }

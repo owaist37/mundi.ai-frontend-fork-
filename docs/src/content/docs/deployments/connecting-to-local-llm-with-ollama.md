@@ -124,7 +124,7 @@ see a message that the database migrations have completed successfully.
 Now you can interact with Kue, Mundi's AI assistant, which is now powered by
 your local LLM.
 
-Open your web browser and navigate to [`http://localhost:8000`](http://localhost:8000).
+Open your web browser and navigate to `http://localhost:8000`.
 
 If you don't already have a map with data you want to investigate, upload a new GIS data
 file like a GeoPackage. In this example, we'll use a file that contains OpenStreetMap data

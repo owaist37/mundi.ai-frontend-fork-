@@ -1,5 +1,6 @@
 // Copyright Bunting Labs, Inc. 2025
 
+import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   AlertTriangle,
   ChevronLeft,
@@ -7,9 +8,9 @@ import {
   CodeXml,
   Database,
   Info,
+  Link,
   Loader2,
-  RotateCw,
-  Save,
+  Plus,
   SignalHigh,
   SignalLow,
   Upload,
@@ -19,10 +20,12 @@ import React, { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ReadyState } from 'react-use-websocket';
 import { toast } from 'sonner';
+import { AddRemoteDataSource } from '@/components/AddRemoteDataSource';
 import { LayerListItem } from '@/components/LayerListItem';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { ShareEmbedModal } from '@/lib/ee-loader';
@@ -45,15 +48,12 @@ interface LayerListProps {
   currentMapData: MapData;
   mapRef: React.RefObject<MLMap | null>;
   openDropzone: () => void;
-  saveAndForkMap: () => void;
-  isSaving: boolean;
   activeActions: EphemeralAction[];
   readyState: number;
   driftDbConnected: boolean;
   setShowAttributeTable: (show: boolean) => void;
   setSelectedLayer: (layer: MapLayer | null) => void;
   updateMapData: () => void;
-  updateProjectData: (projectId: string) => void;
   layerSymbols: { [layerId: string]: JSX.Element };
   zoomHistory: Array<{ bounds: [number, number, number, number] }>;
   zoomHistoryIndex: number;
@@ -69,15 +69,12 @@ const LayerList: React.FC<LayerListProps> = ({
   currentMapData,
   mapRef,
   openDropzone,
-  saveAndForkMap,
   readyState,
-  isSaving,
   activeActions,
   driftDbConnected,
   setShowAttributeTable,
   setSelectedLayer,
   updateMapData,
-  updateProjectData,
   layerSymbols,
   zoomHistory,
   zoomHistoryIndex,
@@ -88,6 +85,7 @@ const LayerList: React.FC<LayerListProps> = ({
   toggleLayerVisibility,
 }) => {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const [showPostgisDialog, setShowPostgisDialog] = useState(false);
 
   // Component to render legend symbol for a layer
@@ -105,9 +103,76 @@ const LayerList: React.FC<LayerListProps> = ({
     password: '',
     schema: 'public',
   });
-  const [postgisLoading, setPostgisLoading] = useState(false);
   const [postgisError, setPostgisError] = useState<string | null>(null);
   const [showShareModal, setShowShareModal] = useState(false);
+  const [showRemoteUrlDialog, setShowRemoteUrlDialog] = useState(false);
+
+  const postgisConnectionMutation = useMutation({
+    mutationFn: async (connectionUri: string) => {
+      const response = await fetch(`/api/projects/${currentMapData.project_id}/postgis-connections`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ connection_uri: connectionUri }),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || response.statusText);
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast.success('PostgreSQL connection saved successfully! Refreshing...');
+      setShowPostgisDialog(false);
+      // Reset form
+      setPostgisForm({
+        uri: '',
+        host: '',
+        port: '5432',
+        database: '',
+        username: '',
+        password: '',
+        schema: 'public',
+      });
+
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ['project', currentMapData.project_id] });
+      queryClient.invalidateQueries({ queryKey: ['project', currentMapData.project_id, 'map'] });
+    },
+    onError: (error: Error) => {
+      setPostgisError(error.message);
+    },
+  });
+
+  const deleteConnectionMutation = useMutation({
+    mutationFn: async ({ projectId, connectionId }: { projectId: string; connectionId: string }) => {
+      const response = await fetch(`/api/projects/${projectId}/postgis-connections/${connectionId}`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+        throw new Error(errorData.detail || response.statusText);
+      }
+
+      return response.json();
+    },
+    onSuccess: () => {
+      toast.success('Database connection deleted successfully');
+      // Invalidate the project query to refresh the data
+      queryClient.invalidateQueries({ queryKey: ['project', project.id] });
+      queryClient.invalidateQueries({ queryKey: ['project', project.id, 'map'] });
+    },
+    onError: (error: Error) => {
+      toast.error(`Failed to delete connection: ${error.message}`);
+    },
+  });
 
   const handlePostgisConnect = async () => {
     if (!currentMapData?.project_id) {
@@ -130,64 +195,8 @@ const LayerList: React.FC<LayerListProps> = ({
       return;
     }
 
-    setPostgisLoading(true);
     setPostgisError(null);
-
-    try {
-      const response = await fetch(`/api/projects/${currentMapData.project_id}/postgis-connections`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ connection_uri: connectionUri }),
-      });
-
-      if (response.ok) {
-        toast.success('PostgreSQL connection saved successfully! Refreshing...');
-        setShowPostgisDialog(false);
-        // Reset form
-        setPostgisForm({
-          uri: '',
-          host: '',
-          port: '5432',
-          database: '',
-          username: '',
-          password: '',
-          schema: 'public',
-        });
-
-        // Refresh immediately to show "Loading into AI..." in the database list
-        updateProjectData(currentMapData.project_id);
-        updateMapData();
-
-        // Poll for updated connection details and refresh when AI naming is complete
-        const pollForUpdatedConnection = async () => {
-          let attempts = 0;
-          const maxAttempts = 225; // 15 minutes max (225 * 4 seconds = 900 seconds)
-
-          const pollInterval = setInterval(async () => {
-            attempts++;
-
-            // Refresh both project and map data
-            updateProjectData(currentMapData.project_id);
-            updateMapData();
-
-            if (attempts >= maxAttempts) {
-              clearInterval(pollInterval);
-            }
-          }, 4000); // Check every 4 seconds
-        };
-
-        pollForUpdatedConnection();
-      } else {
-        const errorData = await response.json().catch(() => ({ detail: response.statusText }));
-        setPostgisError(errorData.detail || response.statusText);
-      }
-    } catch (error) {
-      setPostgisError(error instanceof Error ? error.message : 'Network error occurred');
-    } finally {
-      setPostgisLoading(false);
-    }
+    postgisConnectionMutation.mutate(connectionUri);
   };
 
   const processedLayers = useMemo<LayerWithStatus[]>(() => {
@@ -380,10 +389,21 @@ const LayerList: React.FC<LayerListProps> = ({
                           })
                             .then((response) => {
                               if (response.ok) {
-                                toast.success(`Layer deletion process started.`);
-                                window.location.reload();
+                                return response.json();
                               } else {
-                                response.json().then((err) => toast.error(`Failed to delete layer: ${err.detail || response.statusText}`));
+                                throw new Error(`Failed to delete layer: ${response.statusText}`);
+                              }
+                            })
+                            .then((data) => {
+                              toast.success(`Layer successfully removed! Navigating to new map...`);
+                              // Navigate to the new child map if dag_child_map_id is present
+                              if (data.dag_child_map_id) {
+                                setTimeout(() => {
+                                  navigate(`/project/${project.id}/${data.dag_child_map_id}`);
+                                }, 1000);
+                              } else {
+                                // Fallback: reload the page
+                                window.location.reload();
                               }
                             })
                             .catch((err) => {
@@ -460,28 +480,8 @@ const LayerList: React.FC<LayerListProps> = ({
                       <TooltipTrigger asChild>
                         <li
                           className={`flex items-center justify-between px-2 py-1 gap-2 hover:bg-slate-100 dark:hover:bg-gray-600 cursor-pointer group`}
-                          onClick={async () => {
-                            try {
-                              const response = await fetch(`/api/projects/${project.id}/postgis-connections/${connection.connection_id}`, {
-                                method: 'DELETE',
-                                headers: {
-                                  'Content-Type': 'application/json',
-                                },
-                              });
-
-                              if (response.ok) {
-                                toast.success('Database connection deleted successfully');
-                                updateProjectData(project.id);
-                                updateMapData();
-                              } else {
-                                const errorData = await response.json().catch(() => ({
-                                  detail: response.statusText,
-                                }));
-                                toast.error(`Failed to delete connection: ${errorData.detail || response.statusText}`);
-                              }
-                            } catch (error) {
-                              toast.error(`Network error: ${error instanceof Error ? error.message : 'Unknown error'}`);
-                            }
+                          onClick={() => {
+                            deleteConnectionMutation.mutate({ projectId: project.id, connectionId: connection.connection_id });
                           }}
                         >
                           <span className="font-medium truncate flex items-center gap-2 text-red-400">
@@ -633,18 +633,27 @@ const LayerList: React.FC<LayerListProps> = ({
         <div className="flex items-center gap-1">
           <TooltipProvider>
             <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
-                  onClick={openDropzone}
-                >
-                  <Upload className="h-4 w-4" />
-                </Button>
+              <TooltipTrigger>
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button size="sm" variant="ghost" className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600">
+                      <Plus className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={openDropzone} className="cursor-pointer">
+                      <Upload className="h-4 w-4 mr-2" />
+                      Upload file
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setShowRemoteUrlDialog(true)} className="cursor-pointer">
+                      <Link className="h-4 w-4 mr-2" />
+                      Add remote URL
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </TooltipTrigger>
               <TooltipContent>
-                <p>Upload file</p>
+                <p>Add layer source</p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -665,26 +674,6 @@ const LayerList: React.FC<LayerListProps> = ({
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
-          {currentMapData.display_as_diff ? (
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    className="p-0.5 hover:cursor-pointer hover:bg-gray-200 dark:hover:bg-gray-600"
-                    onClick={saveAndForkMap}
-                    disabled={isSaving}
-                  >
-                    {isSaving ? <RotateCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent>
-                  <p>{isSaving ? 'Saving...' : 'Save'}</p>
-                </TooltipContent>
-              </Tooltip>
-            </TooltipProvider>
-          ) : null}
         </div>
 
         {/* PostGIS Connection Dialog */}
@@ -909,8 +898,13 @@ const LayerList: React.FC<LayerListProps> = ({
               <Button type="button" variant="outline" onClick={() => setShowPostgisDialog(false)} className="hover:cursor-pointer">
                 Cancel
               </Button>
-              <Button type="button" onClick={handlePostgisConnect} className="hover:cursor-pointer" disabled={postgisLoading}>
-                {postgisLoading ? (
+              <Button
+                type="button"
+                onClick={handlePostgisConnect}
+                className="hover:cursor-pointer"
+                disabled={postgisConnectionMutation.isPending}
+              >
+                {postgisConnectionMutation.isPending ? (
                   <>
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                     Adding Connection...
@@ -922,6 +916,13 @@ const LayerList: React.FC<LayerListProps> = ({
             </DialogFooter>
           </DialogContent>
         </Dialog>
+
+        <AddRemoteDataSource
+          isOpen={showRemoteUrlDialog}
+          onClose={() => setShowRemoteUrlDialog(false)}
+          projectId={currentMapData?.project_id}
+          onSuccess={updateMapData}
+        />
       </CardFooter>
     </Card>
   );

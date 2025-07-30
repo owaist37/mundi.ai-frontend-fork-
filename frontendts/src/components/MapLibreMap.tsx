@@ -1,5 +1,6 @@
 // Copyright Bunting Labs, Inc. 2025
 
+import { useQuery } from '@tanstack/react-query';
 import { useConnectionStatus, usePresence } from 'driftdb-react';
 import legendSymbol, { type RenderElement } from 'legend-symbol-ts';
 
@@ -13,7 +14,8 @@ import { PointCloudLayer } from '@deck.gl/layers';
 import { MapboxOverlay } from '@deck.gl/mapbox';
 import { LASLoader } from '@loaders.gl/las';
 import { Matrix4 } from '@math.gl/core';
-import { Activity, Brain, Database, MessagesSquare, Send, X } from 'lucide-react';
+import { bbox } from '@turf/turf';
+import { Activity, Brain, Database, MousePointerClick, Send, X, ZoomIn } from 'lucide-react';
 import {
   AJAXError,
   type IControl,
@@ -23,36 +25,32 @@ import {
   NavigationControl,
   ScaleControl,
 } from 'maplibre-gl';
-import type {
-  ChatCompletionMessageParam,
-  ChatCompletionMessageToolCall,
-  ChatCompletionUserMessageParam,
-} from 'openai/resources/chat/completions';
-
+import type { ChatCompletionUserMessageParam } from 'openai/resources/chat/completions';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Download } from 'react-bootstrap-icons';
 import ReactMarkdown from 'react-markdown';
-import { useNavigate } from 'react-router-dom';
-import useWebSocket from 'react-use-websocket';
 import remarkGfm from 'remark-gfm';
 import { toast } from 'sonner';
-import Session from 'supertokens-auth-react/recipe/session';
 import AttributeTable from '@/components/AttributeTable';
 import LayerList from '@/components/LayerList';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
-import type { EphemeralAction, MapData, MapLayer, MapProject, PointerPosition, PresenceData } from '../lib/types';
-
-// Define the type for chat completion messages from the database
-interface ChatCompletionMessageRow {
-  id: number;
-  map_id: string;
-  sender_id: string;
-  message_json: ChatCompletionMessageParam;
-  created_at: string;
-}
+import VersionVisualization from '@/components/VersionVisualization';
+import type { ErrorEntry, UploadingFile } from '../lib/frontend-types';
+import type {
+  Conversation,
+  EphemeralAction,
+  MapData,
+  MapLayer,
+  MapProject,
+  MapTreeResponse,
+  MessageSendRequest,
+  MessageSendResponse,
+  PointerPosition,
+  PresenceData,
+  SanitizedMessage,
+} from '../lib/types';
 
 // Import styles in the parent component
 const KUE_MESSAGE_STYLE = `
@@ -235,22 +233,6 @@ class ExportPDFControl implements IControl {
   }
 }
 
-interface ErrorEntry {
-  id: string;
-  message: string;
-  timestamp: Date;
-  shouldOverrideMessages: boolean;
-}
-
-// Add interface for tracking upload progress
-interface UploadingFile {
-  id: string;
-  file: File;
-  progress: number;
-  status: 'uploading' | 'completed' | 'error';
-  error?: string;
-}
-
 interface MapLibreMapProps {
   mapId: string;
   width?: string;
@@ -258,12 +240,25 @@ interface MapLibreMapProps {
   className?: string;
   project: MapProject;
   mapData?: MapData | null;
+  mapTree: MapTreeResponse | null;
+  conversationId: number | null;
+  conversations: Conversation[];
+  setConversationId: (conversationId: number | null) => void;
   openDropzone?: () => void;
-  updateMapData: () => void;
-  updateProjectData: (projectId: string) => void;
+  invalidateProjectData: () => void;
   uploadingFiles?: UploadingFile[];
   hiddenLayerIDs: string[];
   toggleLayerVisibility: (layerId: string) => void;
+  mapRef: React.RefObject<MLMap | null>;
+  activeActions: EphemeralAction[];
+  setActiveActions: React.Dispatch<React.SetStateAction<EphemeralAction[]>>;
+  zoomHistory: Array<{ bounds: [number, number, number, number] }>;
+  zoomHistoryIndex: number;
+  setZoomHistoryIndex: React.Dispatch<React.SetStateAction<number>>;
+  addError: (message: string, shouldOverrideMessages?: boolean) => void;
+  dismissError: (errorId: string) => void;
+  errors: ErrorEntry[];
+  invalidateMapData: () => void;
 }
 
 export default function MapLibreMap({
@@ -273,26 +268,35 @@ export default function MapLibreMap({
   className = '',
   project,
   mapData,
+  mapTree,
+  conversationId,
+  conversations,
+  setConversationId,
   openDropzone,
-  updateMapData,
-  updateProjectData,
   uploadingFiles,
   hiddenLayerIDs,
   toggleLayerVisibility,
+  mapRef,
+  activeActions,
+  setActiveActions,
+  zoomHistory,
+  zoomHistoryIndex,
+  setZoomHistoryIndex,
+  addError,
+  dismissError,
+  errors,
+  invalidateProjectData,
+  invalidateMapData,
 }: MapLibreMapProps) {
   const mapContainerRef = useRef<HTMLDivElement>(null);
-  const mapRef = useRef<MLMap | null>(null);
+  const localMapRef = useRef<MLMap | null>(null);
   const globeControlRef = useRef<GlobeControl | null>(null);
   const exportPDFControlRef = useRef<ExportPDFControl | null>(null);
   const deckOverlayRef = useRef<MapboxOverlay | null>(null);
-  const [errors, setErrors] = useState<ErrorEntry[]>([]);
   const [hasZoomed, setHasZoomed] = useState(false);
   const [layerSymbols, setLayerSymbols] = useState<{
     [layerId: string]: JSX.Element;
   }>({});
-  const [zoomHistory, setZoomHistory] = useState<Array<{ bounds: [number, number, number, number] }>>([]);
-  const [zoomHistoryIndex, setZoomHistoryIndex] = useState(-1);
-  const processedBoundsActionIds = useRef<Set<string>>(new Set());
   const [currentBasemap, setCurrentBasemap] = useState<string>('');
   const [availableBasemaps, setAvailableBasemaps] = useState<string[]>([]);
   const [demoConfig, setDemoConfig] = useState<{
@@ -387,47 +391,12 @@ export default function MapLibreMap({
     return layer;
   }, []);
 
-  // Helper function to add a new error
-  const addError = useCallback((message: string, shouldOverrideMessages: boolean = false) => {
-    setErrors((prevErrors) => {
-      // if it already exists, bail out
-      if (prevErrors.some((err) => err.message === message)) {
-        return prevErrors;
-      }
-
-      // otherwise create & push
-      const newError: ErrorEntry = {
-        id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-        message,
-        timestamp: new Date(),
-        shouldOverrideMessages,
-      };
-
-      console.error(message);
-      if (!shouldOverrideMessages) toast.error(message);
-
-      // schedule the auto-dismiss
-      setTimeout(() => {
-        setErrors((current) => current.filter((e) => e.id !== newError.id));
-      }, 30000);
-
-      return [...prevErrors, newError];
-    });
-  }, []);
-
-  // Helper function to dismiss a specific error
-  const dismissError = (errorId: string) => {
-    setErrors((prev) => prev.filter((error) => error.id !== errorId));
-  };
   const [loading, setLoading] = useState(true);
   const [pointerPosition, setPointerPosition] = useState<PointerPosition | null>(null);
   const otherClientPositions = usePresence<PointerPosition | null>('cursors', pointerPosition);
-  const navigate = useNavigate();
   const [showAttributeTable, setShowAttributeTable] = useState(false);
   const [selectedLayer, setSelectedLayer] = useState<MapLayer | null>(null);
-  const [activeActions, setActiveActions] = useState<EphemeralAction[]>([]);
 
-  const [isSaving, setIsSaving] = useState(false);
   const [isCancelling, setIsCancelling] = useState(false);
 
   // Function to handle basemap changes
@@ -452,15 +421,13 @@ export default function MapLibreMap({
 
   // State for changelog entries
   // State for changelog entries from map data
-  const [changelog, setChangelog] = useState<
+  const [__changelog, setChangelog] = useState<
     Array<{
       summary: string;
       timestamp: string;
       mapState: string;
     }>
   >([]);
-  const [messages, setMessages] = useState<ChatCompletionMessageRow[]>([]);
-  const [showMessages, setShowMessages] = useState(true);
 
   // Process changelog data when mapData changes
   useEffect(() => {
@@ -497,6 +464,26 @@ export default function MapLibreMap({
   }, [isCancelling, mapId]);
 
   const [selectedFeature, setSelectedFeature] = useState<MapGeoJSONFeature | null>(null);
+
+  const selectFeature = useCallback(
+    (feat: MapGeoJSONFeature | null) => {
+      if (!mapRef.current) return;
+      const newMap = mapRef.current;
+
+      setSelectedFeature((prev: MapGeoJSONFeature | null) => {
+        if (prev) {
+          newMap.setFeatureState({ source: prev.source, sourceLayer: prev.sourceLayer, id: prev.id }, { selected: false });
+        }
+
+        if (feat) {
+          newMap.setFeatureState({ source: feat.source, sourceLayer: feat.sourceLayer, id: feat.id }, { selected: true });
+        }
+
+        return feat;
+      });
+    },
+    [mapRef],
+  );
 
   const UPDATE_KUE_POINTER_MSEC = 40;
   const KUE_CURVE_DURATION_MS = 2000;
@@ -707,9 +694,12 @@ export default function MapLibreMap({
     if (!mapContainerRef.current) return;
 
     // need to nuke in order to re-draw, TODO this can be improved
+    if (localMapRef.current) {
+      localMapRef.current.remove();
+      localMapRef.current = null;
+    }
     if (mapRef.current) {
-      mapRef.current.remove();
-      mapRef.current = null;
+      (mapRef as any).current = null;
     }
 
     try {
@@ -727,7 +717,10 @@ export default function MapLibreMap({
       };
 
       const newMap = new MLMap(mapOptions);
-      mapRef.current = newMap;
+      localMapRef.current = newMap;
+      if (mapRef.current !== undefined) {
+        (mapRef as any).current = newMap;
+      }
 
       // Define cursor image loading function
       const loadCursorImage = () => {
@@ -756,18 +749,21 @@ export default function MapLibreMap({
 
         newMap.on('click', (e) => {
           const features = newMap.queryRenderedFeatures(e.point);
-          if (!features.length) return;
+          if (!features.length) {
+            // deselect feature if no features are found
+            selectFeature(null);
+            return;
+          }
 
           const feature = features[0];
 
-          setSelectedFeature((prev: MapGeoJSONFeature | null) => {
-            if (prev) {
-              newMap.setFeatureState({ source: prev.source, sourceLayer: prev.sourceLayer, id: prev.id }, { selected: false });
-            }
-
-            newMap.setFeatureState({ source: feature.source, sourceLayer: feature.sourceLayer, id: feature.id }, { selected: true });
-            return feature;
-          });
+          // only select features from mundi sources)
+          if (!(feature.source.startsWith('L') && feature.source.length == 12)) {
+            // technically, this too deselects
+            selectFeature(null);
+          } else {
+            selectFeature(feature);
+          }
         });
 
         const overlaidPCLayers = pointCloudLayers.map((layer) => createPointCloudLayer(layer));
@@ -835,86 +831,76 @@ export default function MapLibreMap({
       // Clean up on unmount
       return () => {
         newMap.remove();
-        mapRef.current = null;
+        localMapRef.current = null;
+        if (mapRef.current !== undefined) {
+          (mapRef as any).current = null;
+        }
       };
     } catch (err) {
       console.error('Error initializing map:', err);
       addError('Failed to initialize map: ' + (err instanceof Error ? err.message : String(err)), true);
       setLoading(false);
     }
-  }, [addError, loadLegendSymbols, mapId, pointCloudLayers, createPointCloudLayer]); // listen to point cloud layers
+  }, [addError, loadLegendSymbols, mapId, pointCloudLayers, createPointCloudLayer, mapRef, selectFeature]); // listen to point cloud layers
 
   const styleUpdateCounter = useMemo(() => {
     return activeActions.filter((a) => a.updates.style_json).length;
   }, [activeActions]);
 
-  // Separate effect for style updates
-  // biome-ignore lint/correctness/useExhaustiveDependencies: want to update on style.json
+  // Use useQuery to fetch the style.json
+  const { data: styleData } = useQuery({
+    queryKey: ['mapStyle', mapId, currentBasemap, styleUpdateCounter],
+    queryFn: async () => {
+      const url = new URL(`/api/maps/${mapId}/style.json`, window.location.origin);
+      if (currentBasemap) {
+        url.searchParams.set('basemap', currentBasemap);
+      }
+      const response = await fetch(url.toString());
+      if (!response.ok) {
+        throw new Error(`Failed to fetch style: ${response.statusText}`);
+      }
+      return response.json();
+    },
+    enabled: !!mapId, // Only run query when mapId is available
+  });
+
+  // Separate effect to handle style updates when styleData changes
   useEffect(() => {
-    const map = mapRef.current;
-    if (!map) return;
+    const map = localMapRef.current;
+    if (!map || !styleData) return;
 
-    // Prevent multiple simultaneous style updates
-    let isUpdating = false;
+    try {
+      // Update the style using setStyle
+      map.setStyle(styleData);
+      loadLegendSymbols(map);
 
-    // Wait for map to be loaded before updating style
-    const updateStyle = async () => {
-      if (isUpdating) {
-        return;
+      // If we haven't zoomed yet, zoom to the style's center and zoom level
+      // setStyle on purpose does not reset the zoom/center, but it's nice to load a map
+      // and be correctly positioned on the data
+      if (!hasZoomed) {
+        if (styleData.center && styleData.zoom !== undefined) {
+          map.jumpTo({
+            center: styleData.center,
+            zoom: styleData.zoom,
+            pitch: styleData.pitch || 0,
+            bearing: styleData.bearing || 0,
+          });
+        }
+        setHasZoomed(true);
       }
-
-      isUpdating = true;
-
-      try {
-        // Fetch the new style with current basemap
-        const url = new URL(`/api/maps/${mapId}/style.json`, window.location.origin);
-        if (currentBasemap) {
-          url.searchParams.set('basemap', currentBasemap);
-        }
-        const response = await fetch(url.toString());
-        if (!response.ok) {
-          throw new Error(`Failed to fetch style: ${response.statusText}`);
-        }
-        const newStyle = await response.json();
-
-        // Update the style using setStyle
-        map.setStyle(newStyle);
-        loadLegendSymbols(map);
-
-        // If we haven't zoomed yet, zoom to the style's center and zoom level
-        // setStyle on purpose does not reset the zoom/center, but it's nice to load a map
-        // and be correctly positioned on the data
-        if (!hasZoomed) {
-          if (newStyle.center && newStyle.zoom !== undefined) {
-            map.jumpTo({
-              center: newStyle.center,
-              zoom: newStyle.zoom,
-              pitch: newStyle.pitch || 0,
-              bearing: newStyle.bearing || 0,
-            });
-          }
-          setHasZoomed(true);
-        }
-
-        isUpdating = false; // Reset flag when done
-      } catch (err) {
-        console.error('Error updating style:', err);
-        addError('Failed to update map style: ' + (err instanceof Error ? err.message : String(err)), true);
-        isUpdating = false; // Reset flag on error
-      }
-    };
-
-    // If map is already loaded, update immediately, otherwise wait for load
-    updateStyle();
-  }, [mapId, currentBasemap, addError, loadLegendSymbols, hasZoomed, styleUpdateCounter]); // Update when these dependencies change
+    } catch (err) {
+      console.error('Error updating style:', err);
+      addError('Failed to update map style: ' + (err instanceof Error ? err.message : String(err)), true);
+    }
+  }, [styleData, addError, loadLegendSymbols, hasZoomed]); // Update when styleData changes
 
   useEffect(() => {
-    if (!mapRef.current) return;
+    if (!localMapRef.current) return;
 
-    const map = mapRef.current;
-    if (!map.isStyleLoaded()) return;
+    const map = localMapRef.current;
+    if (map && !map.isStyleLoaded()) return;
 
-    const style = map.getStyle();
+    const style = map?.getStyle();
     if (!style || !style.layers) return;
 
     style.layers.forEach((layer) => {
@@ -927,7 +913,7 @@ export default function MapLibreMap({
 
   // Update the points source when pointer positions change
   useEffect(() => {
-    const map = mapRef.current;
+    const map = localMapRef.current;
     if (map && map.isStyleLoaded()) {
       const source = map.getSource('pointer-positions');
       if (source) {
@@ -938,26 +924,6 @@ export default function MapLibreMap({
 
   const status = useConnectionStatus();
   const [inputValue, setInputValue] = useState('');
-
-  // Function to fetch messages
-  const fetchMessages = useCallback(async () => {
-    try {
-      const response = await fetch(`/api/maps/${mapId}/messages`);
-      if (response.ok) {
-        const data = await response.json();
-        // Ensure messages from fetch are sorted by message_index
-        const fetchedMessages: ChatCompletionMessageRow[] = data.messages.sort(
-          (a: ChatCompletionMessageRow, b: ChatCompletionMessageRow) => a.id - b.id,
-        );
-
-        setMessages(fetchedMessages);
-      } else {
-        console.error('Error fetching messages:', response.statusText);
-      }
-    } catch (error) {
-      console.error('Error fetching messages:', error);
-    }
-  }, [mapId]);
 
   // Function to send a message
   const sendMessage = async (text: string) => {
@@ -987,20 +953,39 @@ export default function MapLibreMap({
     setActiveActions((prev) => [...prev, sendingAction]);
 
     try {
-      const response = await fetch(`/api/maps/${mapId}/messages/send`, {
+      // set to NEW if not in a conversation
+      // Create conversation if it doesn't exist
+      const currentConversationId: number | string = conversationId || 'NEW';
+
+      const sendBody: MessageSendRequest = {
+        message: userMessage,
+        selected_feature: null,
+      };
+      if (selectedFeature) {
+        sendBody.selected_feature = {
+          layer_id: selectedFeature.source,
+          attributes: selectedFeature.properties,
+        };
+      }
+
+      const response = await fetch(`/api/maps/conversations/${currentConversationId}/maps/${mapId}/send`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(userMessage),
+        body: JSON.stringify(sendBody),
       });
 
-      if (!response.ok) {
+      if (response.ok) {
+        const data: MessageSendResponse = await response.json();
+        if (currentConversationId === 'NEW') {
+          setConversationId(data.conversation_id);
+        }
+        invalidateProjectData();
+      } else {
         const errorData = await response.json().catch(() => ({ detail: response.statusText }));
         throw new Error(errorData.detail || response.statusText);
       }
-
-      // const data: ChatProcessingResponse = await response.json();
     } catch (error) {
       addError(error instanceof Error ? error.message : 'Network error', true);
     } finally {
@@ -1008,154 +993,6 @@ export default function MapLibreMap({
       setActiveActions((prev) => prev.filter((a) => a.action_id !== actionId));
     }
   };
-  // WebSocket using react-use-websocket
-  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const [jwt, setJwt] = useState<string | undefined>(undefined);
-  const sessionContext = Session.useSessionContext();
-  // authenticating web sockets
-  useEffect(() => {
-    const getSessionData = async () => {
-      if (await Session.doesSessionExist()) {
-        const accessToken = await Session.getAccessToken();
-
-        setJwt(accessToken);
-      }
-    };
-    getSessionData();
-  }, []);
-
-  const wsUrl = useMemo(() => {
-    if (!mapId) {
-      return null;
-    } else if (!jwt) {
-      return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates`;
-    }
-
-    return `${wsProtocol}//${window.location.host}/api/maps/ws/${mapId}/messages/updates?token=${jwt}`;
-  }, [mapId, wsProtocol, jwt]);
-
-  // Track page visibility and allow socket to remain open for 10 minutes after hidden
-  const WS_REMAIN_OPEN_FOR_MS = 10 * 60 * 1000; // 10 minutes
-  const [isTabVisible, setIsTabVisible] = useState<boolean>(document.visibilityState === 'visible');
-  const [hiddenTimeoutExpired, setHiddenTimeoutExpired] = useState<boolean>(false);
-  const hiddenTimerRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
-        setIsTabVisible(true);
-        setHiddenTimeoutExpired(false);
-        if (hiddenTimerRef.current !== null) {
-          clearTimeout(hiddenTimerRef.current);
-          hiddenTimerRef.current = null;
-        }
-      } else {
-        setIsTabVisible(false);
-        hiddenTimerRef.current = window.setTimeout(() => {
-          setHiddenTimeoutExpired(true);
-          hiddenTimerRef.current = null;
-        }, WS_REMAIN_OPEN_FOR_MS);
-      }
-    };
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      if (hiddenTimerRef.current !== null) {
-        clearTimeout(hiddenTimerRef.current);
-      }
-    };
-  }, []);
-
-  // WebSocket using react-use-websocket
-  const shouldConnect = !sessionContext.loading && (isTabVisible || !hiddenTimeoutExpired);
-  const { lastMessage, readyState } = useWebSocket(
-    wsUrl,
-    {
-      onError: () => {
-        addError('Chat connection error.', false);
-      },
-      shouldReconnect: () => true,
-      reconnectAttempts: 2880, // 24 hours of continuous work, at 30 seconds each = 2,880
-      reconnectInterval: 30, // interval *between* reconnects, 30 milliseconds
-    },
-    shouldConnect,
-  );
-
-  // Process incoming messages
-  useEffect(() => {
-    if (lastMessage) {
-      try {
-        const update = JSON.parse(lastMessage.data as string);
-
-        // Check if this is an ephemeral action
-        if (update.ephemeral === true) {
-          const action = update as EphemeralAction;
-
-          // Check if this is an error notification
-          if (action.error_message) {
-            // Don't add error notifications to active actions, instead treat as error
-            addError(action.error_message, true);
-            return; // Early return to skip normal ephemeral action handling
-          }
-
-          // Handle bounds zooming only when action becomes active (not on completion)
-          if (action.bounds && action.bounds.length === 4 && mapRef.current && action.status === 'active') {
-            // Check if we've already processed this action
-            if (processedBoundsActionIds.current.has(action.action_id)) {
-              return;
-            }
-            processedBoundsActionIds.current.add(action.action_id);
-            // Save current bounds to history before zooming
-            const currentBounds = mapRef.current.getBounds();
-            const currentBoundsArray: [number, number, number, number] = [
-              currentBounds.getWest(),
-              currentBounds.getSouth(),
-              currentBounds.getEast(),
-              currentBounds.getNorth(),
-            ];
-
-            // Add both current bounds and new bounds to history in a single update
-            setZoomHistory((prev) => {
-              const historyUpToCurrent = prev.slice(0, zoomHistoryIndex + 1);
-              return [...historyUpToCurrent, { bounds: currentBoundsArray }, { bounds: action.bounds as [number, number, number, number] }];
-            });
-
-            // Update index to point to the final new bounds (current + 2 positions)
-            setZoomHistoryIndex((prev) => prev + 2);
-
-            // Zoom to new bounds
-            const [west, south, east, north] = action.bounds;
-            mapRef.current.fitBounds(
-              [
-                [west, south],
-                [east, north],
-              ],
-              { animate: true, padding: 50 },
-            );
-          }
-
-          if (action.status === 'active') {
-            // Add to active actions
-            setActiveActions((prev) => [...prev, action]);
-          } else if (action.status === 'completed') {
-            // Remove from active actions
-            setActiveActions((prev) => prev.filter((a) => a.action_id !== action.action_id));
-
-            // Style updates are handled by the currentBasemap dependency
-          }
-        } else {
-          // Regular message
-          setMessages((prevMessages) => {
-            const newMessages = [...prevMessages, update as ChatCompletionMessageRow];
-            return newMessages;
-          });
-        }
-      } catch (e) {
-        console.error('Error processing WebSocket message:', e);
-        addError('Failed to process update from server.', false);
-      }
-    }
-  }, [lastMessage, addError, zoomHistoryIndex]);
 
   // Handle input submission
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -1164,13 +1001,6 @@ export default function MapLibreMap({
       setInputValue('');
     }
   };
-
-  // Fetch messages on component mount
-  useEffect(() => {
-    if (mapId) {
-      fetchMessages();
-    }
-  }, [mapId, fetchMessages]);
 
   // Fetch available basemaps on component mount
   useEffect(() => {
@@ -1211,7 +1041,7 @@ export default function MapLibreMap({
 
   // Add globe control when map and basemaps are available
   useEffect(() => {
-    const map = mapRef.current;
+    const map = localMapRef.current;
     if (map && availableBasemaps.length > 0 && currentBasemap && !globeControlRef.current) {
       const globeControl = new GlobeControl(availableBasemaps, currentBasemap, handleBasemapChange);
       globeControlRef.current = globeControl;
@@ -1226,55 +1056,29 @@ export default function MapLibreMap({
     }
   }, [currentBasemap]);
 
-  // Function to fork the current map
-  const saveAndForkMap = async () => {
-    setIsSaving(true);
-    try {
-      const response = await fetch(`/api/maps/${mapId}/save_fork`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        toast.success('Map forked successfully');
-        // Navigate to the new forked map
-        navigate(`/project/${data.project_id}/${data.map_id}`);
-      } else {
-        addError('Failed to fork map', false);
-        console.error('Error forking map:', response.statusText);
-      }
-    } catch (error) {
-      addError('Failed to fork map', false);
-      console.error('Error forking map:', error);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   // Effect to log when attribute table is opened/closed
   useEffect(() => {
     if (showAttributeTable && selectedLayer) {
       // Debug: Opening attributes for layer
     }
   }, [showAttributeTable, selectedLayer]);
+
   // Find the last message in the conversation history
-  const lastMsg = messages.length > 0 ? messages[messages.length - 1] : null;
+  const lastMsg: SanitizedMessage | undefined = mapTree?.tree
+    .find((node) => node.map_id === mapId)
+    ?.messages.sort((a, b) => {
+      if (a.created_at && b.created_at) {
+        return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+      }
+      return 0;
+    })[0];
 
   // Determine the last assistant message to display. Only show if it's the very
   // last message in the conversation and has text content.
-  const lastAssistantMsg: string | null =
-    lastMsg && lastMsg.message_json.role === 'assistant' && typeof lastMsg.message_json.content === 'string'
-      ? (lastMsg.message_json.content as string)
-      : null;
+  const lastAssistantMsg: string | undefined = lastMsg && lastMsg.role === 'assistant' ? lastMsg.content : undefined;
 
   // Determine the last user message for the input placeholder.
-  const lastUserMsg: string | null =
-    lastMsg && lastMsg.message_json.role === 'user' && typeof lastMsg.message_json.content === 'string'
-      ? (lastMsg.message_json.content as string)
-      : null;
+  const lastUserMsg: string | undefined = lastMsg && lastMsg.role === 'user' ? lastMsg.content : undefined;
 
   // especially chat disconnected errors happen all the time and shouldn't
   // override the text box
@@ -1292,21 +1096,18 @@ export default function MapLibreMap({
           </div>
         )}
 
-        {mapData && openDropzone && saveAndForkMap && (
+        {mapData && openDropzone && (
           <LayerList
             project={project}
             currentMapData={mapData}
             mapRef={mapRef}
             openDropzone={openDropzone}
-            saveAndForkMap={saveAndForkMap}
-            isSaving={isSaving}
-            readyState={readyState}
+            readyState={1}
             activeActions={activeActions}
             driftDbConnected={status.connected}
             setShowAttributeTable={setShowAttributeTable}
             setSelectedLayer={setSelectedLayer}
-            updateMapData={updateMapData}
-            updateProjectData={updateProjectData}
+            updateMapData={invalidateMapData}
             layerSymbols={layerSymbols}
             zoomHistory={zoomHistory}
             zoomHistoryIndex={zoomHistoryIndex}
@@ -1333,13 +1134,37 @@ export default function MapLibreMap({
                     <span>Selected feature</span>
                   )}
                 </div>
-                <button
-                  onClick={() => setSelectedFeature(null)}
-                  className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
-                  title="Close"
-                >
-                  <X className="h-4 w-4 cursor-pointer" />
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => {
+                      if (selectedFeature && selectedFeature.geometry && mapRef.current) {
+                        const map = mapRef.current;
+                        const feature_bbox = bbox(selectedFeature.geometry);
+                        map.fitBounds(
+                          [
+                            [feature_bbox[0], feature_bbox[1]],
+                            [feature_bbox[2], feature_bbox[3]],
+                          ],
+                          {
+                            padding: 50,
+                            duration: 1000,
+                          },
+                        );
+                      }
+                    }}
+                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                    title="Zoom to feature"
+                  >
+                    <ZoomIn className="h-4 w-4 cursor-pointer" />
+                  </button>
+                  <button
+                    onClick={() => selectFeature(null)}
+                    className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                    title="Deselect feature"
+                  >
+                    <X className="h-4 w-4 cursor-pointer" />
+                  </button>
+                </div>
               </CardTitle>
             </CardHeader>
             <CardContent className="px-2 max-h-[50vh] overflow-auto">
@@ -1347,7 +1172,7 @@ export default function MapLibreMap({
                 <table className="w-full text-xs">
                   <thead>
                     <tr className="border-b">
-                      <th className="text-left py-1 pr-2 font-medium">Property</th>
+                      <th className="text-left py-1 pr-2 font-medium">Attribute</th>
                       <th className="text-left py-1 font-medium">Value</th>
                     </tr>
                   </thead>
@@ -1365,34 +1190,6 @@ export default function MapLibreMap({
             </CardContent>
           </Card>
         )}
-        <Command
-          className={`z-30 absolute bottom-4 left-4 max-h-[18vh] hover:max-h-[70vh] transition-all duration-300 ring ring-black hover:ring-white max-w-72 overflow-auto py-2 rounded-sm bg-white dark:bg-gray-800 shadow-md ${selectedFeature ? 'hidden' : ''}`}
-        >
-          <CommandInput placeholder={`Search ${changelog.length} versions...`} />
-          {/* Apply flex properties to CommandList to align content to the bottom */}
-          {/* This should push the CommandGroup towards the bottom of the scrollable area */}
-          <CommandList className="flex flex-col justify-end">
-            <CommandEmpty>No versions found.</CommandEmpty>
-            <CommandGroup>
-              {/* Map in original order. Newest items (assuming they are last in the array) */}
-              {/* will be rendered last, appearing at the bottom due to justify-end. */}
-              {changelog.map((entry) => (
-                <CommandItem
-                  key={entry.mapState} // Use a stable unique key like mapState
-                  onSelect={() => {
-                    if (entry.mapState) {
-                      navigate(`/project/${mapData?.project_id}/${entry.mapState}`);
-                    }
-                  }}
-                  className={`cursor-pointer ${entry.mapState === mapId ? 'bg-gray-900 hover:bg-gray-900 data-[selected=true]:bg-gray-900' : 'data-[selected=true]:bg-gray-700'}`}
-                >
-                  <span className="font-medium">{entry.summary}</span>
-                  <span className="text-xs text-slate-500 dark:text-gray-400 ml-auto shrink-0">{entry.timestamp}</span>
-                </CommandItem>
-              ))}
-            </CommandGroup>
-          </CommandList>
-        </Command>
         {/* Message display component - always show parent div, animate height */}
         {(criticalErrors.length > 0 || activeActions.length > 0 || lastAssistantMsg) && (
           <div
@@ -1442,7 +1239,7 @@ export default function MapLibreMap({
           </div>
         )}
         <div
-          className={`z-30 absolute bottom-12 left-3/5 transform -translate-x-1/2 w-4/5 max-w-xl bg-white dark:bg-gray-800 shadow-md focus-within:ring-2 focus-within:ring-white/30 flex items-center border border-input bg-input rounded-md ${!showMessages ? 'rounded-l-md' : 'rounded-md'}`}
+          className={`z-30 absolute bottom-12 left-3/5 transform -translate-x-1/2 w-4/5 max-w-xl bg-white dark:bg-gray-800 shadow-md focus-within:ring-2 focus-within:ring-white/30 flex items-center border border-input bg-input rounded-md`}
         >
           <Input
             className={`flex-1 border-none shadow-none !bg-transparent focus:!ring-0 focus:!ring-offset-0 focus-visible:!ring-0 focus-visible:!ring-offset-0 focus-visible:!outline-none`}
@@ -1451,21 +1248,18 @@ export default function MapLibreMap({
             onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
           />
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                onClick={showMessages ? () => setShowMessages(false) : () => setShowMessages(true)}
-                className={`p-2 hover:cursor-pointer ${
-                  showMessages ? 'text-gray-600 hover:text-gray-500' : 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                <MessagesSquare className="h-4 w-4" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>{showMessages ? 'Hide chat' : 'Show chat'}</p>
-            </TooltipContent>
-          </Tooltip>
+          {selectedFeature && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span onClick={() => selectFeature(null)} className={`px-2 hover:cursor-pointer text-gray-400 hover:text-gray-200`}>
+                  <MousePointerClick className="h-6 w-6 inline-block" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Kue can see your selected feature</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
         </div>
 
         {loading && (
@@ -1475,109 +1269,14 @@ export default function MapLibreMap({
         )}
       </div>
 
-      {/* Chat sidebar */}
-      {showMessages && (
-        <div className="z-30 max-h-screen h-full w-120 bg-white dark:bg-gray-800 shadow-md flex flex-col text-sm">
-          <div className="p-2 border-b border-gray-200 dark:border-gray-700 flex justify-between items-center">
-            <h3 className="font-semibold">Chat with Kue</h3>
-            <button
-              onClick={() => setShowMessages(false)}
-              className="text-sm text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:cursor-pointer"
-            >
-              Hide
-            </button>
-          </div>
-          <div className="flex-1 overflow-auto p-2">
-            {messages.map((msg, index) => {
-              let messageClass = '';
-              let contentDisplay = '';
-
-              const messageJson = msg.message_json;
-
-              if (messageJson.role === 'user') {
-                messageClass = 'bg-gray-100 dark:bg-gray-700 border border-gray-200 dark:border-gray-600';
-
-                // Handle content that could be string or array with image
-                if (typeof messageJson.content === 'string') {
-                  contentDisplay = messageJson.content;
-                } else if (Array.isArray(messageJson.content)) {
-                  // Process array content (text + images)
-                  const textParts = (messageJson.content as any[])
-                    .filter((part: any) => part.type === 'text')
-                    .map((part: any) => part.text)
-                    .join('\n');
-
-                  contentDisplay = textParts;
-                } else {
-                  contentDisplay = '';
-                }
-              } else if (messageJson.role === 'assistant') {
-                messageClass = '';
-
-                // Merge assistant text content with any tool_calls
-                const parts: string[] = [];
-                // include text content if present
-                if (typeof messageJson.content === 'string' && messageJson.content) {
-                  parts.push(messageJson.content);
-                }
-                // include any tool calls
-                if (messageJson.tool_calls && messageJson.tool_calls.length > 0) {
-                  parts.push(
-                    ...messageJson.tool_calls.map(
-                      (tc: ChatCompletionMessageToolCall) => `Using tool: ${tc.function.name}(${tc.function.arguments})`,
-                    ),
-                  );
-                }
-                contentDisplay = parts.join('\n');
-              } else if (messageJson.role === 'tool') {
-                messageClass = 'bg-purple-100 dark:bg-purple-900';
-                contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
-              } else if (messageJson.role === 'system') {
-                messageClass = 'bg-yellow-100 dark:bg-yellow-900 italic whitespace-pre-wrap';
-                contentDisplay = typeof messageJson.content === 'string' ? messageJson.content : '';
-              }
-
-              // Skip rendering if contentDisplay is falsy and there are no images
-              const hasImages =
-                Array.isArray(messageJson.content) && (messageJson.content as any[]).some((part: any) => part.type === 'image_url');
-
-              if (!contentDisplay && !hasImages) {
-                return null;
-              }
-
-              return (
-                <div
-                  key={`msg-${msg.id || index}-${index}`}
-                  className={`mb-3 ${messageClass ? `p-2 rounded ${messageClass}` : ''} text-sm`}
-                >
-                  {messageJson.role === 'assistant' ? (
-                    <div className={KUE_MESSAGE_STYLE}>
-                      <ReactMarkdown remarkPlugins={[remarkGfm]}>{contentDisplay}</ReactMarkdown>
-                    </div>
-                  ) : (
-                    <span>{contentDisplay}</span>
-                  )}
-
-                  {/* Render images if present */}
-                  {Array.isArray(messageJson.content) &&
-                    (messageJson.content as any[])
-                      .filter((part: any) => part.type === 'image_url')
-                      .map((part: any, imgIndex: number) => (
-                        <div key={`msg-${msg.id || index}-img-${imgIndex}`} className="mt-2">
-                          <img
-                            src={part.image_url.url}
-                            alt="Message attachment"
-                            className="max-w-full rounded-md"
-                            style={{ maxHeight: '200px' }}
-                          />
-                        </div>
-                      ))}
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      <VersionVisualization
+        mapTree={mapTree}
+        conversationId={conversationId}
+        currentMapId={mapId}
+        conversations={conversations}
+        setConversationId={setConversationId}
+        activeActions={activeActions}
+      />
     </>
   );
 }

@@ -35,27 +35,41 @@ class MockResponse:
 
 
 @pytest.fixture
-def sync_test_map_id(sync_auth_client):
+def test_map_fixture(sync_auth_client):
     map_title = f"Test WebSocket Map {uuid.uuid4()}"
 
-    map_data = {
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
         "title": map_title,
         "description": "Map for testing WebSocket functionality",
         "link_accessible": True,
     }
 
-    response = sync_auth_client.post("/api/maps/create", json=map_data)
+    response = sync_auth_client.post("/api/maps/create", json=map_create_payload)
     assert response.status_code == 200
-    map_id = response.json()["id"]
-
-    return map_id
+    data = response.json()
+    return {"map_id": data["id"], "project_id": data["project_id"]}
 
 
 def test_websocket_successful_connection(
-    sync_test_map_id, sync_auth_client, websocket_url_for_map
+    test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
+    map_id = test_map_fixture["map_id"]
+    project_id = test_map_fixture["project_id"]
+
+    # Create conversation
+    response = sync_auth_client.post(
+        "/api/conversations",
+        json={"project_id": project_id},
+    )
+    assert response.status_code == 200
+    conversation_id = response.json()["id"]
+
     # no errors
-    with sync_auth_client.websocket_connect(websocket_url_for_map(sync_test_map_id)):
+    with sync_auth_client.websocket_connect(
+        websocket_url_for_map(map_id, conversation_id)
+    ):
         pass
 
 
@@ -70,7 +84,7 @@ def test_websocket_404(sync_auth_client):
 
 
 def test_websocket_receive_ephemeral_action(
-    sync_test_map_id, sync_auth_client, websocket_url_for_map
+    test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
     def create_response_queue():
         return [
@@ -88,14 +102,28 @@ def test_websocket_receive_ephemeral_action(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
+        map_id = test_map_fixture["map_id"]
+        project_id = test_map_fixture["project_id"]
+
+        # Create conversation
+        response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert response.status_code == 200
+        conversation_id = response.json()["id"]
+
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(sync_test_map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{sync_test_map_id}/messages/send",
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
                 json={
-                    "role": "user",
-                    "content": "Hello",
+                    "message": {
+                        "role": "user",
+                        "content": "Hello",
+                    },
+                    "selected_feature": None,
                 },
             )
             assert response.status_code == 200
@@ -110,8 +138,6 @@ def test_websocket_receive_ephemeral_action(
                     break
 
             assert ephemeral_msg is not None, "Did not receive ephemeral action message"
-            assert "map_id" in ephemeral_msg
-            assert ephemeral_msg["map_id"] == sync_test_map_id
             assert "ephemeral" in ephemeral_msg
             assert ephemeral_msg["ephemeral"] is True
             assert "action_id" in ephemeral_msg
@@ -121,7 +147,7 @@ def test_websocket_receive_ephemeral_action(
 
 
 def test_websocket_missed_messages(
-    sync_test_map_id, sync_auth_client, websocket_url_for_map
+    test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
     def create_response_queue():
         return [
@@ -140,14 +166,28 @@ def test_websocket_missed_messages(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
+        map_id = test_map_fixture["map_id"]
+        project_id = test_map_fixture["project_id"]
+
+        # Create conversation
+        response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert response.status_code == 200
+        conversation_id = response.json()["id"]
+
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(sync_test_map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{sync_test_map_id}/messages/send",
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
                 json={
-                    "role": "user",
-                    "content": "Hello",
+                    "message": {
+                        "role": "user",
+                        "content": "Hello",
+                    },
+                    "selected_feature": None,
                 },
             )
             assert response.status_code == 200
@@ -162,8 +202,6 @@ def test_websocket_missed_messages(
                     break
 
             assert ephemeral_msg is not None, "Did not receive ephemeral action message"
-            assert "map_id" in ephemeral_msg
-            assert ephemeral_msg["map_id"] == sync_test_map_id
             assert "ephemeral" in ephemeral_msg
             assert ephemeral_msg["ephemeral"] is True
             assert "action_id" in ephemeral_msg
@@ -172,10 +210,13 @@ def test_websocket_missed_messages(
             assert "status" in ephemeral_msg
 
         response2 = sync_auth_client.post(
-            f"/api/maps/{sync_test_map_id}/messages/send",
+            f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
             json={
-                "role": "user",
-                "content": "Hello again",
+                "message": {
+                    "role": "user",
+                    "content": "Hello again",
+                },
+                "selected_feature": None,
             },
         )
         assert response2.status_code == 200
@@ -183,7 +224,7 @@ def test_websocket_missed_messages(
         time.sleep(1)
 
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(sync_test_map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket2:
             # Receive messages until we get the ephemeral action message
             ephemeral_msg = None
@@ -195,8 +236,6 @@ def test_websocket_missed_messages(
                     break
 
             assert ephemeral_msg is not None, "Did not receive ephemeral action message"
-            assert "map_id" in ephemeral_msg
-            assert ephemeral_msg["map_id"] == sync_test_map_id
             assert "ephemeral" in ephemeral_msg
             assert ephemeral_msg["ephemeral"] is True
             assert "action_id" in ephemeral_msg

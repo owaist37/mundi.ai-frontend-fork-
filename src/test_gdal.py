@@ -87,8 +87,10 @@ async def dem_map_with_cog_layer(auth_client):
     # Assuming the upload response contains the new layer's ID,
     # which is used in the COG URL.
     dem_layer_id = layer_data["id"]
+    # Get the child map ID from the DAG response
+    child_map_id = layer_data["dag_child_map_id"]
 
-    yield map_id, dem_layer_id, project_id
+    yield child_map_id, dem_layer_id, project_id
 
     # Consider adding cleanup (e.g., delete map) if necessary for the test environment.
 

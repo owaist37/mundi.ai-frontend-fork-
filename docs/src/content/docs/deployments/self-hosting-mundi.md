@@ -68,7 +68,7 @@ With the services built, you can now start the application.
     ![Screenshot of the terminal after running 'docker compose up app', showing the server starting.](../../../assets/selfhost/apponline.jpg)
 
 2. Once the server is running, open your web browser and navigate to
-   [`http://localhost:8000`](http://localhost:8000). You should see the Mundi welcome screen, ready
+   `http://localhost:8000`. You should see the Mundi welcome screen, ready
    to create your first map.
 
 ### Creating Your First Map and Adding Data

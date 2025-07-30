@@ -37,23 +37,26 @@ class MockResponse:
 
 
 @pytest.fixture
-def test_map_id(sync_auth_client):
+def test_map_fixture(sync_auth_client):
     map_title = f"Test Zoom Integration Map {uuid.uuid4()}"
-    map_data = {
+
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
         "title": map_title,
         "description": "Map for testing zoom integration with mocked OpenAI API",
         "link_accessible": True,
     }
-    response = sync_auth_client.post("/api/maps/create", json=map_data)
+    response = sync_auth_client.post("/api/maps/create", json=map_create_payload)
     assert response.status_code == 200
-    map_id = response.json()["id"]
-    return map_id
+    data = response.json()
+    return {"map_id": data["id"], "project_id": data["project_id"]}
 
 
 @pytest.mark.anyio
 @pytest.mark.timeout(10)
 async def test_zoom_integration_with_real_openai(
-    auth_client, test_map_id, sync_auth_client, websocket_url_for_map
+    auth_client, test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
     def create_response_queue():
         return [
@@ -87,19 +90,34 @@ async def test_zoom_integration_with_real_openai(
         mock_client = AsyncMock()
 
         async def mock_create(*args, **kwargs):
-            return response_queue.pop(0)
+            response = response_queue.pop(0)
+            return response
 
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
+        map_id = test_map_fixture["map_id"]
+        project_id = test_map_fixture["project_id"]
+
+        # Create conversation
+        response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert response.status_code == 200
+        conversation_id = response.json()["id"]
+
         with sync_auth_client.websocket_connect(
-            websocket_url_for_map(test_map_id)
+            websocket_url_for_map(map_id, conversation_id)
         ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{test_map_id}/messages/send",
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
                 json={
-                    "role": "user",
-                    "content": "Please zoom to downtown Seattle with bounds [-122.4194, 47.6062, -122.3320, 47.6205]",
+                    "message": {
+                        "role": "user",
+                        "content": "Please zoom to downtown Seattle with bounds [-122.4194, 47.6062, -122.3320, 47.6205]",
+                    },
+                    "selected_feature": None,
                 },
             )
             assert response.status_code == 200
@@ -109,8 +127,8 @@ async def test_zoom_integration_with_real_openai(
 
             # our own message
             sent_msg = websocket.receive_json()
-            assert sent_msg["message_json"]["role"] == "user"
-            assert "zoom to downtown Seattle" in sent_msg["message_json"]["content"]
+            assert sent_msg["role"] == "user"
+            assert "zoom to downtown Seattle" in sent_msg["content"]
 
             # Kue is thinking
             msg = websocket.receive_json()
@@ -119,26 +137,42 @@ async def test_zoom_integration_with_real_openai(
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
             assert msg["status"] == "completed"
 
-            # Zoom action
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and "Zooming to downtown Seattle" in msg["action"]
-            assert "bounds" in msg
-            assert msg["bounds"] == [-122.4194, 47.6062, -122.3320, 47.6205]
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and "Zooming to downtown Seattle" in msg["action"]
-            assert msg["status"] == "completed"
+            # Message 4: Zoom action (start)
+            msg4 = websocket.receive_json()
+            # Message 4: Assistant message with tool call
+            assert msg4["role"] == "assistant"
+            assert msg4["content"] == "I'll zoom to downtown Seattle for you."
+            assert msg4["has_tool_calls"]
+            assert len(msg4["tool_calls"]) == 1
+            assert msg4["tool_calls"][0]["id"] == "call_1"
 
-            # Kue is thinking again
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
-            msg = websocket.receive_json()
-            assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
-            assert msg["status"] == "completed"
+            # Message 5: Zoom action (start)
+            msg5 = websocket.receive_json()
+            assert msg5["ephemeral"]
+            assert "Zooming to downtown Seattle" in msg5["action"]
+            assert "bounds" in msg5
+            assert msg5["bounds"] == [-122.4194, 47.6062, -122.332, 47.6205]
+            assert msg5["status"] == "active"
 
-            # Assistant's final response
-            assistant_msg = websocket.receive_json()
-            assert assistant_msg["message_json"]["role"] == "assistant"
-            assert (
-                "zoomed to downtown Seattle" in assistant_msg["message_json"]["content"]
-                or "Seattle" in assistant_msg["message_json"]["content"]
-            )
+            # Message 6: Zoom action (completed)
+            msg6 = websocket.receive_json()
+            assert msg6["ephemeral"]
+            assert "Zooming to downtown Seattle" in msg6["action"]
+            assert msg6["status"] == "completed"
+
+            # Message 7: Final thinking (start)
+            msg7 = websocket.receive_json()
+            assert msg7["ephemeral"]
+            assert msg7["action"] == "Kue is thinking..."
+            assert msg7["status"] == "active"
+
+            # Message 8: Final thinking (completed)
+            msg8 = websocket.receive_json()
+            assert msg8["ephemeral"]
+            assert msg8["action"] == "Kue is thinking..."
+            assert msg8["status"] == "completed"
+
+            # Message 9: Final assistant response
+            msg9 = websocket.receive_json()
+            assert msg9["role"] == "assistant"
+            assert "zoomed to downtown Seattle" in msg9["content"]

@@ -47,7 +47,11 @@ async def test_fgb_bounds(test_setup, auth_client):
         )
     assert response.status_code == 200, f"Failed to upload FGB file: {response.text}"
 
-    response = await auth_client.get(f"/api/maps/{map_id}/layers")
+    # Get the child map ID from the upload response
+    upload_response = response.json()
+    child_map_id = upload_response["dag_child_map_id"]
+
+    response = await auth_client.get(f"/api/maps/{child_map_id}/layers")
     assert response.status_code == 200
     layers = response.json()["layers"]
     layer = None

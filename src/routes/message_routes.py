@@ -16,6 +16,7 @@
 from fastapi import APIRouter, HTTPException, status, Request, Depends
 from fastapi.responses import JSONResponse
 from typing import List, Union
+from collections import defaultdict
 from pydantic import BaseModel
 import logging
 import os
@@ -27,6 +28,7 @@ import io
 import csv
 import asyncio
 import traceback
+from src.dependencies.dag import get_map
 from fastapi import UploadFile
 import httpx
 from typing import Callable
@@ -39,11 +41,19 @@ from openai.types.chat.chat_completion_message_param import (
     ChatCompletionUserMessageParam,
     ChatCompletionSystemMessageParam,
 )
-from openai.types.chat.chat_completion_message_param import ChatCompletionMessageParam
+from openai.types.chat.chat_completion_message_param import (
+    ChatCompletionMessageParam,
+)
+from openai.types.chat import ChatCompletionMessageToolCallParam
 
 from src.symbology.llm import generate_maplibre_layers_for_layer_id
-from src.structures import async_conn
+from src.structures import (
+    async_conn,
+    SanitizedMessage,
+    convert_mundi_message_to_sanitized,
+)
 from src.symbology.verify import StyleValidationError, verify_style_json_str
+from src.utils import get_openai_client
 from src.routes.postgres_routes import (
     generate_id,
     get_map_style_internal,
@@ -55,13 +65,18 @@ from src.geoprocessing.dispatch import (
     InvalidInputFormatError,
     get_tools,
 )
+from src.dependencies.conversation import get_or_create_conversation
 from src.dependencies.base_map import get_base_map_provider
 from src.duckdb import execute_duckdb_query
 from src.utils import get_async_s3_client, get_bucket_name
 from src.dependencies.postgis import get_postgis_provider
 from src.dependencies.layer_describer import LayerDescriber, get_layer_describer
 from src.dependencies.chat_completions import ChatArgsProvider, get_chat_args_provider
-from src.dependencies.map_state import MapStateProvider, get_map_state_provider
+from src.dependencies.map_state import (
+    MapStateProvider,
+    get_map_state_provider,
+    SelectedFeature,
+)
 from src.dependencies.system_prompt import (
     SystemPromptProvider,
     get_system_prompt_provider,
@@ -74,8 +89,12 @@ from src.dependencies.postgres_connection import (
     PostgresConnectionManager,
     get_postgres_connection_manager,
 )
-from src.database.models import MundiChatCompletionMessage
-from src.utils import get_openai_client
+from src.database.models import (
+    MundiChatCompletionMessage,
+    MundiMap,
+    MapLayer,
+    Conversation,
+)
 from src.openstreetmap import download_from_openstreetmap, has_openstreetmap_api_key
 from src.routes.websocket import kue_ephemeral_action, kue_notify_error
 
@@ -88,6 +107,71 @@ redis = Redis(
     port=int(os.environ["REDIS_PORT"]),
     decode_responses=True,
 )
+
+
+async def label_conversation_inline(conversation_id: int):
+    """Generate a title for a conversation using OpenAI"""
+    try:
+        async with async_conn("label_conversation") as conn:
+            messages = await conn.fetch(
+                """
+                SELECT message_json
+                FROM chat_completion_messages
+                WHERE conversation_id = $1
+                ORDER BY created_at ASC
+                LIMIT 5
+                """,
+                conversation_id,
+            )
+
+            if not messages:
+                return
+
+            conversation_content = []
+            for msg in messages:
+                message_data = json.loads(msg["message_json"])
+                role = message_data.get("role", "")
+                content = message_data.get("content", "")
+                if content and role in ["user", "assistant"]:
+                    conversation_content.append(f"{role}: {content[:200]}")
+
+            if not conversation_content:
+                return
+
+            content_summary = "\n".join(conversation_content)
+
+            request = Request({"type": "http", "method": "POST", "headers": []})
+            openai_client = get_openai_client(request)
+
+            response = await openai_client.chat.completions.create(
+                model="gpt-4.1-nano",
+                messages=[
+                    {
+                        "role": "system",
+                        "content": "Generate a short, descriptive title (3-6 words) for this conversation. The title should capture the main topic or request. Only return the title, nothing else.",
+                    },
+                    {"role": "user", "content": f"Conversation:\n{content_summary}"},
+                ],
+                max_tokens=20,
+                temperature=0.3,
+            )
+
+            title = response.choices[0].message.content.strip()
+            if title and len(title) > 0:
+                await conn.execute(
+                    """
+                    UPDATE conversations
+                    SET title = $1, updated_at = CURRENT_TIMESTAMP
+                    WHERE id = $2
+                    """,
+                    title,
+                    conversation_id,
+                )
+                print(f"Generated title for conversation {conversation_id}: {title}")
+
+    except Exception as e:
+        print(f"Error labeling conversation {conversation_id}: {e}")
+
 
 # Create router
 router = APIRouter()
@@ -107,33 +191,33 @@ class ChatCompletionMessageRow(BaseModel):
 
 class MessagesListResponse(BaseModel):
     map_id: str
-    messages: List[ChatCompletionMessageRow]
+    messages: List[SanitizedMessage]
 
 
 @router.get(
     "/{map_id}/messages",
-    # response_model=MessagesListResponse,
+    response_model=MessagesListResponse,
     operation_id="get_map_messages",
-    response_class=JSONResponse,
 )
 async def get_map_messages(
     request: Request,
     map_id: str,
     session: UserContext = Depends(verify_session_required),
 ):
-    all_messages = await get_all_map_messages(map_id, session)
+    all_messages: list[MundiChatCompletionMessage] = await get_all_map_messages(
+        map_id, session
+    )
 
     # Filter for messages with role "user" or "assistant" and no tool_calls
-    filtered_messages = [
-        msg
-        for msg in all_messages
-        if msg.message_json.get("role") in ["user", "assistant"]
-        and not msg.message_json.get("tool_calls")
-    ]
+    sanitized_messages: list[SanitizedMessage] = []
+    for cc_message in all_messages:
+        if cc_message.message_json["role"] in ["tool", "system"]:
+            continue
+        sanitized_messages.append(convert_mundi_message_to_sanitized(cc_message))
 
     return {
         "map_id": map_id,
-        "messages": filtered_messages,
+        "messages": sanitized_messages,
     }
 
 
@@ -172,13 +256,190 @@ async def get_all_map_messages(
             """,
             map_id,
         )
-        messages = []
+        messages: list[MundiChatCompletionMessage] = []
         for msg in db_messages:
             msg_dict = dict(msg)
             # Parse message_json ... when using raw asyncpg
             msg_dict["message_json"] = json.loads(msg_dict["message_json"])
             messages.append(MundiChatCompletionMessage(**msg_dict))
         return messages
+
+
+class LayerInfo(BaseModel):
+    layer_id: str
+    name: str
+    type: str
+    geometry_type: str | None = None
+    feature_count: int | None = None
+
+    @classmethod
+    def from_map_layer(cls, layer: MapLayer) -> "LayerInfo":
+        return cls(
+            layer_id=layer.layer_id,
+            name=layer.name,
+            type=layer.type,
+            geometry_type=layer.geometry_type,
+            feature_count=layer.feature_count,
+        )
+
+
+class LayerDiff(BaseModel):
+    added_layers: List[LayerInfo]
+    removed_layers: List[LayerInfo]
+
+
+class MapNode(BaseModel):
+    map_id: str
+    messages: List[SanitizedMessage]
+    fork_reason: str | None = None
+    created_on: str
+    diff_from_previous: LayerDiff | None = None
+
+
+class MapTreeResponse(BaseModel):
+    project_id: str
+    tree: List[MapNode]
+
+
+@router.get(
+    "/{map_id}/tree",
+    operation_id="get_map_tree",
+    response_model=MapTreeResponse,
+)
+async def get_map_tree(map: MundiMap = Depends(get_map), conversation_id: int = None):
+    leaf_map_id = map.id
+    project_id = map.project_id
+
+    # TODO: if you add a message to a previous map, it interrupts the chain.
+    # adding a message should be considered creating a new node in the DAG...
+    async with async_conn("describe_map_tree") as conn:
+        # Collect all map IDs in the parent chain
+        map_ids: list[str] = []
+        current_map_id: str | None = leaf_map_id
+
+        while current_map_id:
+            map_ids.insert(0, current_map_id)
+
+            # Get parent map ID
+            parent_result = await conn.fetchrow(
+                """
+                SELECT parent_map_id
+                FROM user_mundiai_maps
+                WHERE id = $1 AND soft_deleted_at IS NULL
+                """,
+                current_map_id,
+            )
+            if not parent_result:
+                break
+
+            if parent_result["parent_map_id"] in map_ids:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Encountered loop in DAG inside describe_map_tree",
+                )
+
+            current_map_id = parent_result["parent_map_id"]
+
+        # Fetch all map data including layers
+        db_maps = await conn.fetch(
+            """
+            SELECT id, fork_reason, created_on, layers
+            FROM user_mundiai_maps
+            WHERE id = ANY($1) AND soft_deleted_at IS NULL
+            ORDER BY array_position($1, id)
+            """,
+            map_ids,
+        )
+        db_maps: List[MundiMap] = [MundiMap(**dict(map)) for map in db_maps]
+
+        # Fetch all unique layer IDs from all maps in the chain
+        all_layer_ids = set()
+        for db_map in db_maps:
+            if db_map.layers:
+                all_layer_ids.update(db_map.layers)
+
+        # Fetch all layer data
+        layers_by_id = {}
+        if all_layer_ids:
+            db_layers = await conn.fetch(
+                """
+                SELECT layer_id, owner_uuid, name, path, s3_key, type, raster_cog_url,
+                       postgis_connection_id, postgis_query, metadata, bounds, geometry_type,
+                       feature_count, size_bytes, source_map_id, created_on, last_edited
+                FROM map_layers
+                WHERE layer_id = ANY($1)
+                """,
+                list(all_layer_ids),
+            )
+            for layer_row in db_layers:
+                layer_dict = dict(layer_row)
+                layer_dict["metadata_json"] = layer_dict.pop("metadata")
+                layers_by_id[layer_dict["layer_id"]] = MapLayer(**layer_dict)
+
+        # Fetch all messages from the conversation if conversation_id is provided
+        db_messages = []
+        if conversation_id is not None:
+            db_messages = await conn.fetch(
+                """
+                SELECT *
+                FROM chat_completion_messages
+                WHERE conversation_id = $1
+                ORDER BY created_at ASC
+                """,
+                conversation_id,
+            )
+    # Group messages by map_id
+    # some maps may have no messages
+    messages_by_map: defaultdict[str, List[SanitizedMessage]] = defaultdict(list)
+    for msg in db_messages:
+        msg_dict = dict(msg)
+        # Parse message_json when using raw asyncpg
+        msg_dict["message_json"] = json.loads(msg_dict["message_json"])
+        cc_message = MundiChatCompletionMessage(**msg_dict)
+        if cc_message.message_json["role"] in ["tool", "system"]:
+            continue
+        sanitized_payload = convert_mundi_message_to_sanitized(cc_message)
+
+        messages_by_map[sanitized_payload.map_id].append(sanitized_payload)
+
+    # Create MapNode objects with layer diffs
+    nodes: List[MapNode] = []
+    for i, map in enumerate(db_maps):
+        # Calculate diff from previous map
+        diff_from_previous = None
+        if i > 0:
+            prev_map = db_maps[i - 1]
+            prev_layers = set(prev_map.layers or [])
+            current_layers = set(map.layers or [])
+
+            added_layer_ids = current_layers - prev_layers
+            removed_layer_ids = prev_layers - current_layers
+
+            added_layers = [
+                LayerInfo.from_map_layer(layers_by_id[layer_id])
+                for layer_id in added_layer_ids
+                if layer_id in layers_by_id
+            ]
+            removed_layers = [
+                LayerInfo.from_map_layer(layers_by_id[layer_id])
+                for layer_id in removed_layer_ids
+                if layer_id in layers_by_id
+            ]
+
+            diff_from_previous = LayerDiff(
+                added_layers=added_layers, removed_layers=removed_layers
+            )
+
+        node = MapNode(
+            map_id=map.id,
+            messages=messages_by_map[map.id],
+            fork_reason=map.fork_reason,
+            created_on=map.created_on.isoformat(),
+            diff_from_previous=diff_from_previous,
+        )
+        nodes.append(node)
+
+    return MapTreeResponse(project_id=project_id, tree=nodes)
 
 
 class RecoverableToolCallError(Exception):
@@ -204,6 +465,7 @@ async def run_geoprocessing_tool(
     conn,
     user_id: str,
     map_id: str,
+    conversation_id: int,
 ):
     function_name = tool_call.function.name
     tool_args = json.loads(tool_call.function.arguments)
@@ -317,7 +579,9 @@ async def run_geoprocessing_tool(
                 "input_urls": input_urls,
             }
 
-            async with kue_ephemeral_action(map_id, f"QGIS running {algorithm_id}..."):
+            async with kue_ephemeral_action(
+                conversation_id, f"QGIS running {algorithm_id}..."
+            ):
                 # Call QGIS processing service
                 async with httpx.AsyncClient() as client:
                     response = await client.post(
@@ -422,6 +686,7 @@ async def process_chat_interaction_task(
     user_id: str,  # Pass user_id directly
     chat_args: ChatArgsProvider,
     map_state: MapStateProvider,
+    conversation: Conversation,
     system_prompt_provider: SystemPromptProvider,
     connection_manager: PostgresConnectionManager,
 ):
@@ -436,15 +701,17 @@ async def process_chat_interaction_task(
             message_dict = (
                 message.model_dump() if isinstance(message, BaseModel) else message
             )
+            print("adding message", message_dict, conversation.id)
             await conn.execute(
                 """
                 INSERT INTO chat_completion_messages
-                (map_id, sender_id, message_json)
-                VALUES ($1, $2, $3)
+                (map_id, sender_id, message_json, conversation_id)
+                VALUES ($1, $2, $3, $4)
                 """,
                 map_id,
                 user_id,
                 json.dumps(message_dict),
+                conversation.id,
             )
 
         with tracer.start_as_current_span("app.process_chat_interaction") as span:
@@ -508,7 +775,7 @@ async def process_chat_interaction_task(
                                     },
                                     "query": {
                                         "type": "string",
-                                        "description": "SQL query to execute against PostGIS database for this layer, should list fetched columns for attributes that might be used for symbology (+ shape geometry). This query MUST alias the geometry column as 'geom'.",
+                                        "description": "SQL query to execute against PostGIS database for this layer, should list fetched columns for attributes that might be used for symbology (+ shape geometry). This query MUST alias the geometry column as 'geom'. Include newlines+spaces at ~55 column wrap",
                                     },
                                     "layer_name": {
                                         "type": "string",
@@ -594,7 +861,7 @@ async def process_chat_interaction_task(
                         "type": "function",
                         "function": {
                             "name": "query_duckdb_sql",
-                            "description": "Execute a SQL query against vector layer data using DuckDB",
+                            "description": "Execute a SQL query against vector layer data using DuckDB. Use query_postgis_database for layers created from PostGIS connections instead.",
                             "strict": True,
                             "parameters": {
                                 "type": "object",
@@ -607,7 +874,7 @@ async def process_chat_interaction_task(
                                     },
                                     "sql_query": {
                                         "type": "string",
-                                        "description": "E.g. SELECT name_en,county FROM LCH6Na2SBvJr ORDER BY id",
+                                        "description": "DuckDB-flavored SELECT ... SQL query. Include newlines+spaces at ~55 column wrap for readability e.g. SELECT name_en,county\n    FROM LCH6Na2SBvJr\n    ORDER BY id",
                                     },
                                     "head_n_rows": {
                                         "type": "number",
@@ -632,7 +899,7 @@ async def process_chat_interaction_task(
                                     },
                                     "sql_query": {
                                         "type": "string",
-                                        "description": "SQL query to execute. Examples: 'SELECT COUNT(*) FROM table_name', 'SELECT * FROM spatial_table LIMIT 10', 'SELECT column_name FROM information_schema.columns WHERE table_name = \"my_table\"'. Use standard SQL syntax.",
+                                        "description": "SQL query to execute. Use newlines+spaces at ~55 column wrap. Examples: 'SELECT COUNT(*) FROM table_name', 'SELECT * FROM spatial_table LIMIT 10', 'SELECT column_name FROM information_schema.columns WHERE table_name = \"my_table\"'. Use standard SQL syntax.",
                                     },
                                 },
                                 "required": ["postgis_connection_id", "sql_query"],
@@ -722,7 +989,7 @@ async def process_chat_interaction_task(
                     ].pop("enum", None)
 
                 # Replace the thinking ephemeral updates with context manager
-                async with kue_ephemeral_action(map_id, "Kue is thinking..."):
+                async with kue_ephemeral_action(conversation.id, "Kue is thinking..."):
                     chat_completions_args = await chat_args.get_args(
                         user_id, "send_map_message_async"
                     )
@@ -747,8 +1014,8 @@ async def process_chat_interaction_task(
                             )
                         except Exception as e:
                             await kue_notify_error(
-                                map_id,
-                                "Error connecting to LLM. If trying again doesn't work, hit the save button in the bottom right of the layer list to reset the chat history.",
+                                conversation.id,
+                                "Error connecting to LLM. If trying again doesn't work, create a new chat in the top right to reset the chat history.",
                             )
                             span.set_status(
                                 trace.Status(trace.StatusCode.ERROR, str(e))
@@ -758,7 +1025,9 @@ async def process_chat_interaction_task(
                             )
                             break
 
-                assistant_message = response.choices[0].message
+                assistant_message: ChatCompletionMessageParam = response.choices[
+                    0
+                ].message
 
                 # Store the assistant message in the database
                 await add_chat_completion_message(assistant_message)
@@ -768,6 +1037,7 @@ async def process_chat_interaction_task(
                     break
 
                 for tool_call in assistant_message.tool_calls:
+                    tool_call: ChatCompletionMessageToolCallParam = tool_call
                     function_name = tool_call.function.name
                     tool_args = json.loads(tool_call.function.arguments)
                     tool_result = {}
@@ -807,7 +1077,7 @@ async def process_chat_interaction_task(
                                     }
                                 else:
                                     async with kue_ephemeral_action(
-                                        map_id,
+                                        conversation.id,
                                         "Adding layer from PostGIS...",
                                         update_style_json=True,
                                     ):
@@ -1072,7 +1342,9 @@ async def process_chat_interaction_task(
                             new_name = tool_args.get("new_name")
 
                             async with kue_ephemeral_action(
-                                map_id, "Adding layer to map...", update_style_json=True
+                                conversation.id,
+                                "Adding layer to map...",
+                                update_style_json=True,
                             ):
                                 layer_exists = await conn.fetchrow(
                                     """
@@ -1155,7 +1427,9 @@ async def process_chat_interaction_task(
                             try:
                                 # Execute the query using the async function
                                 async with kue_ephemeral_action(
-                                    map_id, "Querying with SQL...", layer_id=layer_id
+                                    conversation.id,
+                                    "Querying with SQL...",
+                                    layer_id=layer_id,
                                 ):
                                     result = await execute_duckdb_query(
                                         sql_query=sql_query,
@@ -1311,7 +1585,7 @@ async def process_chat_interaction_task(
                             else:
                                 # Add or update the map_layer_styles entry
                                 async with kue_ephemeral_action(
-                                    map_id,
+                                    conversation.id,
                                     "Choosing a new style",
                                     update_style_json=True,
                                 ):
@@ -1355,7 +1629,7 @@ async def process_chat_interaction_task(
                                 try:
                                     # Keep context manager only around the specific API call
                                     async with kue_ephemeral_action(
-                                        map_id,
+                                        conversation.id,
                                         f"Downloading data from OpenStreetMap: {tags}",
                                     ):
                                         tool_result = await download_from_openstreetmap(
@@ -1466,7 +1740,8 @@ async def process_chat_interaction_task(
                                             continue
 
                                         async with kue_ephemeral_action(
-                                            map_id, "Querying PostgreSQL database..."
+                                            conversation.id,
+                                            "Querying PostgreSQL database...",
                                         ):
                                             postgres_conn = await connection_manager.connect_to_postgres(
                                                 postgis_connection_id
@@ -1596,7 +1871,7 @@ async def process_chat_interaction_task(
 
                                     # Send ephemeral action to trigger zoom on frontend
                                     async with kue_ephemeral_action(
-                                        map_id,
+                                        conversation.id,
                                         description,
                                         update_style_json=False,
                                         bounds=bounds,
@@ -1631,6 +1906,7 @@ async def process_chat_interaction_task(
                                 conn,
                                 user_id,
                                 map_id,
+                                conversation.id,
                             )
                             await add_chat_completion_message(
                                 ChatCompletionToolMessageParam(
@@ -1644,25 +1920,38 @@ async def process_chat_interaction_task(
 
             # Async connections auto-commit, no need for explicit commit
 
+        # Label the conversation if it still has the default "title pending"
+        # if conversation.title == "title pending":
+        #     await label_conversation_inline(conversation.id)
+
         # Unlock the map when processing is complete
-        redis.delete(f"map_lock:{map_id}")
+        print("deleting lock", conversation.id)
+        redis.delete(f"chat_lock:{conversation.id}")
+
+
+class MessageSendRequest(BaseModel):
+    message: ChatCompletionUserMessageParam
+    selected_feature: SelectedFeature | None
 
 
 class MessageSendResponse(BaseModel):
+    conversation_id: int
+    sent_message: SanitizedMessage
     message_id: str
     status: str
 
 
 @router.post(
-    "/{map_id}/messages/send",
+    "/conversations/{conversation_id}/maps/{map_id}/send",
     response_model=MessageSendResponse,
     operation_id="send_map_message",
 )
 async def send_map_message(
     request: Request,
     map_id: str,
-    message: ChatCompletionUserMessageParam,
+    body: MessageSendRequest,
     background_tasks: BackgroundTasks,
+    conversation: Conversation = Depends(get_or_create_conversation),
     session: UserContext = Depends(verify_session_required),
     postgis_provider: Callable = Depends(get_postgis_provider),
     layer_describer: LayerDescriber = Depends(get_layer_describer),
@@ -1673,35 +1962,21 @@ async def send_map_message(
         get_postgres_connection_manager
     ),
 ):
-    async with async_conn("send_map_message.authenticate") as conn:
-        # Authenticate and check map
-        map_result = await conn.fetchrow(
-            "SELECT owner_uuid FROM user_mundiai_maps WHERE id = $1 AND soft_deleted_at IS NULL",
-            map_id,
-        )
-
-    if not map_result:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-        )
-
+    # get_conversation authenticates
     user_id = session.get_user_id()
-    if user_id != str(map_result["owner_uuid"]):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Authentication required",
-        )
 
     # Check if map is already being processed
-    lock_key = f"map_lock:{map_id}"
+    print("checking lock", conversation.id)
+    lock_key = f"chat_lock:{conversation.id}"
     if redis.get(lock_key):
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
-            detail="Map is currently being processed by another request",
+            detail="Conversation is currently being processed by another request",
         )
 
-    # Lock the map for processing
-    redis.set(lock_key, "locked", ex=60)  # 60 second expiry
+    # Lock the conversation for processing
+    print("setting lock", conversation.id)
+    redis.set(lock_key, "locked", ex=30)  # 30 second expiry
 
     # Use map state provider to generate system messages
     messages_response = await get_all_map_messages(map_id, session)
@@ -1719,7 +1994,7 @@ async def send_map_message(
 
     # Get system messages from the provider
     system_messages = await map_state.get_system_messages(
-        current_messages, description_text
+        current_messages, description_text, body.selected_feature
     )
 
     async with async_conn("send_map_message.update_messages") as conn:
@@ -1729,37 +2004,38 @@ async def send_map_message(
                 role="system",
                 content=system_msg["content"],
             )
-            system_message_dict = (
-                system_message.model_dump()
-                if isinstance(system_message, BaseModel)
-                else system_message
-            )
+
             await conn.execute(
                 """
                 INSERT INTO chat_completion_messages
-                (map_id, sender_id, message_json)
-                VALUES ($1, $2, $3)
+                (map_id, sender_id, message_json, conversation_id)
+                VALUES ($1, $2, $3, $4)
                 """,
                 map_id,
                 user_id,
-                json.dumps(system_message_dict),
+                json.dumps(system_message),
+                conversation.id,
             )
 
         # Add user's message to DB
-        message_dict = (
-            message.model_dump() if isinstance(message, BaseModel) else message
-        )
         user_msg_db = await conn.fetchrow(
             """
             INSERT INTO chat_completion_messages
-            (map_id, sender_id, message_json)
-            VALUES ($1, $2, $3)
-            RETURNING id, map_id, sender_id, message_json, created_at
+            (map_id, sender_id, message_json, conversation_id)
+            VALUES ($1, $2, $3, $4)
+            RETURNING id, conversation_id, map_id, sender_id, message_json, created_at
             """,
             map_id,
             user_id,
-            json.dumps(message_dict),
+            json.dumps(body.message),
+            conversation.id,
         )
+
+        user_msg_dict = dict(user_msg_db)
+        user_msg_dict["message_json"] = json.loads(user_msg_dict["message_json"])
+
+        user_msg = MundiChatCompletionMessage(**user_msg_dict)
+        sanitized_user_msg = convert_mundi_message_to_sanitized(user_msg)
 
     # Start background task
     background_tasks.add_task(
@@ -1770,11 +2046,14 @@ async def send_map_message(
         user_id,
         chat_args,
         map_state,
+        conversation,
         system_prompt_provider,
         connection_manager,
     )
 
     return MessageSendResponse(
+        conversation_id=conversation.id,
+        sent_message=sanitized_user_msg,
         message_id=str(user_msg_db["id"]),
         status="processing_started",
     )

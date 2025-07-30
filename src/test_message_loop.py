@@ -35,28 +35,30 @@ class MockResponse:
 
 
 @pytest.fixture
-def test_map_id(sync_auth_client):
-    map_title = f"Test Message Loop Map {uuid.uuid4()}"
-
-    map_data = {
-        "title": map_title,
+def test_map_fixture(sync_auth_client):
+    # Create a map with a project embedded
+    project_payload = {"layers": []}
+    map_create_payload = {
+        "project": project_payload,
+        "title": f"Test Message Loop Map {uuid.uuid4()}",
         "description": "Map for testing message loop",
         "link_accessible": True,
     }
-
-    response = sync_auth_client.post("/api/maps/create", json=map_data)
-
+    response = sync_auth_client.post("/api/maps/create", json=map_create_payload)
     assert response.status_code == 200
-    map_id = response.json()["id"]
+    data = response.json()
+    map_id = data["id"]
+    project_id = data["project_id"]
 
-    return map_id
+    return {"map_id": map_id, "project_id": project_id}
 
 
 @pytest.fixture
-def test_vector_layer(sync_auth_client, test_map_id):
+def test_vector_layer(sync_auth_client, test_map_fixture):
+    map_id = test_map_fixture["map_id"]
     with open("/app/test_fixtures/UScounties.gpkg", "rb") as f:
         response = sync_auth_client.post(
-            f"/api/maps/{test_map_id}/layers",
+            f"/api/maps/{map_id}/layers",
             files={"file": ("UScounties.gpkg", f, "application/octet-stream")},
             data={"layer_name": "US Counties", "add_layer_to_map": "true"},
         )
@@ -70,8 +72,11 @@ def test_vector_layer(sync_auth_client, test_map_id):
 
 @pytest.mark.anyio
 async def test_message_simple_response(
-    test_map_id, sync_auth_client, websocket_url_for_map
+    test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
+    map_id = test_map_fixture["map_id"]
+    project_id = test_map_fixture["project_id"]
+
     def create_response_queue():
         return [
             MockResponse(
@@ -91,17 +96,26 @@ async def test_message_simple_response(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
-        with sync_auth_client.websocket_connect(
-            websocket_url_for_map(test_map_id)
-        ) as websocket:
-            user_message = {
-                "role": "user",
-                "content": "Hello, can you tell me about this map?",
-            }
+        # Create a conversation
+        conversation_response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert conversation_response.status_code == 200
+        conversation_id = conversation_response.json()["id"]
 
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(map_id, conversation_id)
+        ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{test_map_id}/messages/send",
-                json=user_message,
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+                json={
+                    "message": {
+                        "role": "user",
+                        "content": "Hello, can you tell me about this map?",
+                    },
+                    "selected_feature": None,
+                },
             )
 
             assert response.status_code == 200
@@ -109,8 +123,10 @@ async def test_message_simple_response(
             assert result["status"] == "processing_started"
 
             sent_msg = websocket.receive_json()
-            assert sent_msg["message_json"]["role"] == "user"
-            assert "tell me about this map" in sent_msg["message_json"]["content"]
+            assert sent_msg["role"] == "user"
+            assert "tell me about this map" in sent_msg["content"]
+            assert not sent_msg["has_tool_calls"]
+            assert sent_msg["conversation_id"] == conversation_id
 
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
@@ -122,26 +138,19 @@ async def test_message_simple_response(
             )
 
             assistant_msg = websocket.receive_json()
-            assert assistant_msg["message_json"]["role"] == "assistant"
-            assert "test map without layers" in assistant_msg["message_json"]["content"]
+            assert assistant_msg["role"] == "assistant"
+            assert "test map without layers" in assistant_msg["content"]
+            assert assistant_msg["conversation_id"] == conversation_id
 
         messages_response = sync_auth_client.get(
-            f"/api/maps/{test_map_id}/messages",
+            f"/api/conversations/{conversation_id}/messages",
         )
 
         assert messages_response.status_code == 200
-        messages_data = messages_response.json()
+        messages = messages_response.json()
 
-        user_messages = [
-            m["message_json"]
-            for m in messages_data["messages"]
-            if m["message_json"]["role"] == "user"
-        ]
-        assistant_messages = [
-            m["message_json"]
-            for m in messages_data["messages"]
-            if m["message_json"]["role"] == "assistant"
-        ]
+        user_messages = [m for m in messages if m["role"] == "user"]
+        assistant_messages = [m for m in messages if m["role"] == "assistant"]
 
         assert len(user_messages) >= 1
         assert len(assistant_messages) >= 1
@@ -154,48 +163,55 @@ async def test_message_simple_response(
     os.environ.get("OPENAI_API_KEY") is None or os.environ.get("OPENAI_API_KEY") == "",
     reason="OPENAI_API_KEY is required for these tests",
 )
-def test_error_recovery(test_map_id, sync_auth_client):
-    fail_message = {
-        "role": "user",
-        "content": "Calculate centroids for a layer with ID 'nonexistent_123'.",
-    }
+def test_error_recovery(test_map_fixture, sync_auth_client):
+    map_id = test_map_fixture["map_id"]
+    project_id = test_map_fixture["project_id"]
+
+    # Create a conversation
+    conversation_response = sync_auth_client.post(
+        "/api/conversations",
+        json={"project_id": project_id},
+    )
+    assert conversation_response.status_code == 200
+    conversation_id = conversation_response.json()["id"]
 
     response = sync_auth_client.post(
-        f"/api/maps/{test_map_id}/messages/send",
-        json=fail_message,
+        f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+        json={
+            "message": {
+                "role": "user",
+                "content": "Calculate centroids for a layer with ID 'nonexistent_123'.",
+            },
+            "selected_feature": None,
+        },
     )
 
     assert response.status_code == 200
 
-    valid_message = {
-        "role": "user",
-        "content": "What GIS operations are available in this system?",
-    }
-
     response = sync_auth_client.post(
-        f"/api/maps/{test_map_id}/messages/send",
-        json=valid_message,
+        f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+        json={
+            "message": {
+                "role": "user",
+                "content": "What GIS operations are available in this system?",
+            },
+            "selected_feature": None,
+        },
     )
 
     assert response.status_code == 200
     messages_response = sync_auth_client.get(
-        f"/api/maps/{test_map_id}/messages",
+        f"/api/conversations/{conversation_id}/messages",
     )
 
     assert messages_response.status_code == 200
-    messages_data = messages_response.json()
+    messages = messages_response.json()
 
-    user_messages = [
-        m["message_json"]
-        for m in messages_data["messages"]
-        if m["message_json"]["role"] == "user"
-    ]
+    user_messages = [m for m in messages if m["role"] == "user"]
     assistant_messages = [
-        m["message_json"]
-        for m in messages_data["messages"]
-        if m["message_json"]["role"] == "assistant"
-        and "content" in m["message_json"]
-        and m["message_json"]["content"]
+        m
+        for m in messages
+        if m["role"] == "assistant" and "content" in m and m["content"]
     ]
 
     assert len(user_messages) >= 2
@@ -209,8 +225,11 @@ def test_error_recovery(test_map_id, sync_auth_client):
 
 @pytest.mark.anyio
 async def test_sequential_response_handling(
-    test_map_id, sync_auth_client, websocket_url_for_map
+    test_map_fixture, sync_auth_client, websocket_url_for_map
 ):
+    map_id = test_map_fixture["map_id"]
+    project_id = test_map_fixture["project_id"]
+
     def create_response_queue():
         return [
             MockResponse(
@@ -230,26 +249,37 @@ async def test_sequential_response_handling(
         mock_client.chat.completions.create = AsyncMock(side_effect=mock_create)
         mock_get_client.return_value = mock_client
 
-        with sync_auth_client.websocket_connect(
-            websocket_url_for_map(test_map_id)
-        ) as websocket:
-            user_message = {
-                "role": "user",
-                "content": (
-                    "First, describe what a GIS is. Second, explain what spatial analysis is. "
-                    "Third, tell me about the relationship between them."
-                ),
-            }
+        # Create a conversation
+        conversation_response = sync_auth_client.post(
+            "/api/conversations",
+            json={"project_id": project_id},
+        )
+        assert conversation_response.status_code == 200
+        conversation_id = conversation_response.json()["id"]
 
+        with sync_auth_client.websocket_connect(
+            websocket_url_for_map(map_id, conversation_id)
+        ) as websocket:
             response = sync_auth_client.post(
-                f"/api/maps/{test_map_id}/messages/send",
-                json=user_message,
+                f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+                json={
+                    "message": {
+                        "role": "user",
+                        "content": (
+                            "First, describe what a GIS is. Second, explain what spatial analysis is. "
+                            "Third, tell me about the relationship between them."
+                        ),
+                    },
+                    "selected_feature": None,
+                },
             )
 
             assert response.status_code == 200
 
             sent_msg = websocket.receive_json()
-            assert sent_msg["message_json"]["role"] == "user"
+            assert sent_msg["role"] == "user"
+            assert not sent_msg["has_tool_calls"]
+            assert sent_msg["conversation_id"] == conversation_id
 
             msg = websocket.receive_json()
             assert msg["ephemeral"] and msg["action"] == "Kue is thinking..."
@@ -261,22 +291,21 @@ async def test_sequential_response_handling(
             )
 
             assistant_msg = websocket.receive_json()
-            assert assistant_msg["message_json"]["role"] == "assistant"
-            assert "GIS" in assistant_msg["message_json"]["content"]
+            assert assistant_msg["role"] == "assistant"
+            assert "GIS" in assistant_msg["content"]
+            assert assistant_msg["conversation_id"] == conversation_id
 
         messages_response = sync_auth_client.get(
-            f"/api/maps/{test_map_id}/messages",
+            f"/api/conversations/{conversation_id}/messages",
         )
 
         assert messages_response.status_code == 200
-        messages_data = messages_response.json()
+        messages = messages_response.json()
 
         assistant_messages = [
-            m["message_json"]
-            for m in messages_data["messages"]
-            if m["message_json"]["role"] == "assistant"
-            and "content" in m["message_json"]
-            and m["message_json"]["content"]
+            m
+            for m in messages
+            if m["role"] == "assistant" and "content" in m and m["content"]
         ]
 
         assert len(assistant_messages) >= 1
@@ -319,7 +348,9 @@ async def test_sequential_response_handling(
 async def test_map_locking_prevents_concurrent_requests(auth_client):
     import asyncio
 
+    project_payload = {"layers": []}
     map_data = {
+        "project": project_payload,
         "title": f"Test Lock Map {uuid.uuid4()}",
         "description": "Map for testing locking",
         "link_accessible": True,
@@ -329,19 +360,37 @@ async def test_map_locking_prevents_concurrent_requests(auth_client):
     assert map_response.status_code == 200
     map_id = map_response.json()["id"]
 
-    user_message = {
-        "role": "user",
-        "content": "Hi",
-    }
+    # Extract project_id from map response
+    project_id = map_response.json()["project_id"]
+
+    # Create a conversation
+    conversation_response = await auth_client.post(
+        "/api/conversations",
+        json={"project_id": project_id},
+    )
+    assert conversation_response.status_code == 200
+    conversation_id = conversation_response.json()["id"]
 
     tasks = [
         auth_client.post(
-            f"/api/maps/{map_id}/messages/send",
-            json=user_message,
+            f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+            json={
+                "message": {
+                    "role": "user",
+                    "content": "Hi",
+                },
+                "selected_feature": None,
+            },
         ),
         auth_client.post(
-            f"/api/maps/{map_id}/messages/send",
-            json=user_message,
+            f"/api/maps/conversations/{conversation_id}/maps/{map_id}/send",
+            json={
+                "message": {
+                    "role": "user",
+                    "content": "Hi",
+                },
+                "selected_feature": None,
+            },
         ),
     ]
 

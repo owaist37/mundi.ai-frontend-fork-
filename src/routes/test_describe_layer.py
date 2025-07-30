@@ -44,7 +44,10 @@ async def test_map_with_coho_layer(auth_client):
         )
         layer_data = layer_response.json()
         layer_id = layer_data["id"]
-        layer_details_response = await auth_client.get(f"/api/maps/{map_id}/layers")
+        child_map_id = layer_data["dag_child_map_id"]
+        layer_details_response = await auth_client.get(
+            f"/api/maps/{child_map_id}/layers"
+        )
         assert layer_details_response.status_code == 200
         layers = layer_details_response.json()["layers"]
         assert len(layers) == 1
@@ -52,7 +55,7 @@ async def test_map_with_coho_layer(auth_client):
         assert layer["type"] == "vector"
         assert layer["feature_count"] is not None
         assert layer["feature_count"] == 677
-    return {"map_id": map_id, "layer_id": layer_id}
+    return {"map_id": child_map_id, "layer_id": layer_id}
 
 
 @pytest.mark.anyio
@@ -158,13 +161,14 @@ async def test_map_with_point_cloud_layer(auth_client):
         )
         layer_data = layer_response.json()
         layer_id = layer_data["id"]
-        layer_details_response = await auth_client.get(f"/api/maps/{map_id}/layers")
+        new_map_id = layer_data["dag_child_map_id"]
+        layer_details_response = await auth_client.get(f"/api/maps/{new_map_id}/layers")
         assert layer_details_response.status_code == 200
         layers = layer_details_response.json()["layers"]
         assert len(layers) == 1
         layer = layers[0]
         assert layer["type"] == "point_cloud"
-    return {"map_id": map_id, "layer_id": layer_id}
+    return {"map_id": new_map_id, "layer_id": layer_id}
 
 
 @pytest.mark.anyio

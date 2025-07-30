@@ -16,15 +16,11 @@
 import os
 import logging
 import httpx
-from typing import Optional
-from fastapi import APIRouter, HTTPException, status, Request, Depends
+from fastapi import APIRouter, HTTPException, status, Depends
 from pydantic import BaseModel
 from redis import Redis
-from ..dependencies.session import (
-    verify_session_optional,
-    UserContext,
-)
-from ..structures import get_async_db_connection
+from src.dependencies.dag import get_map
+from src.database.models import MundiMap
 
 router = APIRouter()
 
@@ -45,38 +41,9 @@ class RoomResponse(BaseModel):
 
 @router.get("/{map_id}/room", response_model=RoomResponse)
 async def get_map_room(
-    map_id: str,
-    request: Request,
-    session: Optional[UserContext] = Depends(verify_session_optional),
+    map: MundiMap = Depends(get_map),
 ):
-    async with get_async_db_connection() as conn:
-        map_result = await conn.fetchrow(
-            """
-            SELECT m.id, m.owner_uuid, p.link_accessible
-            FROM user_mundiai_maps m
-            JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
-            """,
-            map_id,
-        )
-
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Map not found",
-            )
-
-        if not map_result["link_accessible"]:
-            if session is None or session.get_user_id() != str(
-                map_result["owner_uuid"]
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required to access this map",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
-    redis_key = f"map:{map_id}:room_id"
+    redis_key = f"map:{map.id}:room_id"
     room_id = redis.get(redis_key)
 
     if room_id:
@@ -112,6 +79,6 @@ async def get_map_room(
         )
 
     redis.setex(redis_key, 1800, room_id)  # 30 minutes TTL
-    logger.info(f"Created and stored new room {room_id} for map {map_id}")
+    logger.info(f"Created and stored new room {room_id} for map {map.id}")
 
     return RoomResponse(room_id=room_id)

@@ -3,6 +3,8 @@ import { defineConfig } from 'astro/config';
 import starlight from '@astrojs/starlight';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import sitemap from '@astrojs/sitemap';
+import starlightOpenAPI, { openAPISidebarGroups } from 'starlight-openapi';
+import starlightLinksValidator from 'starlight-links-validator';
 
 // https://astro.build/config
 export default defineConfig({
@@ -36,7 +38,7 @@ export default defineConfig({
 						{ label: 'Geoprocessing from QGIS', slug: 'guides/geoprocessing-from-qgis' },
 						{ label: 'Visualizing point clouds', slug: 'guides/visualizing-point-clouds-las-laz' },
 						{ label: 'Satellite basemaps', slug: 'guides/switching-basemaps-satellite-or-traditional-vector' },
-                                                { label: 'Embedding into websites', slug: 'guides/embedding-maps-into-websites' },
+						{ label: 'Embedding into websites', slug: 'guides/embedding-maps-into-websites' },
 					],
 				},
 				{
@@ -47,7 +49,8 @@ export default defineConfig({
 						{ label: 'Using a local LLM with Ollama', slug: 'deployments/connecting-to-local-llm-with-ollama' },
 						{ label: 'Air-gapped deployments', slug: 'deployments/air-gapped' }
 					]
-				}
+				},
+				...openAPISidebarGroups,
 			],
 			// Set English as the default language for this site.
 			defaultLocale: 'root',
@@ -84,7 +87,18 @@ You can try Mundi free at https://app.mundi.ai or self-host using Docker Compose
 						description: "Mundi landing page with pricing links, features, and more information"
 					}
 				]
-			})],
+			}), starlightOpenAPI([
+				{
+					base: 'developer-api',
+					schema: './src/schema/openapi.json',
+					label: 'Developer API',
+					sidebar: {
+						operations: {
+							badges: true
+						}
+					}
+				},
+			]), starlightLinksValidator()],
 			head: [
 				{
 					tag: 'script',

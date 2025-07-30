@@ -26,7 +26,9 @@ from fastapi import (
     Depends,
 )
 from fastapi.responses import Response
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+from src.dependencies.dag import forked_map_by_user
+from src.database.models import MundiMap, MapLayer
 from ..dependencies.session import (
     verify_session_required,
     verify_session_optional,
@@ -67,10 +69,8 @@ from ..dependencies.postgres_connection import (
 )
 from typing import Callable
 from opentelemetry import trace
-
-# Global semaphore to limit concurrent social image renderings
-# This prevents OOM issues when many maps load simultaneously
-SOCIAL_RENDER_SEMAPHORE = asyncio.Semaphore(2)  # Max 2 concurrent renders
+from src.dag import DAGEditOperationResponse
+from src.dependencies.dag import get_map, get_layer
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -103,17 +103,25 @@ def generate_id(length=12, prefix=""):
 
 
 class MapCreateRequest(BaseModel):
-    title: str = "Untitled Map"
-    description: str = ""
+    title: str = Field(
+        default="Untitled Map", description="Display name for the new map"
+    )
+    description: str = Field(
+        default="", description="Optional description of the map's purpose or contents"
+    )
 
 
 class MapResponse(BaseModel):
-    id: str  # map id
-    project_id: str
-    title: str
-    description: str
-    created_on: str
-    last_edited: str
+    id: str = Field(description="Unique identifier for the map")
+    project_id: str = Field(
+        description="ID of the project containing this map. Projects can contain multiple related maps."
+    )
+    title: str = Field(description="Display name of the map")
+    description: str = Field(
+        description="Optional description of the map's purpose or contents"
+    )
+    created_on: str = Field(description="ISO timestamp when the map was created")
+    last_edited: str = Field(description="ISO timestamp when the map was last modified")
 
 
 class UserMapsResponse(BaseModel):
@@ -139,12 +147,31 @@ class LayersListResponse(BaseModel):
     layers: List[LayerResponse]
 
 
-class LayerUploadResponse(BaseModel):
+class LayerUploadResponse(DAGEditOperationResponse):
+    id: str = Field(description="Unique identifier for the newly uploaded layer")
+    name: str = Field(description="Display name of the layer as it appears in the map")
+    type: str = Field(description="Layer type (vector, raster, or point_cloud)")
+    url: str = Field(
+        description="Direct URL to access the layer data (PMTiles for vector, COG for raster)"
+    )
+    message: str = Field(
+        default="Layer added successfully",
+        description="Status message confirming successful upload",
+    )
+
+
+class InternalLayerUploadResponse(BaseModel):
     id: str
     name: str
     type: str
     url: str  # Direct URL to the layer
     message: str = "Layer added successfully"
+
+
+class LayerRemovalResponse(DAGEditOperationResponse):
+    layer_id: str
+    layer_name: str
+    message: str = "Layer successfully removed from map"
 
 
 class PresignedUrlResponse(BaseModel):
@@ -153,12 +180,24 @@ class PresignedUrlResponse(BaseModel):
     format: str
 
 
-@router.post("/create", response_model=MapResponse, operation_id="create_map")
+@router.post(
+    "/create",
+    response_model=MapResponse,
+    operation_id="create_map",
+    summary="Create a map project",
+)
 async def create_map(
-    request: Request,
     map_request: MapCreateRequest,
     session: UserContext = Depends(verify_session_required),
 ):
+    """Creates a new map project.
+
+    This endpoint returns both a map id `id` and project id `project_id`. Projects
+    can contain multiple map versions ("maps"), unattached layer data, and details
+    a history of changes to the project. Each edit will create a new map version.
+
+    Accepts both `title` and `description` in the request body.
+    """
     owner_id = session.get_user_id()
 
     # Generate unique IDs for project and map
@@ -290,8 +329,8 @@ async def save_and_fork_map(
         await conn.fetchrow(
             """
             INSERT INTO user_mundiai_maps
-            (id, project_id, owner_uuid, title, description, layers, display_as_diff)
-            VALUES ($1, $2, $3, $4, $5, $6, TRUE)
+            (id, project_id, owner_uuid, title, description, layers, display_as_diff, parent_map_id, fork_reason)
+            VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8)
             RETURNING id, title, description, created_on, last_edited
             """,
             new_map_id,
@@ -300,6 +339,8 @@ async def save_and_fork_map(
             source_map["title"],
             source_map["description"],
             source_map["layers"],
+            map_id,
+            "user_edit",
         )
 
         # Copy over all map_layer_styles to the new map
@@ -352,43 +393,20 @@ async def save_and_fork_map(
     "/{map_id}",
     operation_id="get_map",
 )
-async def get_map(
+async def get_map_route(
     request: Request,
-    map_id: str,
     diff_map_id: Optional[str] = None,
+    map: MundiMap = Depends(get_map),
     session: UserContext = Depends(verify_session_optional),
 ):
-    async with get_async_db_connection() as conn:
-        # Retrieve the map and check access
-        map_rec = await conn.fetchrow(
-            """
-            SELECT m.id, m.project_id, p.link_accessible, m.owner_uuid, m.layers, m.display_as_diff
-            FROM user_mundiai_maps m
-            JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
-            """,
-            map_id,
+    # Ensure map is part of a project
+    if not map.project_id:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Map is not part of a project",
         )
-        if not map_rec:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
-        if not map_rec["link_accessible"]:
-            if session is None or session.get_user_id() != str(map_rec["owner_uuid"]):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
 
-        # Ensure map is part of a project
-        project_id = map_rec.get("project_id")
-        if not project_id:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Map is not part of a project",
-            )
-
+    async with get_async_db_connection() as conn:
         # Load project and its changelog
         project = await conn.fetchrow(
             """
@@ -396,7 +414,7 @@ async def get_map(
             FROM user_mundiai_projects
             WHERE id = $1 AND soft_deleted_at IS NULL
             """,
-            project_id,
+            map.project_id,
         )
         if not project:
             raise HTTPException(
@@ -409,7 +427,7 @@ async def get_map(
             # Find the previous map in the project
             proj_maps = project["maps"] or []
             try:
-                current_index = proj_maps.index(map_id)
+                current_index = proj_maps.index(map.id)
                 if current_index > 0:
                     prev_map_id = proj_maps[current_index - 1]
             except ValueError:
@@ -449,7 +467,7 @@ async def get_map(
             )
 
         # Get layer IDs from the map
-        layer_ids = map_rec["layers"] if map_rec["layers"] else []
+        layer_ids = map.layers if map.layers else []
 
         # Load layers using the layer IDs
         layers = await conn.fetch(
@@ -477,7 +495,7 @@ async def get_map(
         # Calculate diff if prev_map_id is provided
         layer_diffs = None
         if prev_map_id:
-            user_id = session.get_user_id() if session else str(map_rec["owner_uuid"])
+            user_id = session.get_user_id() if session else str(map.owner_uuid)
 
             # Get previous map layers with their style IDs
             prev_layer_rows = await conn.fetch(
@@ -504,7 +522,7 @@ async def get_map(
                 LEFT JOIN map_layer_styles mls ON mls.map_id = m.id AND mls.layer_id = ml.layer_id
                 WHERE m.id = $1 AND m.owner_uuid = $2 AND m.soft_deleted_at IS NULL
                 """,
-                map_id,
+                map.id,
                 user_id,
             )
             new_layers = {row["layer_id"]: row for row in current_layer_rows}
@@ -571,7 +589,7 @@ async def get_map(
                                 "status": "existing",
                             }
                         )
-        elif diff_map_id == "auto" and proj_maps and map_id == proj_maps[0]:
+        elif diff_map_id == "auto" and proj_maps and map.id == proj_maps[0]:
             # If this is the first map in the project and auto diff is requested,
             # mark all layers as added
             layer_diffs = []
@@ -586,17 +604,17 @@ async def get_map(
 
         # Return JSON payload
         response = {
-            "map_id": map_id,
-            "project_id": project_id,
+            "map_id": map.id,
+            "project_id": map.project_id,
             "layers": layers,
             "changelog": changelog,
-            "display_as_diff": map_rec["display_as_diff"],
+            "display_as_diff": map.display_as_diff,
         }
 
         if layer_diffs is not None:
             response["diff"] = {
                 "prev_map_id": prev_map_id,
-                "new_map_id": map_id,
+                "new_map_id": map.id,
                 "layer_diffs": layer_diffs,
             }
 
@@ -609,55 +627,19 @@ async def get_map(
     response_model=LayersListResponse,
 )
 async def get_map_layers(
-    request: Request,
-    map_id: str,
-    session: UserContext = Depends(verify_session_optional),
+    map: MundiMap = Depends(get_map),
 ):
     async with get_async_db_connection() as conn:
-        # First check if the map exists and is accessible
-        map_result = await conn.fetchrow(
+        # Get all layers by their IDs using ANY() instead of f-string
+        layers = await conn.fetch(
             """
-            SELECT m.id, p.link_accessible, m.owner_uuid, m.layers
-            FROM user_mundiai_maps m
-            JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
+            SELECT layer_id as id, name, path, type, raster_cog_url, metadata, bounds, geometry_type, feature_count
+            FROM map_layers
+            WHERE layer_id = ANY($1)
+            ORDER BY id
             """,
-            map_id,
+            map.layers,
         )
-
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
-
-        # Check if map is publicly accessible
-        if not map_result["link_accessible"]:
-            # If not publicly accessible, verify that we have auth
-            if session is None or session.get_user_id() != str(
-                map_result["owner_uuid"]
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
-        # Get layer IDs from the map
-        layer_ids = map_result["layers"]
-
-        if not layer_ids:
-            layers = []
-        else:
-            # Get all layers by their IDs using ANY() instead of f-string
-            layers = await conn.fetch(
-                """
-                SELECT layer_id as id, name, path, type, metadata, bounds, geometry_type, feature_count
-                FROM map_layers
-                WHERE layer_id = ANY($1)
-                ORDER BY id
-                """,
-                layer_ids,
-            )
 
         # Process metadata JSON and add feature_count for vector layers if possible
         # Convert Record objects to mutable dictionaries
@@ -685,7 +667,7 @@ async def get_map_layers(
                 layer["original_srid"] = layer["metadata"]["original_srid"]
 
         # Return the layers
-        return LayersListResponse(map_id=map_id, layers=layers)
+        return LayersListResponse(map_id=map.id, layers=layers)
 
 
 @router.get(
@@ -1060,7 +1042,8 @@ async def get_map_style_internal(
             style_json["sources"][layer_id] = {
                 "type": "vector",
                 "tiles": [
-                    f"{os.getenv('WEBSITE_DOMAIN')}/api/layer/{layer_id}/{{z}}/{{x}}/{{y}}.mvt"
+                    # f"{os.getenv('WEBSITE_DOMAIN')}/api/layer/{layer_id}/{{z}}/{{x}}/{{y}}.mvt"
+                    f"http://localhost:5173/api/layer/{layer_id}/{{z}}/{{x}}/{{y}}.mvt"
                 ],
                 "minzoom": 0,
                 "maxzoom": 17,
@@ -1136,46 +1119,50 @@ async def get_map_style_internal(
 
 
 @router.post(
-    "/{map_id}/layers",
+    "/{original_map_id}/layers",
     response_model=LayerUploadResponse,
     operation_id="upload_layer_to_map",
+    summary="Upload file as layer",
 )
 async def upload_layer(
-    request: Request,
-    map_id: str,
+    original_map_id: str,
+    forked_map: MundiMap = Depends(forked_map_by_user),
     file: UploadFile = File(...),
     layer_name: str = Form(None),
     add_layer_to_map: bool = Form(True),
     session: UserContext = Depends(verify_session_required),
 ):
-    """Upload a new layer (vector or raster) to an existing map. If layer_name is not provided, the filename without extension will be used."""
+    """Uploads spatial data, processes it, and adds it as a layer to the specified map.
 
-    # Connect to database
-    async with get_async_db_connection() as conn:
-        # First check if the map exists and user owns it, then get its project_id
-        map_result = await conn.fetchrow(
-            """
-            SELECT m.id, m.project_id
-            FROM user_mundiai_maps m
-            WHERE m.id = $1 AND m.owner_uuid = $2 AND m.soft_deleted_at IS NULL
-            """,
-            map_id,
-            session.get_user_id(),
-        )
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
+    Supported formats:
+    - Vector: Shapefile (as .zip), GeoJSON, GeoPackage, FlatGeobuf
+    - Raster: GeoTIFF, DEM
+    - [Point cloud](/guides/visualizing-point-clouds-las-laz/): LAZ, LAS
 
-        project_id = map_result["project_id"]
+    Once uploaded, Mundi transforms, reprojects, styles, and creates optimized formats for display in the browser.
+    Vector data is converted to [PMTiles](https://docs.protomaps.com/pmtiles/) while raster data is converted to
+    [cloud-optimized GeoTIFFs](https://cogeo.org/). Point cloud data is compressed to LAZ 1.3.
 
-    return await internal_upload_layer(
-        map_id=map_id,
+    Returns the new layer details including its unique layer ID. The layer can optionally not be added to the map,
+    but will be faster to add to an existing map later.
+    """
+    layer_result = await internal_upload_layer(
+        map_id=forked_map.id,
         file=file,
         layer_name=layer_name,
         add_layer_to_map=add_layer_to_map,
         user_id=session.get_user_id(),
-        project_id=project_id,
+        project_id=forked_map.project_id,
+    )
+
+    return LayerUploadResponse(
+        dag_child_map_id=forked_map.id,
+        dag_parent_map_id=original_map_id,
+        id=layer_result.id,
+        name=layer_result.name,
+        type=layer_result.type,
+        url=layer_result.url,
+        message=layer_result.message,
     )
 
 
@@ -1657,7 +1644,7 @@ async def internal_upload_layer(
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
             # Return success response
-            return LayerUploadResponse(
+            return InternalLayerUploadResponse(
                 id=new_layer_id, name=layer_name, type=layer_type, url=layer_url
             )
 
@@ -1768,52 +1755,16 @@ async def generate_pmtiles_for_layer(
 
 @router.put("/{map_id}/layer/{layer_id}", operation_id="add_layer_to_map")
 async def add_layer_to_map(
-    request: Request,
-    map_id: str,
-    layer_id: str,
-    session: UserContext = Depends(verify_session_required),
+    map: MundiMap = Depends(get_map),
+    layer: MapLayer = Depends(get_layer),
 ):
+    if map.layers is not None and layer.id in map.layers:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Layer is already associated with this map",
+        )
+
     async with get_async_db_connection() as conn:
-        # Check if the map exists and get current layers
-        map_result = await conn.fetchrow(
-            """
-            SELECT id, owner_uuid, layers
-            FROM user_mundiai_maps
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            map_id,
-        )
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
-
-        # Check if user is the owner of the map
-        if session.get_user_id() != str(map_result["owner_uuid"]):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to modify this map",
-            )
-
-        # Check if the layer exists
-        layer_result = await conn.fetchrow(
-            """
-            SELECT layer_id, name
-            FROM map_layers
-            WHERE layer_id = $1
-            """,
-            layer_id,
-        )
-        if not layer_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Layer not found"
-            )
-
-        # Check if the layer is already associated with this map
-        current_layers = map_result["layers"] or []
-        if layer_id in current_layers:
-            return {"message": "Layer is already associated with this map"}
-
         # Update the map to include the layer_id in its layers array
         updated_map = await conn.fetchrow(
             """
@@ -1823,8 +1774,8 @@ async def add_layer_to_map(
             WHERE id = $2
             RETURNING id
             """,
-            layer_id,
-            map_id,
+            layer.id,
+            map.id,
         )
 
         if not updated_map:
@@ -1835,9 +1786,9 @@ async def add_layer_to_map(
 
         return {
             "message": "Layer successfully associated with map",
-            "layer_id": layer_result["layer_id"],
-            "layer_name": layer_result["name"],
-            "map_id": map_id,
+            "layer_id": layer.id,
+            "layer_name": layer.name,
+            "map_id": map.id,
         }
 
 
@@ -1873,7 +1824,7 @@ async def pull_bounds_from_map(map_id: str) -> tuple[float, float, float, float]
 @router.get("/{map_id}/render.png", operation_id="render_map_to_png")
 async def render_map(
     request: Request,
-    map_id: str,
+    map: MundiMap = Depends(get_map),
     bbox: Optional[str] = None,
     width: int = 1024,
     height: int = 600,
@@ -1882,38 +1833,10 @@ async def render_map(
     base_map: BaseMapProvider = Depends(get_base_map_provider),
     session: Optional[UserContext] = Depends(verify_session_optional),
 ):
-    # Verify user has access to map
-    async with get_async_db_connection() as conn:
-        map_result = await conn.fetchrow(
-            """
-            SELECT m.id, p.link_accessible, m.owner_uuid
-            FROM user_mundiai_maps m
-            JOIN user_mundiai_projects p ON m.project_id = p.id
-            WHERE m.id = $1 AND m.soft_deleted_at IS NULL
-            """,
-            map_id,
-        )
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
-            )
-
-        # Check if map is publicly accessible
-        if not map_result["link_accessible"]:
-            # If not publicly accessible, verify that we have auth
-            if session is None or session.get_user_id() != str(
-                map_result["owner_uuid"]
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Authentication required to access this map",
-                    headers={"WWW-Authenticate": "Bearer"},
-                )
-
     if style_json is None:
         style_json = await get_map_style(
             request,
-            map_id,
+            map.id,
             only_show_inline_sources=True,
             session=session,
             base_map=base_map,
@@ -1921,14 +1844,20 @@ async def render_map(
 
     return (
         await render_map_internal(
-            map_id, bbox, width, height, "mbgl", bgcolor, style_json
+            map.id, bbox, width, height, "mbgl", bgcolor, style_json
         )
     )[0]
 
 
 # requires style.json to be provided, so that we can do this without auth
 async def render_map_internal(
-    map_id, bbox, width, height, renderer, bgcolor, style_json
+    map_id: str,
+    bbox: Optional[str],
+    width: int,
+    height: int,
+    renderer: str,
+    bgcolor: str,
+    style_json: str,
 ) -> tuple[Response, dict]:
     if bbox is None:
         xmin, ymin, xmax, ymax = await pull_bounds_from_map(map_id)
@@ -1985,6 +1914,8 @@ async def render_map_internal(
             stdout, stderr = await process.communicate(
                 input=json.dumps(input_data).encode()
             )
+            print(f"Render output: {stdout}")
+            print(f"Render error: {stderr}")
 
             if process.returncode != 0:
                 raise subprocess.CalledProcessError(
@@ -2012,76 +1943,54 @@ async def render_map_internal(
             )
 
 
-@router.delete("/{map_id}/layer/{layer_id}", operation_id="remove_layer_from_map")
+@router.delete(
+    "/{original_map_id}/layer/{layer_id}",
+    operation_id="remove_layer_from_map",
+    response_model=LayerRemovalResponse,
+)
 async def remove_layer_from_map(
-    map_id: str,
+    original_map_id: str,
     layer_id: str,
-    session: UserContext = Depends(verify_session_required),
+    forked_map: MundiMap = Depends(forked_map_by_user),
 ):
-    """
-    Remove a layer from a map by setting its map_id to NULL.
-    The layer still exists in the database but is no longer associated with the map.
-    """
+    # Check if the layer exists and is in the map's layers array
+    if layer_id not in forked_map.layers:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Layer not found or not associated with this map",
+        )
+
     async with get_async_db_connection() as conn:
-        # Check if the map exists
-        map_result = await conn.fetchrow(
-            """
-            SELECT id, owner_uuid
-            FROM user_mundiai_maps
-            WHERE id = $1 AND soft_deleted_at IS NULL
-            """,
-            map_id,
-        )
-        if not map_result:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Map not found"
+        async with conn.transaction():
+            # Get layer name for response
+            layer_result = await conn.fetchrow(
+                """
+                SELECT name FROM map_layers WHERE layer_id = $1
+                """,
+                layer_id,
+            )
+            layer_name = layer_result["name"] if layer_result else "Unknown"
+
+            # Remove the layer from the child map's layers array
+            updated_layers = [lid for lid in forked_map.layers if lid != layer_id]
+            await conn.execute(
+                """
+                UPDATE user_mundiai_maps
+                SET layers = $1,
+                    last_edited = CURRENT_TIMESTAMP
+                WHERE id = $2
+                """,
+                updated_layers,
+                forked_map.id,
             )
 
-        # Check if user owns the map
-        if session.get_user_id() != str(map_result["owner_uuid"]):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You don't have permission to modify this map",
-            )
-        # Check if the layer exists and is in the map's layers array
-        map_data = await conn.fetchrow(
-            """
-            SELECT layers, (SELECT name FROM map_layers WHERE layer_id = $1) as layer_name
-            FROM user_mundiai_maps
-            WHERE id = $2
-            """,
-            layer_id,
-            map_id,
-        )
-        if not map_data or not map_data["layers"] or layer_id not in map_data["layers"]:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Layer not found or not associated with this map",
-            )
-
-        # Remove the layer from the map's layers array
-        updated_map = await conn.fetchrow(
-            """
-            UPDATE user_mundiai_maps
-            SET layers = array_remove(layers, $1)
-            WHERE id = $2
-            RETURNING id
-            """,
-            layer_id,
-            map_id,
-        )
-
-        if not updated_map:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to remove layer from map",
-            )
-
-        return {
-            "message": "Layer successfully removed from map",
-            "layer_id": layer_id,
-            "layer_name": map_data["layer_name"],
-        }
+    return LayerRemovalResponse(
+        dag_child_map_id=forked_map.id,
+        dag_parent_map_id=original_map_id,
+        layer_id=layer_id,
+        layer_name=layer_name,
+        message="Layer successfully removed from map",
+    )
 
 
 @router.get("/", operation_id="list_user_maps", response_model=UserMapsResponse)
