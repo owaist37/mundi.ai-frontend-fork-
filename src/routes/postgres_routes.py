@@ -52,6 +52,7 @@ from src.utils import (
     get_bucket_name,
     process_zip_with_shapefile,
     get_async_s3_client,
+    process_kmz_to_kml,
 )
 from osgeo import gdal
 import subprocess
@@ -1087,7 +1088,6 @@ async def internal_upload_layer(
             temp_file.write(content)
             temp_file.flush()
             temp_file_path = temp_file.name
-
             # convert csvs to flatgeobufs
             if file_ext == ".csv":
                 auxiliary_temp_file_path = temp_file_path + ".fgb"
@@ -1133,6 +1133,72 @@ async def internal_upload_layer(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail="Failed to convert CSV to spatial format, make sure CSV has a column named lat/lon/lng, latitude/longitude, or x/y.",
                     )
+            # convert kml/kmz to flatgeobufs
+            elif file_ext in [".kml", ".kmz"]:
+                auxiliary_temp_file_path = temp_file_path + ".fgb"
+                temp_dir = None
+
+                # If this is a KMZ file, extract the KML first
+                if file_ext == ".kmz":
+                    try:
+                        kml_file_path, temp_dir = process_kmz_to_kml(temp_file_path)
+                        temp_file_path = kml_file_path
+                    except ValueError as e:
+                        raise HTTPException(
+                            status_code=status.HTTP_400_BAD_REQUEST,
+                            detail=f"KMZ file does not contain any KML files: {str(e)}",
+                        )
+                    except Exception as e:
+                        if temp_dir:
+                            import shutil
+
+                            shutil.rmtree(temp_dir, ignore_errors=True)
+                        raise HTTPException(
+                            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                            detail=f"Error processing KMZ file: {str(e)}",
+                        )
+
+                ogr_cmd = [
+                    "ogr2ogr",
+                    "-f",
+                    "FlatGeobuf",
+                    auxiliary_temp_file_path,
+                    temp_file_path,
+                    "-lco",
+                    "SPATIAL_INDEX=YES",
+                ]
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *ogr_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await process.communicate()
+
+                    if process.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            process.returncode, ogr_cmd, stderr=stderr.decode()
+                        )
+
+                    file_ext = ".fgb"
+                    s3_key = f"uploads/{user_id}/{project_id}/{layer_id}{file_ext}"
+                    temp_file_path = auxiliary_temp_file_path
+
+                    metadata_dict["original_format"] = (
+                        "kml" if file_ext == ".kml" else "kmz"
+                    )
+
+                except subprocess.CalledProcessError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to convert KML/KMZ to spatial format: {e.stderr}",
+                    )
+                finally:
+                    # Clean up temp directory if it exists
+                    if temp_dir:
+                        import shutil
+
+                        shutil.rmtree(temp_dir, ignore_errors=True)
 
             # If this is a ZIP file, process it for shapefiles and convert to GeoPackage
             temp_dir = None

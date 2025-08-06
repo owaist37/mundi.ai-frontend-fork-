@@ -1,6 +1,6 @@
 ---
 title: Uploading files to Mundi
-description: Mundi supports .gpkg, .fgb, .geojson, shapefiles in .zip, .tif, .laz, and .csv file uploads.
+description: Mundi supports .gpkg, .fgb, .geojson, shapefiles in .zip, .tif, .kml, .kmz, .laz, and .csv file uploads.
 ---
 
 Mundi supports most vector and raster file formats. You can also upload CSV spreadsheets and LAS/LAZ point cloud files.
@@ -14,8 +14,11 @@ Uploading files can also be done via [the Mundi developer API](/developer-api/op
 
 ## Vector spatial data
 
-Mundi supports FlatGeobuf (`.fgb`), GeoPackage (`.gpkg`), GeoJSON (`.geojson`), and Shapefiles. Files in any CRS/projection
+Mundi supports FlatGeobuf (`.fgb`), GeoPackage (`.gpkg`), GeoJSON (`.geojson`), KML/KMZ (`.kml`, `.kmz`), and Shapefiles. Files in any CRS/projection
 will work. Vector data is stored in its original CRS but is reprojected to Web Mercator (EPSG:3857) for display (tiles).
+
+Other files supported by GDAL may work, but are not tested regularly. [Create a new issue](https://github.com/BuntingLabs/mundi.ai/issues/new)
+to request a new file format.
 
 ### GeoPackage support
 

@@ -95,7 +95,9 @@ You can try Mundi free at https://app.mundi.ai or self-host using Docker Compose
 					schema: './src/schema/openapi.json',
 					label: 'Developer API',
 				},
-			]), starlightLinksValidator(), starlightThemeRapide()],
+			]), starlightLinksValidator({
+				exclude: ["/developer-api/**/*"],
+			}), starlightThemeRapide()],
 			head: [
 				{
 					tag: 'script',

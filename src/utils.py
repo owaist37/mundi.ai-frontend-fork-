@@ -135,6 +135,33 @@ async def process_zip_with_shapefile(zip_file_path):
         raise e
 
 
+def process_kmz_to_kml(kmz_file_path):
+    temp_dir = tempfile.mkdtemp()
+
+    try:
+        with zipfile.ZipFile(kmz_file_path, "r") as zip_ref:
+            zip_ref.extractall(temp_dir)
+
+        # Find the first .kml file in the extracted directory
+        kml_file = None
+        for root, _, files in os.walk(temp_dir):
+            for file in files:
+                if file.lower().endswith(".kml"):
+                    kml_file = os.path.join(root, file)
+                    break
+            if kml_file:
+                break
+
+        if not kml_file:
+            raise ValueError("No KML file found in the KMZ archive")
+
+        return kml_file, temp_dir
+
+    except Exception as e:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise e
+
+
 def get_openai_client(request: Request) -> AsyncOpenAI:
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
     return AsyncOpenAI(base_url=base_url)
