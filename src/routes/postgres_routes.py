@@ -1085,7 +1085,54 @@ async def internal_upload_layer(
             file_size_bytes = len(content)
             # Write to temp file
             temp_file.write(content)
+            temp_file.flush()
             temp_file_path = temp_file.name
+
+            # convert csvs to flatgeobufs
+            if file_ext == ".csv":
+                auxiliary_temp_file_path = temp_file_path + ".fgb"
+
+                ogr_cmd = [
+                    "ogr2ogr",
+                    "-if",
+                    "CSV",
+                    "-f",
+                    "FlatGeobuf",
+                    auxiliary_temp_file_path,
+                    temp_file_path,
+                    "-oo",
+                    "X_POSSIBLE_NAMES=lon,longitude,lng,x,X,Longitude,LON,LONGITUDE",
+                    "-oo",
+                    "Y_POSSIBLE_NAMES=lat,latitude,y,Y,Latitude,LAT,LATITUDE",
+                    "-lco",
+                    "SPATIAL_INDEX=YES",
+                    "-a_srs",
+                    "EPSG:4326",
+                ]
+                try:
+                    process = await asyncio.create_subprocess_exec(
+                        *ogr_cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                    )
+                    stdout, stderr = await process.communicate()
+
+                    if process.returncode != 0:
+                        raise subprocess.CalledProcessError(
+                            process.returncode, ogr_cmd, stderr=stderr.decode()
+                        )
+
+                    file_ext = ".fgb"
+                    s3_key = f"uploads/{user_id}/{project_id}/{layer_id}{file_ext}"
+                    temp_file_path = auxiliary_temp_file_path
+
+                    metadata_dict["original_format"] = "csv"
+
+                except subprocess.CalledProcessError:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail="Failed to convert CSV to spatial format, make sure CSV has a column named lat/lon/lng, latitude/longitude, or x/y.",
+                    )
 
             # If this is a ZIP file, process it for shapefiles and convert to GeoPackage
             temp_dir = None
@@ -1520,6 +1567,7 @@ async def generate_pmtiles_for_layer(
             "EPSG:4326",
             "-nlt",
             "PROMOTE_TO_MULTI",
+            "-skipfailures",
             reprojected_file,
             str(local_input_file),
         ]
