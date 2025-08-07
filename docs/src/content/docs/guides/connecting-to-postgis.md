@@ -73,6 +73,43 @@ This creates a dynamic layer in Mundi that continuously pulls data from your Pos
 ![Mundi dynamic PostGIS layer served from database](../../../assets/postgis/wellbores.jpg)
 
 
+
+## Connecting to a local PostGIS
+
+If your PostGIS database is on your local computer (`localhost`) or on a private server,
+you can use a tunneling service, like [ngrok](https://ngrok.com/), to temporarily expose
+it to Mundi cloud. Here, I've used `ngrok` to expose my local PostGIS database on `localhost:5433`
+to [Mundi cloud](https://app.mundi.ai):
+
+```bash
+$ ngrok tcp 5433
+```
+
+This will give us a host and port to give to Mundi, which will proxy Mundi's queries to your local database.
+When you close the tunnel with `Ctrl+C`, Mundi will lose access to the database.
+
+![ngrok PostGIS connection details](../../../assets/ngrok/ngrok.jpeg)
+
+ngrok says that we should put the host as `2.tcp.ngrok.io` and the port as `19921`. Username, password,
+database, and schema all stay the same.
+
+![ngrok PostGIS connection details](../../../assets/ngrok/ngrok-add-connection.jpg)
+
+Once the connection loads, you'll be able to ask Kue to create layers and execute SQL queries. Map tiles
+are served through the tunnel from your local database, which may slow down your computer depending on how many
+rows are in your tables.
+
+![ngrok PostGIS connection details](../../../assets/ngrok/postgis-layer.jpg)
+
+
+:::danger[PostgreSQL Security]
+While using a tunnel service is generally **more secure** than permanently exposing the same database to the public internet
+(because the host and port rotate each time you restart the tunnel), it is important to use a **long and random password**
+for your PostGIS database. Bots continuously scan tunnel services for exposed databases with insecure passwords (along with
+the rest of the internet).
+:::
+
+
 ## Best practices and errors
 
 ### Creating a read-only user for Mundi

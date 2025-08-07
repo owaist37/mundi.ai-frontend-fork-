@@ -32,8 +32,7 @@ Before you begin, ensure you have the following:
     ![Screenshot of the 'git clone' command being run in the terminal.](../../../assets/selfhost/github.jpg)
 
 2. Navigate into the new `mundi.ai` directory and initialize the git
-   submodules. Mundi uses a submodule for its database component, and this
-   step ensures it's properly downloaded.
+   submodules.
 
     ```bash
     cd mundi.ai
@@ -63,7 +62,8 @@ With the services built, you can now start the application.
 
     You will see logs from the various services starting up. Note that you
     may see a warning like `The "OPENAI_API_KEY" variable is not set`.
-    This is expected, as we haven't configured an LLM yet. (tutorial coming soon)
+    This is expected, as we haven't configured an LLM yet. Check out our
+    [local LLM guide](/deployments/connecting-to-local-llm-with-ollama/) to connect to a locally running LLM.
 
     ![Screenshot of the terminal after running 'docker compose up app', showing the server starting.](../../../assets/selfhost/apponline.jpg)
 
