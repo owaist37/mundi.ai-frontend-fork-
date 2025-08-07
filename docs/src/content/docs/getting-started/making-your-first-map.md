@@ -24,6 +24,7 @@ When you first log in to [Mundi](https://app.mundi.ai), you'll land on the "Your
 To add your own data to an empty map, you can either use the "Add Data" button or drag and drop files directly onto the map canvas.
 
 Drag your dataset (e.g., `.gpkg` file or a `.zip` file containing `.shp`, `.shx`, `.prj` etc) from your computer and drop it anywhere on the map canvas.
+[Here is the documentation for uploading files](/getting-started/uploading-files/) to Mundi.
 
 ![Empty Europe](../../../assets/first-map/empty-europe.png)
 

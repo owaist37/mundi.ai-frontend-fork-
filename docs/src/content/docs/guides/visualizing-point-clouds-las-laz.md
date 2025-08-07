@@ -15,7 +15,7 @@ interact with the data in a 3D map environment.
 
 ## Uploading a .laz or .las file
 
-You can upload your `.laz` or `.las` file either by dragging and dropping the file
+You can [upload your `.laz` or `.las` file](/getting-started/uploading-files/) either by dragging and dropping the file
 onto the map, or you can click the Upload File button in the bottom right corner
 of the layer list panel (which is towards the top left of the map canvas).
 
