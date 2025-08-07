@@ -195,7 +195,7 @@ async def test_invalid_zip_file_upload(auth_client):
                 data={"layer_name": "Invalid ZIP"},
             )
 
-            assert response.status_code == 500
+            assert response.status_code == 400
 
     finally:
         if os.path.exists(temp_zip_path):

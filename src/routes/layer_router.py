@@ -715,6 +715,7 @@ async def get_layer_geojson(
             "EPSG:4326",  # Ensure coordinates are in WGS84
             "-lco",
             "COORDINATE_PRECISION=6",  # ~1m precision at equator
+            "-skipfailures",  # Skip features with NULL geometries or other issues
             local_geojson_file,
             local_input_file,
         ]
