@@ -1,105 +1,84 @@
-# Frontend Utility Functions
+# Backend Functions
 
-This document provides an overview of the key utility functions and custom hooks used in the Mundi.ai frontend, primarily from the `frontendts/src/lib/` directory.
-
----
-
-### `cn(...inputs)`
-
-**Source**: `utils.ts`
-
-**Purpose**: This function is a utility for conditionally joining CSS class names together. It's a combination of `clsx` and `tailwind-merge`, which makes it easy to build dynamic and responsive class strings for Tailwind CSS.
-
-**Parameters**:
--   `...inputs`: `ClassValue[]` - A variable number of arguments that can be strings, arrays, or objects representing CSS classes.
-
-**Returns**:
--   `string` - A merged and optimized string of CSS class names.
-
-**Usage**:
-```typescript
-import { cn } from '@/lib/utils';
-
-const MyComponent = ({ isActive, className }) => {
-  return (
-    <div className={cn('base-class', { 'active-class': isActive }, className)}>
-      ...
-    </div>
-  );
-};
-```
+This document provides an overview of key utility functions used in the Mundi backend. These functions encapsulate common, reusable logic, from data processing to interacting with external services.
 
 ---
 
-### `formatRelativeTime(isoString)`
+## ID Generation
 
-**Source**: `utils.ts`
+### `generate_id(length=12, prefix="")`
 
-**Purpose**: This function takes an ISO date string and returns a human-readable relative time string (e.g., "5 minutes ago", "2 days ago").
+**Source**: `src/utils.py`
+
+**Purpose**: This function generates a unique, human-readable ID for maps, layers, and other database objects. It uses a specific character set that excludes ambiguous characters (like `0`, `O`, `I`, `l`) to improve readability and reduce user error.
 
 **Parameters**:
--   `isoString`: `string | undefined` - The date in ISO format.
+-   `length`: `int` - The total desired length of the ID.
+-   `prefix`: `str` - An optional single-character prefix (e.g., `M` for maps, `L` for layers) to be added to the beginning of the ID.
 
 **Returns**:
--   `string` - The formatted relative time string.
+-   `str` - A unique string ID.
 
-**Usage**:
-```typescript
-import { formatRelativeTime } from '@/lib/utils';
-
-const lastEdited = '2023-10-27T10:00:00Z';
-const relativeTime = formatRelativeTime(lastEdited); // e.g., "2 days ago"
-```
+**Usage**: This function is called whenever a new entity that requires a unique identifier is created in the database.
 
 ---
 
-### `formatShortRelativeTime(isoString)`
+## File and Data Processing
 
-**Source**: `utils.ts`
+### `process_zip_with_shapefile(zip_file_path)`
 
-**Purpose**: Similar to `formatRelativeTime`, but returns a more compact relative time string (e.g., "5 min", "2 hr").
+**Source**: `src/utils.py`
+
+**Purpose**: This asynchronous function handles the processing of a user-uploaded `.zip` file that is expected to contain an ESRI Shapefile. It extracts the archive, locates the `.shp` file, and uses the `ogr2ogr` command-line tool to convert it into a GeoPackage (`.gpkg`) file, which is a more modern and standardized format for storage and processing.
 
 **Parameters**:
--   `isoString`: `string | undefined` - The date in ISO format.
+-   `zip_file_path`: `str` - The local filesystem path to the `.zip` archive.
 
 **Returns**:
--   `string` - The formatted short relative time string.
+-   `tuple[str, str]` - A tuple containing the path to the newly created `.gpkg` file and the path to the temporary directory where the extraction occurred.
 
-**Usage**:
-```typescript
-import { formatShortRelativeTime } from '@/lib/utils';
+**Raises**:
+-   `ValueError`: If the archive contains no Shapefiles or more than one Shapefile.
+-   `Exception`: If the `ogr2ogr` conversion process fails.
 
-const lastUpdated = '2023-10-27T12:00:00Z';
-const shortTime = formatShortRelativeTime(lastUpdated); // e.g., "2 hr"
-```
+### `process_kmz_to_kml(kmz_file_path)`
+
+**Source**: `src/utils.py`
+
+**Purpose**: This function processes a `.kmz` file by unzipping it and locating the primary `.kml` file within. Since KMZ is a zipped version of KML, this function is the first step in handling KMZ uploads.
+
+**Parameters**:
+-   `kmz_file_path`: `str` - The local filesystem path to the `.kmz` file.
+
+**Returns**:
+-   `tuple[str, str]` - A tuple containing the path to the extracted `.kml` file and the path to the temporary directory.
+
+**Raises**:
+-   `ValueError`: If no `.kml` file is found within the archive.
 
 ---
 
-### `usePersistedState(baseKey, deps, initial, storage)`
+## External Service Clients
 
-**Source**: `usePersistedState.tsx`
+### `get_s3_client()` and `get_async_s3_client()`
 
-**Purpose**: This is a custom React hook that provides a state variable that is persisted to the browser's storage (session storage by default). This allows the state to be preserved across page reloads.
+**Source**: `src/utils.py`
+
+**Purpose**: These functions provide singleton clients for interacting with an S3-compatible object storage service. This is where all user-uploaded files and generated data artifacts are stored.
+
+-   `get_s3_client()`: Returns a synchronous `boto3` client. It is cached using `@lru_cache` to ensure that only one client instance is created.
+-   `get_async_s3_client()`: Returns an asynchronous `aioboto3` client, suitable for use in `async` functions. It maintains a separate client instance for each running `asyncio` event loop.
+
+**Configuration**: These functions are configured via environment variables (e.g., `S3_ENDPOINT_URL`, `S3_ACCESS_KEY_ID`).
+
+### `get_openai_client(request: Request)`
+
+**Source**: `src/utils.py`
+
+**Purpose**: This function acts as a FastAPI dependency that provides an `AsyncOpenAI` client. This client is used to make calls to an OpenAI-compatible API for all Large Language Model (LLM) related tasks, such as generating symbology or describing layers.
 
 **Parameters**:
--   `baseKey`: `string` - The base key for the storage item.
--   `deps`: `(string | number | boolean)[]` - An array of dependencies that are combined with the base key to create a unique storage key.
--   `initial`: `T` - The initial value of the state if nothing is found in storage.
--   `storage`: `Storage` - (Optional) The storage medium to use, defaults to `window.sessionStorage`.
+-   `request`: `Request` - The incoming FastAPI request object.
 
 **Returns**:
--   `[T, React.Dispatch<React.SetStateAction<T>>]` - A state variable and a function to update it, similar to `useState`.
-
-**Usage**:
-```typescript
-import { usePersistedState } from '@/lib/usePersistedState';
-
-const MyComponent = ({ conversationId }) => {
-  const [lastMessage, setLastMessage] = usePersistedState(
-    'lastMessage',
-    [conversationId],
-    ''
-  );
-  // ...
-};
-```
+-   `AsyncOpenAI` - An asynchronous client for the OpenAI API.

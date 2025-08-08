@@ -1,65 +1,52 @@
-# Frontend Architecture
+# Backend Architecture
 
-This document outlines the architecture of the Mundi.ai frontend, located in the `frontendts` directory. The frontend is a modern web application built with **React**, **TypeScript**, and **Vite**.
+This document provides a detailed explanation of the backend architecture for the Mundi application, located in the `src` directory. The backend is built with **Python**, using the **FastAPI** framework for the web server and **SQLAlchemy** for the Object-Relational Mapper (ORM).
+
+## Core Technologies
+
+-   **FastAPI**: A modern, high-performance web framework for building APIs with Python.
+-   **SQLAlchemy**: The database toolkit for Python, used to define the database schema and interact with the PostgreSQL database.
+-   **Alembic**: A database migration tool used with SQLAlchemy to manage schema changes.
+-   **PostgreSQL with PostGIS**: The primary database, with the PostGIS extension for storing and querying geospatial data.
 
 ## Directory Structure
 
-The `frontendts/src` directory is organized as follows:
+The `src` directory is organized into modules with specific responsibilities:
 
--   **`components/`**: Contains reusable React components that make up the user interface.
-    -   **`ui/`**: A subdirectory for generic, low-level UI components like buttons, dialogs, and input fields, based on shadcn/ui.
--   **`pages/`**: Holds the main page components of the application.
--   **`lib/`**: Contains utility functions, type definitions, and modules for handling specific functionalities like API calls and authentication.
--   **`hooks/`**: Includes custom React hooks for managing state and side effects in a reusable way.
--   **`assets/`**: Stores static assets like images and icons.
--   **`main.tsx`**: The main entry point of the application.
+-   **`wsgi.py`**: The main entry point for the FastAPI application. It initializes the app, includes the various API routers, configures middleware, and sets up the lifespan events (like running database migrations on startup).
+-   **`database/`**: Contains all database-related code.
+    -   `models.py`: Defines the application's data structures using SQLAlchemy declarative models (e.g., `MundiProject`, `MundiMap`, `MapLayer`).
+    -   `connection.py`: Manages the database session and connection pool.
+    -   `migrate.py`: Contains the logic to run Alembic migrations.
+-   **`routes/`**: Contains the API endpoint definitions. Each file (e.g., `project_routes.py`, `layer_router.py`) defines a `fastapi.APIRouter` for a specific part of the API, which are then included in the main `app` in `wsgi.py`.
+-   **`dependencies/`**: A key part of the architecture, this directory uses FastAPI's dependency injection system to provide services and business logic to the API routes. For example, `auth.py` provides user authentication, and `db_pool.py` provides database sessions.
+-   **`geoprocessing/`**: Handles heavy-duty geospatial processing tasks, such as converting data formats or reprojecting layers.
+-   **`symbology/`**: Manages the visual styling of map layers, including logic to create and validate MapLibre-compatible styles.
+-   **`renderer/`**: Contains server-side JavaScript code that uses MapLibre GL to render maps into static PNG images.
 
-## Component-Based Architecture
+## Data and Versioning Model
 
-The frontend follows a component-based architecture, where the UI is composed of small, reusable components. This makes the codebase easier to manage, test, and scale.
+The application's data model is designed around a non-destructive, Git-like versioning system for maps.
 
--   **High-Level Components**: The `pages` directory contains high-level components that represent entire pages of the application.
--   **Low-Level Components**: The `components` directory contains more generic components that can be used across multiple pages.
--   **UI Primitives**: The `components/ui` directory provides a set of basic UI primitives that are used to build more complex components.
+-   **`MundiProject`**: The top-level container. A project has a title, owner, and a list of associated maps.
+-   **`MundiMap`**: Represents a specific version of a map. Each map has a list of layers and their styles. Crucially, a `MundiMap` can have a `parent_map_id`, creating a tree-like history of changes. Every edit (like adding a layer or changing a style) results in the creation of a new `MundiMap` instance that points to its parent.
+-   **`MapLayer`**: Represents a single geospatial dataset (e.g., a file upload or a PostGIS query).
+-   **`LayerStyle`**: Represents the MapLibre styling rules for a `MapLayer`.
+-   **`MapLayerStyle`**: An association table that links a specific `MundiMap`, `MapLayer`, and `LayerStyle`, effectively defining which style is used for a given layer on a particular map version.
 
-## State Management
+This structure allows for a complete history of the map to be preserved, enabling features like viewing past versions and understanding the evolution of the map.
 
-Application state is managed using a combination of React's built-in state management (`useState`, `useContext`) and custom hooks.
+## Request Lifecycle and Dependency Injection
 
--   **Local Component State**: For state that is specific to a single component, `useState` is used.
--   **Shared State**: For state that needs to be shared across multiple components, custom hooks and React's Context API are used.
--   **Persisted State**: The `usePersistedState` custom hook in `lib/usePersistedState.tsx` is used to persist state in the browser's local storage.
+A typical API request flows through the system as follows:
 
-## Data Flow
+1.  The request hits one of the endpoints defined in a router in the `src/routes/` directory.
+2.  FastAPI's dependency injection system resolves the dependencies for that endpoint. For example, it might inject an authenticated user object from `dependencies/auth.py` and a database session from `dependencies/db_pool.py`.
+3.  The route handler function executes its business logic, using the injected dependencies to interact with the database or other services.
+4.  The handler returns a response, which FastAPI serializes to JSON and sends back to the client.
 
-The data flow in the application is unidirectional, which makes it predictable and easier to debug.
+This architecture promotes a clean separation of concerns, keeping the API routing logic separate from the business logic and database interactions.
 
-1.  **API Interaction**: Data is fetched from the backend API using functions that are typically called from within React components or custom hooks.
-2.  **State Update**: The fetched data is stored in the component's state.
-3.  **UI Render**: The UI is re-rendered to reflect the new state.
-4.  **User Interaction**: User interactions can trigger new API calls or state updates, starting the cycle again.
+## Serving the Frontend
 
-### Data Flow Diagram
-
-```mermaid
-graph TD
-    subgraph Frontend
-        A[User Interaction] --> B{Component};
-        B --> C[API Call];
-        C --> D{Backend API};
-        D --> E[API Response];
-        E --> F{State Update};
-        F --> G[UI Re-render];
-    end
-
-    subgraph Backend
-        D
-    end
-
-    A -- Triggers --> B;
-    B -- Makes --> C;
-    C -- Sends request to --> D;
-    D -- Sends response to --> E;
-    E -- Updates --> F;
-    F -- Causes --> G;
-```
+The backend also serves the compiled frontend Single-Page Application (SPA). The `wsgi.py` file configures a `StaticFiles` mount for the frontend assets and includes an exception handler that serves the `index.html` file for any non-API routes. This allows the frontend and backend to be served from the same domain in a production environment.
