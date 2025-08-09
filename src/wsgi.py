@@ -18,141 +18,30 @@ import base64
 import json
 import time
 import uuid
-from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse, FileResponse
 from starlette.exceptions import HTTPException as StarletteHTTPException
-from fastapi_proxy_lib.fastapi.app import reverse_http_app, reverse_ws_app
-import httpx
-
-from src.routes import (
-    postgres_routes,
-    project_routes,
-    room_routes,
-    message_routes,
-    websocket,
-    conversation_routes,
-)
-from src.routes.postgres_routes import basemap_router
-from src.routes.layer_router import layer_router
-# from fastapi_mcp import FastApiMCP
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Run database migrations on startup"""
-    from src.database.migrate import run_migrations
-
-    await run_migrations()
-    yield
-    # Cleanup code here if needed
 
 
 app = FastAPI(
-    title="Mundi.ai",
-    description="Open source, AI native GIS software",
+    title="Mundi.ai Frontend",
+    description="Frontend-only application serving React SPA",
     version="0.0.1",
     # Don't show OpenAPI spec, docs, redoc
     openapi_url=None,
-    lifespan=lifespan,
 )
 
 
-@app.exception_handler(httpx.RemoteProtocolError)
-async def handle_driftdb_error(request: Request, exc: httpx.RemoteProtocolError):
-    if not request.url.path.startswith("/room/"):
-        raise exc
-
-    return JSONResponse(
-        status_code=404,
-        content={"detail": "Room not found, likely expired"},
-    )
-
-
-app.include_router(
-    postgres_routes.router,
-    prefix="/api/maps",
-    tags=["Maps"],
-)
-app.include_router(
-    room_routes.router,
-    prefix="/api/maps",
-    tags=["Collaboration"],
-)
-app.include_router(
-    message_routes.router,
-    prefix="/api/maps",
-    tags=["Messages"],
-)
-app.include_router(
-    websocket.router,
-    prefix="/api/maps",
-    tags=["WebSocket"],
-)
-app.include_router(
-    layer_router,
-    prefix="/api",
-    tags=["Layers"],
-)
-app.include_router(
-    project_routes.project_router,
-    prefix="/api/projects",
-    tags=["Maps"],
-)
-app.include_router(
-    basemap_router,
-    prefix="/api/basemaps",
-    tags=["Basemaps"],
-)
-app.include_router(
-    conversation_routes.router,
-    prefix="/api",
-    tags=["Conversations"],
-)
-
-
-# Create a combined proxy router for DriftDB that handles both HTTP and WebSocket
-# Use a WebSocket-capable proxy for the /room routes
-room_ws_app = reverse_ws_app(base_url="ws://driftdb:8080/room/")
-# Mount it as a sub-application
-app.mount("/room/", room_ws_app)
-
-# Use HTTP proxy for other DriftDB paths
-drift_app = reverse_http_app(base_url="http://driftdb:8080/")
-# Mount it as a sub-application
-app.mount("/drift/", drift_app)
-
-
-# TODO: this isn't useful right now. But we should work on it in the future
-# mcp = FastApiMCP(
-#     app,
-#     name="Mundi.ai MCP",
-#     description="GIS as an MCP",
-#     exclude_operations=[
-#         "upload_layer_to_map",
-#         "view_layer_as_geojson",
-#         "view_layer_as_pmtiles",
-#         "view_layer_as_cog_tif",
-#         "remove_layer_from_map",
-#         "view_map_html",
-#         "get_map_stylejson",
-#         "describe_layer",
-#     ],
-# )
-# mcp.mount()
-
-
-# First mount specific static assets to ensure they're properly served
+# Mount static assets for the React application
 app.mount("/assets", StaticFiles(directory="frontendts/dist/assets"), name="spa-assets")
 
 
 @app.post("/supertokens/session/refresh")
 async def mock_session_refresh(request: Request):
-    # it's simpler for self hosters to not have to log in, and there's a big
-    # gap between a simple, self hostable app and a secure, multi tenant, public
-    # facing software
-    if os.environ.get("MUNDI_AUTH_MODE") == "edit":
+    """Mock SuperTokens session refresh for basic auth compatibility"""
+    # Simple mock for self-hosted environments without full auth
+    if os.environ.get("MUNDI_AUTH_MODE", "edit") == "edit":
         # Create fake refresh response
         expiry = int(time.time() * 1000) + 3600 * 1000  # 1 hour
         front_token = base64.b64encode(
@@ -181,17 +70,20 @@ async def mock_session_refresh(request: Request):
         response.set_cookie("sIdRefreshToken", id_refresh, httponly=True)
 
         return response
+    
+    # Return 401 for view-only mode or other auth modes
+    return JSONResponse(status_code=401, content={"detail": "Session refresh not available"})
 
 
 @app.exception_handler(StarletteHTTPException)
 async def spa_server(request: Request, exc: StarletteHTTPException):
+    """SPA fallback handler - serve index.html for all non-API routes"""
     # Don't handle API 404s - let them bubble up as real 404s
     if (
         request.url.path.startswith("/api/")
         or request.url.path.startswith("/supertokens/")
-        or request.url.path.startswith("/mcp")
     ):
-        # Return standard 404 response for API routes and MCP routes
+        # Return standard 404 response for API routes
         return JSONResponse(
             status_code=exc.status_code, content={"detail": str(exc.detail)}
         )
